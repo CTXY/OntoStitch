@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from pathlib import Path
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -36,12 +35,7 @@ from cortex.config import CortexConfig, LLMProfileName, config_fingerprint, load
 from cortex.infrastructure.artifacts import FileSystemGraphStateRepository
 from cortex.infrastructure.database import DatabaseConnector, SQLAlchemyDatabase
 from cortex.infrastructure.llm import create_chat_model
-from cortex.infrastructure.llm.pool import (
-    KeyScheduler,
-    PooledChatModel,
-    ThreadedChatModel,
-    read_api_keys,
-)
+from cortex.infrastructure.llm.pool import ThreadedChatModel
 from cortex.infrastructure.retrieve import FileSystemRetrieveDbArtifactRecorder
 from cortex.schema import GraphSpace
 from cortex.schema.roots import load_root_schema
@@ -188,48 +182,11 @@ def _build_sql_service(
         if database is None and runtime.database.url:
             database = SQLAlchemyDatabase(runtime.database.url)
         validation_client_is_default = validation_client is None
-        pooled_models = {}
-        models_by_profile = {}
-        case_llm_factory = None
-        key_path = config.services.sql_training.llm_key_pool_path
-        if key_path is not None and llm is not None:
-            raise ValueError("Cannot combine an injected LLM with llm_key_pool_path")
-        if key_path is not None:
-            keys = read_api_keys(key_path)
-            scheduler = KeyScheduler(len(keys), wait_timeout=config.llm.timeout)
-            for profile in ("sql_training", "retrieve_db"):
-                models = tuple(
-                    create_chat_model(
-                        config.llm.model_copy(update={"api_key": key, "max_retries": 0}),
-                        profile=profile,
-                    )
-                    for key in keys
-                )
-                pooled_models[profile] = PooledChatModel(
-                    models, scheduler, max_retries=config.llm.max_retries
-                )
-                models_by_profile[profile] = models
-            semantic_llm = pooled_models["sql_training"]
-            runtime = runtime.model_copy(
-                update={
-                    "train": runtime.train.model_copy(
-                        update={
-                            "case_max_workers": min(
-                                runtime.train.case_max_workers
-                                or runtime.train.extraction_max_workers,
-                                len(keys),
-                            ),
-                        }
-                    )
-                }
-            )
-        else:
-            semantic_llm = llm or _create_llm(config, "sql_training")
-            if config.services.sql_training.case_max_workers is not None:
-                semantic_llm = ThreadedChatModel(semantic_llm)
-                pooled_models["retrieve_db"] = ThreadedChatModel(
-                    llm or _create_llm(config, "retrieve_db")
-                )
+        retrieval_llm = llm
+        semantic_llm = llm or _create_llm(config, "sql_training")
+        if config.services.sql_training.case_max_workers is not None:
+            semantic_llm = ThreadedChatModel(semantic_llm)
+            retrieval_llm = ThreadedChatModel(llm or _create_llm(config, "retrieve_db"))
         validation_client_factory = None
         if validation_client_is_default:
 
@@ -251,36 +208,9 @@ def _build_sql_service(
                 )
 
             def validation_client_factory():
-                return make_validation_client(semantic_llm, pooled_models.get("retrieve_db", llm))
+                return make_validation_client(semantic_llm, retrieval_llm)
 
             validation_client = validation_client_factory()
-            if key_path is not None:
-
-                @contextmanager
-                def case_llm_factory():
-                    # A Case reserves its key through extraction, SQL execution and all repairs.
-                    index = scheduler.acquire(wait_for_case=True)
-                    local_scheduler = KeyScheduler(1, wait_timeout=config.llm.timeout)
-                    try:
-                        bound_models = {
-                            profile: PooledChatModel(
-                                (models[index],),
-                                local_scheduler,
-                                max_retries=config.llm.max_retries,
-                            )
-                            for profile, models in models_by_profile.items()
-                        }
-                        yield (
-                            bound_models["sql_training"],
-                            make_validation_client(
-                                bound_models["sql_training"], bound_models["retrieve_db"]
-                            ),
-                        )
-                    finally:
-                        disabled, cooldown = local_scheduler.slot_state(0)
-                        scheduler.release(index, disabled=disabled, cooldown=cooldown)
-        elif key_path is not None:
-            raise ValueError("A fixed Case key requires the default training validation client")
         implementation = SqlTrainingCapability(
             llm=semantic_llm,
             config=config,
@@ -288,7 +218,6 @@ def _build_sql_service(
             database=database,
             validation_client=validation_client,
             validation_client_factory=validation_client_factory,
-            case_llm_factory=case_llm_factory,
         )
     graph_root = Path(workspace or config.services.sql_training.workspace) / "graph_state"
     schema = load_root_schema(config.root_schema.external_path)

@@ -236,7 +236,6 @@ class SqlTrainingConfig(_ConfigModel):
     max_trial_attempts: int = Field(default=3, ge=1)
     extraction_max_workers: int = Field(default=3, ge=1)
     case_max_workers: int | None = Field(default=None, ge=1)
-    llm_key_pool_path: Path | None = None
     trace_level: Literal["", "info", "debug"] = ""
     validation: SqlTrainingValidationConfig = Field(default_factory=SqlTrainingValidationConfig)
     error_analysis: SqlTrainingErrorAnalysisConfig = Field(
@@ -260,7 +259,6 @@ class OnlineContextConfig(_ConfigModel):
     column_limit: int = Field(default=20, ge=1)
     dimension_value_limit: int = Field(default=12, ge=1)
     evaluation_case_max_workers: int = Field(default=1, ge=1)
-    evaluation_key_pool_path: Path | None = None
     query_example_top_k: int = Field(default=3, ge=0)
     query_example_source_root: Path | None = None
 

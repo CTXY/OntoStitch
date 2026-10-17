@@ -31,8 +31,6 @@ def prepare_config(spec: dict, workspace: Path):
         extraction_max_workers=1,
         trace_level="info",
     )
-    key_pool = os.environ.get("CORTEX_ABLATION_KEY_POOL_PATH", "configs/sql-training.keys")
-    training["llm_key_pool_path"] = str(Path(key_pool).resolve())
     database = payload["database"]
     if database.get("type") == "sqlite":
         database["overwrite"] = False

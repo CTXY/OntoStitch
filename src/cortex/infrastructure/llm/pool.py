@@ -2,37 +2,17 @@
 
 from __future__ import annotations
 
-import os
-import stat
 import time
 from collections import deque
-from pathlib import Path
 from threading import Condition
 from typing import Any
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.outputs import ChatResult
-from pydantic import PrivateAttr, SecretStr
+from pydantic import PrivateAttr
 
-from cortex.infrastructure.llm.providers import LLMConfigurationError, LLMInvocationError
-
-
-def read_api_keys(path: Path) -> tuple[SecretStr, ...]:
-    """Read an explicitly supplied private file without exposing its contents on errors."""
-    try:
-        with path.open(encoding="utf-8") as handle:
-            mode = os.fstat(handle.fileno()).st_mode
-            if not stat.S_ISREG(mode) or mode & 0o077:
-                raise LLMConfigurationError("LLM key file must be private (chmod 600)")
-            values = [line.strip() for line in handle if line.strip()]
-    except LLMConfigurationError:
-        raise
-    except (OSError, UnicodeError):
-        raise LLMConfigurationError("Unable to read the LLM key file") from None
-    if not values or len(set(values)) != len(values):
-        raise LLMConfigurationError("LLM key file must contain unique, nonempty keys")
-    return tuple(SecretStr(value) for value in values)
+from cortex.infrastructure.llm.providers import LLMInvocationError
 
 
 class KeyScheduler:

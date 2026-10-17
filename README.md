@@ -42,21 +42,6 @@ that model must be available at the endpoint. To disable optional embeddings, se
 `llm.embedding.model: null` in `configs/cortex.yaml` and leave the fallback
 `services.retrieve_db.embedding_model` unset.
 
-The default configuration also requires `configs/sql-training.keys`, with one API
-key per line. For a single credential, initialize it from the exported key:
-
-```bash
-(umask 077; printf '%s\n' "$CORTEX_LLM_API_KEY" > configs/sql-training.keys)
-chmod 600 configs/sql-training.keys
-```
-
-The key pool is used for training and simulated-user evaluation. The standalone
-baseline uses `CORTEX_LLM_API_KEY`. Configure worker counts and per-stage model
-profiles in `configs/cortex.yaml`. Cortex CLI commands and `scripts/preflight.py`
-read exported environment variables; they do not automatically load `.env`.
-The guided evaluation wrapper and baseline commands also accept `--env-file`;
-already exported values take precedence over values in that file.
-
 ## Synthetic quick start
 
 Create a small synthetic SQLite dataset without calling a model:
@@ -76,8 +61,8 @@ cortex sql-train --config configs/cortex.yaml \
   --training-set data/train.qa_sql.jsonl --output workspace/demo/training
 ```
 
-Preflight executes `SELECT 1` and makes a chat request using one randomly selected
-pool key. It does not check every credential, embedding calls or all model stages.
+Preflight executes `SELECT 1` and makes a chat request using the configured API key.
+It does not check embedding calls or all model stages.
 Training and the evaluation below make model requests.
 
 Training prints a JSON object whose `output` field identifies the dated run

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 from asyncio import Condition
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -33,7 +32,6 @@ from cortex.infrastructure.llm.pool import (
     CredentialBoundEmbeddings,
     KeyScheduler,
     PooledChatModel,
-    read_api_keys,
 )
 from cortex.infrastructure.llm.providers import LLMInvocationError
 from cortex.infrastructure.online_context import load_query_example_index
@@ -149,20 +147,7 @@ def build_online_context_evaluation_pool(
 ) -> OnlineContextEvaluationPool:
     resolved = config or load_config(config_path)
     settings = resolved.services.online_context
-    key_path = settings.evaluation_key_pool_path
-    if key_path is None:
-        configs = [resolved]
-    else:
-        keys = list(read_api_keys(key_path))
-        random.SystemRandom().shuffle(keys)
-        configs = [
-            resolved.model_copy(
-                update={
-                    "llm": resolved.llm.model_copy(update={"api_key": key})
-                }
-            )
-            for key in keys[: settings.evaluation_case_max_workers]
-        ]
+    configs = [resolved] * settings.evaluation_case_max_workers
 
     workers = []
     document_vector_cache = DocumentVectorCache()

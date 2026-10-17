@@ -40,9 +40,6 @@ def load_config(path: str | Path = "configs/cortex.yaml") -> CortexConfig:
                 update={
                     "online_context": online_context.model_copy(
                         update={
-                            "evaluation_key_pool_path": _resolve_optional_path(
-                                online_context.evaluation_key_pool_path, base
-                            ),
                             "query_example_source_root": _resolve_optional_path(
                                 online_context.query_example_source_root, base
                             ),
@@ -55,9 +52,6 @@ def load_config(path: str | Path = "configs/cortex.yaml") -> CortexConfig:
                         update={
                             "workspace": workspace,
                             "dimension_values_path": dimension_values_path,
-                            "llm_key_pool_path": _resolve_optional_path(
-                                sql_training.llm_key_pool_path, base
-                            ),
                         }
                     )
                 }

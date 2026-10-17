@@ -16,7 +16,6 @@ services:
     workspace: workspace/sql_training
     case_max_workers: 1
     extraction_max_workers: 1
-    llm_key_pool_path: configs/sql-training.keys
     max_rounds: 3
     max_iterations: 3
     required_consecutive_correct_replays: 3
@@ -24,6 +23,5 @@ services:
       dialect: sqlite
   online_context:
     question_budget: null  # Maximum questions per request; includes JOIN choices.
-    evaluation_key_pool_path: configs/sql-training.keys
     evaluation_case_max_workers: 1
     query_example_top_k: 0
