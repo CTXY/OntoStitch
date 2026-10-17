@@ -36,7 +36,8 @@
     concrete value supplied solely for the current request. Its level of detail and value-free
     request roles are not intrinsic quality defects.
 
-Application failure normally requires asset-content learning. Initial not_used Candidates do not
-enter Working. Residual not_selected, not_applied, or partially_applied Candidates use content
+Directly extracted initial knowledge enters Working without this assessment.
+For repair candidates, application failure normally requires asset-content learning.
+Residual not_selected, not_applied, or partially_applied Candidates use content
 refinement except for the residual prompt's narrow `application_policy` case: a valid, retrieved,
 selected Concept or Metric lost to a proved non-equivalent alternative implementation.

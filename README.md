@@ -98,6 +98,15 @@ The command prints the run path in its `output` field and exports
 for incremental training, not the exported `graph_state.json` file. Exit code 2
 means the training result needs review.
 
+Direct extraction retains structurally valid initial knowledge without an initial
+LLM assessment. Each execution gate requires three consecutive correct SQL
+regenerations by default and stops at the first failure. Incorrect SQL enters
+error diagnosis and candidate assessment; accepted repairs update the case working
+graph during refinement. When unaccepted candidates are discarded, execution
+evidence is refreshed if the retained graph differs from the tested graph.
+Case artifacts distinguish directly retained nodes from assessment-accepted repairs
+and record the evaluated and exported ontology fingerprints.
+
 ### Separate training and graph merge
 
 To run extraction and graph integration separately:

@@ -122,14 +122,14 @@ class RepairCycle:
             return _result(diagnostic, working, 0, 0, True, None, dispositions, acceptance)
 
         for round_number in range(1, max_rounds + 1):
-            if _generation_failed(diagnostic):
+            if failure_reason := _execution_failure(diagnostic):
                 return _result(
                     diagnostic,
                     working,
                     round_number - 1,
                     trials_run,
                     False,
-                    "candidate_generation_failed",
+                    failure_reason,
                     dispositions,
                     acceptance,
                     remaining_targets,
@@ -197,6 +197,9 @@ class RepairCycle:
             accepted_ids: set[str] = set()
             round_dispositions: dict[str, CandidateDisposition] = {}
             application_companions_added = False
+            snapshot = None
+            evaluation = diagnostic
+            replay_accepted_success = False
 
             for iteration in range(1, max_iterations + 1):
                 snapshot = materialize_residual_trial(
@@ -206,26 +209,13 @@ class RepairCycle:
                 )
                 evaluation = self.execute_trial(snapshot, round_number, iteration)
                 trials_run += 1
-                if _generation_failed(evaluation):
+                failure_reason = _execution_failure(evaluation)
+                if failure_reason and failure_reason != "ontology_contract_failed":
                     _mark(
-                        round_dispositions,
-                        active_ids,
-                        bindings,
-                        "unresolved",
-                        "candidate_generation_failed",
+                        round_dispositions, active_ids, bindings,
+                        "unresolved", failure_reason,
                     )
-                    dispositions.extend(_number(round_dispositions, round_number))
-                    return _result(
-                        evaluation,
-                        working,
-                        round_number,
-                        trials_run,
-                        False,
-                        "candidate_generation_failed",
-                        dispositions,
-                        acceptance,
-                        remaining_targets,
-                    )
+                    break
 
                 contract_failure = evaluation.get("candidate_failure") or {}
                 if contract_failure.get("kind") == "ontology_contract":
@@ -397,25 +387,9 @@ class RepairCycle:
                     diagnostic = evaluation
                     break
                 if not active_ids:
-                    final_evaluation = evaluation
-                    if evaluation.get("correct") and self.execute_final is not None:
-                        accepted_snapshot = materialize_residual_trial(
-                            working, active_candidates=[], bindings=bindings
-                        )
-                        final_evaluation = self.execute_final(accepted_snapshot, round_number)
-                    if final_evaluation.get("correct"):
-                        dispositions.extend(_number(round_dispositions, round_number))
-                        return _result(
-                            final_evaluation,
-                            working,
-                            round_number,
-                            trials_run,
-                            True,
-                            None,
-                            dispositions,
-                            acceptance,
-                        )
-                    diagnostic = final_evaluation
+                    # Preserve the existing extra verification after all accepted
+                    # candidates produce a correct trial.
+                    replay_accepted_success = bool(evaluation.get("correct"))
                     break
                 if iteration == max_iterations:
                     _mark(
@@ -438,6 +412,41 @@ class RepairCycle:
                     diagnostic = evaluation
                     break
             dispositions.extend(_number(round_dispositions, round_number))
+            accepted_snapshot = materialize_residual_trial(
+                working, active_candidates=[], bindings=bindings
+            )
+            changed_graph = (
+                snapshot is not None
+                and snapshot.ontology_fingerprint != accepted_snapshot.ontology_fingerprint
+            )
+            if changed_graph or (replay_accepted_success and self.execute_final is not None):
+                if self.execute_final is None:
+                    # The trial SQL belongs to a different graph. Do not expose it
+                    # as evidence for the exported Working ontology.
+                    diagnostic = {
+                        "correct": False,
+                        "evaluation_available": False,
+                        "evaluation_status": "working_replay_required",
+                        "query": "",
+                    }
+                    return _result(
+                        diagnostic, working, round_number, trials_run, False,
+                        "working_replay_required", dispositions, acceptance, remaining_targets,
+                    )
+                diagnostic = self.execute_final(accepted_snapshot, round_number)
+            else:
+                diagnostic = evaluation
+            failure_reason = _execution_failure(diagnostic)
+            if failure_reason:
+                return _result(
+                    diagnostic, working, round_number, trials_run, False,
+                    failure_reason, dispositions, acceptance, remaining_targets,
+                )
+            if diagnostic.get("correct"):
+                return _result(
+                    diagnostic, working, round_number, trials_run, True,
+                    None, dispositions, acceptance,
+                )
 
         return _result(
             diagnostic,
@@ -788,18 +797,21 @@ def _record_acceptance(
         )
 
 
-def _generation_failed(evaluation: dict[str, Any]) -> bool:
-    failure_kind = (evaluation.get("candidate_failure") or {}).get("kind")
-    if failure_kind == "ontology_contract":
-        return False
-    if failure_kind == "generation":
-        return True
-    query = str(evaluation.get("query") or "").strip()
-    return not query and (
-        failure_kind == "validation"
-        or evaluation.get("evaluation_available") is False
-        or evaluation.get("evaluation_status") == "candidate_validation_failed"
-    )
+def _execution_failure(evaluation: dict[str, Any]) -> str | None:
+    """Only a usable SQL execution mismatch should reach error diagnosis."""
+
+    if (evaluation.get("candidate_failure") or {}).get("kind") == "ontology_contract":
+        return "ontology_contract_failed"
+    if (
+        evaluation.get("evaluation_available") is False
+        or evaluation.get("replay_status") == "unavailable"
+    ):
+        return "evaluation_unavailable"
+    if (evaluation.get("candidate_failure") or {}).get("kind") == "generation":
+        return "candidate_generation_failed"
+    if not evaluation.get("correct") and not str(evaluation.get("query") or "").strip():
+        return "candidate_generation_failed"
+    return None
 
 
 def _mark(dispositions, candidate_ids, bindings, disposition, reason) -> None:

@@ -1226,8 +1226,30 @@ class TrainPipeline:
             }
             final_assets = [asset for asset in final_assets if asset.id in accepted_ids]
             final_fingerprint = ontology_fingerprint(final_assets)
+            directly_retained_ids = {
+                asset_id
+                for event in result.get("events", [])
+                if event.get("stage") == "initial_direct_extraction"
+                for asset_id in event.get("retained_asset_ids", [])
+            }
+            result["directly_retained_asset_ids"] = sorted(directly_retained_ids & accepted_ids)
+            result["assessment_accepted_asset_ids"] = sorted({
+                asset_id
+                for evidence in result.get("acceptance_evidence", [])
+                for asset_id in evidence.get("composition_asset_ids", [])
+            } & accepted_ids)
             result["final_materialized_ontology_fingerprint"] = final_fingerprint
             result["final_ontology_fingerprint"] = final_fingerprint
+            evaluated_fingerprint = result.get("evaluation_ontology_fingerprint")
+            if evaluated_fingerprint and evaluated_fingerprint != final_fingerprint:
+                result.update(
+                    correct=False,
+                    sql_correct=False,
+                    case_stable_correct=False,
+                    failed_closed=True,
+                    failure_reason="export_ontology_evaluation_mismatch",
+                    reason="exported ontology differs from the evaluated working ontology",
+                )
             result["draft_nodes"] = [serialize_asset_envelope(asset) for asset in final_assets]
             result["draft_node_ids"] = [asset.id for asset in final_assets]
             result["draft_node_count"] = len(final_assets)
@@ -1313,7 +1335,7 @@ class TrainPipeline:
         trace_logger: TrainTraceLogger,
         max_rounds: int = 1,
     ) -> dict[str, Any]:
-        """Validate Initial candidates, then repair the accepted Working Ontology."""
+        """Retain direct extraction, then repair Working after an incorrect replay."""
 
         del prepared_path
         source_id = str(record["source_id"])
@@ -1325,11 +1347,7 @@ class TrainPipeline:
                 else _read_semantic_draft_assets(self.workspace)
             )
         ]
-        trace_suffix = {
-            "initial_current_working_replay": "initial_current_working",
-            "initial_induction_replay": "initial_induction",
-            "initial_retention_replay": "initial_retention",
-        }
+        trace_suffix = {"initial_working_replay": "initial_working"}
 
         def replay_initial(stage: str, assets: list[NodeAsset]) -> StableReplayResult:
             suffix = trace_suffix[stage]
@@ -1552,7 +1570,7 @@ class TrainPipeline:
             latest_selected_ids.update(replay.effective_selected_ontology_ids())
             latest_raw_retrieved_ids.clear()
             latest_raw_retrieved_ids.update(replay.effective_raw_retrieved_ontology_ids())
-            return replay.terminal_evaluation
+            return {**replay.terminal_evaluation, "ontology_fingerprint": snapshot.ontology_fingerprint}
 
         def execute_final(snapshot, round_number):
             phase = f"joint_round_{round_number}_final_candidate"
@@ -1576,7 +1594,7 @@ class TrainPipeline:
                 trace_logger=trace_logger,
                 retrieval_graph=retrieval_graph,
             )
-            return replay.terminal_evaluation
+            return {**replay.terminal_evaluation, "ontology_fingerprint": snapshot.ontology_fingerprint}
 
         def assess_trial(evaluation, plan, bindings, candidates, accepted_ids):
             assessment_trace: dict[str, Any] = {}
@@ -2582,6 +2600,9 @@ def _joint_case_result(
         "question": record["question"],
         "correct": correct,
         "sql_correct": trial_sql_correct,
+        "evaluation_available": final_eval.get("evaluation_available", True),
+        "oracle_unavailable": bool(final_eval.get("oracle_unavailable")),
+        "evaluation_ontology_fingerprint": final_eval.get("ontology_fingerprint"),
         "replay_status": final_eval.get("replay_status"),
         "required_correct_replays": final_eval.get("required_correct_replays"),
         "completed_replays": final_eval.get("completed_replays"),

@@ -9,12 +9,8 @@ from cortex.capabilities.sql_training.core.enums import NodeType
 from cortex.capabilities.sql_training.llm import LLMProvider
 from cortex.capabilities.sql_training.models import NodeAsset
 from cortex.capabilities.sql_training.models.base import NodeModel
-from cortex.capabilities.sql_training.models.generation_rule import GenerationRuleProperties
-from cortex.capabilities.sql_training.training.initial.assessment import (
-    InitialCandidateAssessmentError,
-    assess_initial_candidates,
+from cortex.capabilities.sql_training.training.initial.compositions import (
     build_initial_candidate_compositions,
-    build_initial_candidate_decision,
 )
 from cortex.capabilities.sql_training.training.repair.contracts import (
     asset_fingerprint,
@@ -40,7 +36,7 @@ class InitialCasePartition(NodeModel):
 
 
 class InitialFlowResult(NodeModel):
-    """Accepted Working and the diagnostic cursor produced by Initial validation."""
+    """Directly retained Working and its stable replay diagnostic cursor."""
 
     working_assets: list[NodeAsset] = Field(default_factory=list)
     evaluation: dict[str, Any] = Field(default_factory=dict)
@@ -67,273 +63,85 @@ def run_initial_flow(
     trace: TraceInitialStep,
     metric_candidate_sets: list[dict[str, Any]] | None = None,
 ) -> InitialFlowResult:
-    """Validate extracted candidates through induction assessment and retention."""
+    """Retain direct extraction and evaluate it once through the stable replay gate.
 
+    Accepted IDs mean retained knowledge, not an initial semantic assessment verdict.
+    The replay callback builds and validates the actual case retrieval graph.
+    """
+
+    del provider  # Kept in the call contract; initial extraction has no LLM assessment.
     partition = build_initial_case_partition(
         case_id=str(record["source_id"]),
         permanent_base_assets=[],
         merged_assets=staged_assets,
-        candidate_outcomes=None,
     )
-    working = [asset.model_copy(deep=True) for asset in partition.working_assets]
-    candidates = [asset.model_copy(deep=True) for asset in partition.initial_candidates]
-    candidates_by_id = {asset.id: asset for asset in candidates}
-    candidate_compositions = build_initial_candidate_compositions(
-        candidates,
-        metric_candidate_sets=metric_candidate_sets,
+    candidates = partition.initial_candidates
+    compositions = build_initial_candidate_compositions(
+        candidates, metric_candidate_sets=metric_candidate_sets,
     )
-    compositions_by_id = {candidate.candidate_id: candidate for candidate in candidate_compositions}
-    rejected_ids = set(partition.not_accepted_asset_ids)
-    accepted_ids: set[str] = set()
-    events: list[dict[str, Any]] = []
+    working = _overlay_assets(partition.working_assets, candidates)
+    retained_ids = {asset.id for asset in working}
+    claims: dict[str, dict[str, list[str]]] = {}
+    for asset in candidates:
+        if asset.node_type in {NodeType.SEMANTIC_MAPPING, NodeType.METRIC}:
+            name = " ".join(asset.name.split()).casefold()
+            if name:
+                claims.setdefault(name, {}).setdefault(asset.node_type.value, []).append(asset.id)
+    conflicts = {
+        name: sorted(asset_id for ids in types.values() for asset_id in ids)
+        for name, types in claims.items() if len(types) > 1
+    }
     publish_working(working)
     trace(
-        step="initial_candidate_partition",
-        phase="initial_induction_replay",
+        step="initial_direct_retention",
+        phase="initial_working_replay",
         input={"staged_asset_ids": [asset.id for asset in staged_assets]},
         output={
-            "initial_candidate_asset_ids": sorted(candidates_by_id),
+            "retained_asset_ids": sorted(retained_ids),
+            "retention_basis": "direct_extraction",
             "initial_candidate_compositions": [
                 {
-                    "candidate_id": candidate.candidate_id,
-                    "root_asset_ids": list(candidate.root_asset_ids),
-                    "dependency_asset_ids": list(candidate.dependency_asset_ids),
-                    "asset_ids": list(candidate.asset_ids),
+                    "candidate_id": item.candidate_id,
+                    "root_asset_ids": list(item.root_asset_ids),
+                    "dependency_asset_ids": list(item.dependency_asset_ids),
+                    "asset_ids": list(item.asset_ids),
                 }
-                for candidate in candidate_compositions
+                for item in compositions
             ],
-            "deduplicated_asset_ids": partition.deduplicated_asset_ids,
-            "unsupported_initial_asset_ids": sorted(rejected_ids),
+            "same_name_concept_metric_conflicts": conflicts,
         },
         summary={
-            "initial_candidate_count": len(candidates),
-            "unsupported_initial_count": len(rejected_ids),
+            "retained_asset_count": len(retained_ids),
             "working_ontology_fingerprint": ontology_fingerprint(working),
+            "semantic_assessment_performed": False,
         },
     )
-
-    if not candidates:
-        current = replay("initial_current_working_replay", working)
-        current_eval = current.terminal_evaluation
-        events.append(_replay_event(current, ontology="accepted_working"))
-        return _initial_result(
-            working=working,
-            evaluation=current_eval,
-            events=events,
-            accepted_ids=accepted_ids,
-            rejected_ids=rejected_ids,
-            deduplicated_ids=partition.deduplicated_asset_ids,
-            requires_repair=(
-                current_eval.get("evaluation_available") is False
-                or not bool(current_eval.get("correct"))
-            ),
-            failure_reason=(
-                "initial_current_working_evaluation_unavailable"
-                if current_eval.get("evaluation_available") is False
-                else None
-            ),
-        )
-
-    induction_assets = _overlay_assets(working, candidates)
-    publish_working(induction_assets)
-    induction = replay("initial_induction_replay", induction_assets)
-    induction_eval = induction.terminal_evaluation
-    events.append(
-        _replay_event(
-            induction,
-            ontology="initial_candidates",
-            stage="initial_induction",
-        )
+    replay_result = replay("initial_working_replay", working)
+    evaluation = dict(replay_result.terminal_evaluation)
+    evaluation["ontology_fingerprint"] = ontology_fingerprint(working)
+    event = _replay_event(replay_result, ontology="retained_working", stage="initial_direct_extraction")
+    event.update(
+        retained_asset_ids=sorted(retained_ids),
+        retention_basis="direct_extraction",
+        ontology_fingerprint=ontology_fingerprint(working),
+        same_name_concept_metric_conflicts=conflicts,
     )
-    induction_query = str(induction_eval.get("query") or "").strip()
-    if induction_eval.get("evaluation_available") is False or not induction_query:
-        rejected_ids.update(candidates_by_id)
-        publish_working(working)
-        reason = (
-            "initial_induction_evaluation_unavailable"
-            if induction_eval.get("evaluation_available") is False
-            else "initial_induction_generation_failed"
-        )
-        events.append(
-            {
-                "round": 0,
-                "stage": "initial_induction_rejected",
-                "evaluation": induction_eval,
-                "rejected_asset_ids": sorted(candidates_by_id),
-                "reason": reason,
-            }
-        )
-        trace(
-            step="initial_candidate_rejection",
-            phase="initial_induction_replay",
-            input={"candidate_asset_ids": sorted(candidates_by_id)},
-            output={
-                "rejected_asset_ids": sorted(candidates_by_id),
-                "evaluation": induction_eval,
-            },
-            summary={
-                "reason": reason,
-                "failed_closed": True,
-            },
-        )
-        return _initial_result(
-            working=working,
-            evaluation=induction_eval,
-            events=events,
-            accepted_ids=accepted_ids,
-            rejected_ids=rejected_ids,
-            deduplicated_ids=partition.deduplicated_asset_ids,
-            requires_repair=True,
-            failure_reason=reason,
-        )
-
-    selected_ids = induction.effective_selected_ontology_ids()
-    raw_retrieved_ids = induction.effective_raw_retrieved_ontology_ids()
-    retrieval = {asset.id: asset.id in selected_ids for asset in candidates}
-    raw_retrieval = {asset.id: asset.id in raw_retrieved_ids for asset in candidates}
-    assessment_trace: dict[str, Any] = {}
-    try:
-        assessment = assess_initial_candidates(
-            provider,
-            payload={
-                "question": record["question"],
-                "gold_sql": record["sql"],
-                "evidence": record.get("evidence"),
-                "gold_column_metadata": record.get("gold_column_metadata", {}),
-                "current_sql": induction_eval.get("query"),
-            },
-            candidates=candidate_compositions,
-            retrieval_by_asset=retrieval,
-            raw_retrieval_by_asset=raw_retrieval,
-            trace_capture=assessment_trace,
-        )
-        decision = build_initial_candidate_decision(
-            assessment,
-            candidates=candidate_compositions,
-            retrieval_by_asset=retrieval,
-            raw_retrieval_by_asset=raw_retrieval,
-        )
-    except InitialCandidateAssessmentError as exc:
-        rejected_ids.update(candidates_by_id)
-        publish_working(working)
-        trace(
-            step="initial_candidate_assessment",
-            phase="initial_candidate_assessment",
-            input={
-                "candidate_asset_ids": sorted(candidates_by_id),
-                "retrieval_by_asset": retrieval,
-                "raw_retrieval_by_asset": raw_retrieval,
-            },
-            output={"assessment": None, "decision": None},
-            prompt=assessment_trace.get("prompt"),
-            response=assessment_trace.get("response"),
-            summary={
-                "failed_closed": True,
-                "eligible_candidate_ids": [],
-                "eligible_asset_ids": [],
-            },
-        )
-        return _initial_result(
-            working=working,
-            evaluation=induction_eval,
-            events=events,
-            accepted_ids=accepted_ids,
-            rejected_ids=rejected_ids,
-            deduplicated_ids=partition.deduplicated_asset_ids,
-            failure_reason=f"initial_candidate_assessment_invalid: {exc}",
-        )
-
-    trace(
-        step="initial_candidate_assessment",
-        phase="initial_candidate_assessment",
-        input={
-            "candidate_asset_ids": sorted(candidates_by_id),
-            "retrieval_by_asset": retrieval,
-            "raw_retrieval_by_asset": raw_retrieval,
-        },
-        output={"assessment": assessment, "decision": decision},
-        prompt=assessment_trace.get("prompt"),
-        response=assessment_trace.get("response"),
-        summary={
-            "failed_closed": False,
-            "eligible_candidate_ids": decision.eligible_candidate_ids,
-            "eligible_asset_ids": _composition_asset_ids(
-                compositions_by_id,
-                decision.eligible_candidate_ids,
-            ),
-        },
-    )
-    rejected_ids.update(_composition_asset_ids(compositions_by_id, decision.rejected_candidate_ids))
-    rejected_ids.update(
-        _composition_asset_ids(compositions_by_id, decision.inconclusive_candidate_ids)
-    )
-    eligible_asset_ids = _composition_asset_ids(
-        compositions_by_id,
-        decision.eligible_candidate_ids,
-    )
-    accepted_ids.update(eligible_asset_ids)
-    visible_semantic_ids = {asset.id for asset in working} | set(eligible_asset_ids)
-    eligible_assets = _remove_unavailable_rule_references(
-        [candidates_by_id[asset_id] for asset_id in eligible_asset_ids],
-        visible_semantic_ids=visible_semantic_ids,
-    )
-    working = _overlay_assets(
-        working,
-        eligible_assets,
-    )
-    publish_working(working)
-
-    retention = replay("initial_retention_replay", working)
-    retention_eval = retention.terminal_evaluation
-    events.append(
-        _replay_event(
-            retention,
-            ontology="eligible_initial_candidates",
-            stage="initial_retention",
-        )
-    )
-    retention_selected_ids = retention.effective_selected_ontology_ids()
-    retention_available = retention_eval.get("evaluation_available") is not False
-    trace(
-        step="initial_retention_check",
-        phase="initial_retention_replay",
-        input={
-            "eligible_asset_ids": sorted(accepted_ids),
-            "selected_ontology_ids": sorted(retention_selected_ids),
-        },
-        output={"evaluation": _evaluation_summary(retention_eval)},
-        summary={
-            "accepted_asset_ids": sorted(accepted_ids),
-            "evaluation_available": retention_available,
-            "correct": bool(retention_eval.get("correct")),
-        },
-    )
-    retention_failed = not retention_available or not bool(retention_eval.get("correct"))
-    if retention_failed:
-        reason = (
-            "initial_retention_evaluation_unavailable"
-            if not retention_available
-            else "initial_retention_sql_incorrect"
-        )
-        events.append(
-            {
-                "round": 0,
-                "stage": "initial_retention_diagnosis",
-                "evaluation": retention_eval,
-                "reason": reason,
-            }
-        )
+    failure = evaluation.get("candidate_failure") or {}
+    if evaluation.get("evaluation_available") is False:
+        reason = "initial_working_evaluation_unavailable"
+    elif failure.get("kind") == "generation" or not str(evaluation.get("query") or "").strip():
+        reason = "initial_working_generation_failed"
+    else:
+        reason = None
     return _initial_result(
         working=working,
-        evaluation=retention_eval,
-        events=events,
-        accepted_ids=accepted_ids,
-        rejected_ids=rejected_ids,
+        evaluation=evaluation,
+        events=[event],
+        accepted_ids=retained_ids,
+        rejected_ids=set(partition.not_accepted_asset_ids),
         deduplicated_ids=partition.deduplicated_asset_ids,
-        requires_repair=retention_failed,
-        failure_reason=(
-            "initial_retention_evaluation_unavailable" if not retention_available else None
-        ),
+        requires_repair=reason is None and not replay_result.correct,
+        failure_reason=reason,
     )
 
 
@@ -402,40 +210,6 @@ def _overlay_assets(base: list[NodeAsset], updates: list[NodeAsset]) -> list[Nod
     for asset in updates:
         by_id[asset.id] = asset.model_copy(deep=True)
     return sorted(by_id.values(), key=lambda asset: asset.id)
-
-
-def _remove_unavailable_rule_references(
-    assets: list[NodeAsset],
-    *,
-    visible_semantic_ids: set[str],
-) -> list[NodeAsset]:
-    """Drop same-run semantic references whose candidates were not retained."""
-
-    result: list[NodeAsset] = []
-    for asset in assets:
-        copied = asset.model_copy(deep=True)
-        if isinstance(copied.properties, GenerationRuleProperties):
-            copied.properties.references = [
-                reference
-                for reference in copied.properties.references
-                if not reference.startswith(("concept.", "metric."))
-                or reference in visible_semantic_ids
-            ]
-        result.append(copied)
-    return result
-
-
-def _composition_asset_ids(
-    compositions_by_id: dict[str, Any],
-    candidate_ids: list[str] | set[str],
-) -> list[str]:
-    return sorted(
-        {
-            asset_id
-            for candidate_id in candidate_ids
-            for asset_id in compositions_by_id[candidate_id].asset_ids
-        }
-    )
 
 
 def _replay_event(

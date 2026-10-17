@@ -1,1 +1,1 @@
-"""Initial extraction candidate binding, assessment, and validation flow."""
+"""Direct extraction retention, composition validation, and stable replay."""
