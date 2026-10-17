@@ -30,9 +30,4 @@ usecase/
 /docs/
 /tests/
 /baseline/tests/
-
-# Keep focused extraction regression tests in the release.
-!/tests/
-/tests/*
-!/tests/test_extraction_initial.py
-!/tests/test_repair_round_boundary.py
+/datasets/
