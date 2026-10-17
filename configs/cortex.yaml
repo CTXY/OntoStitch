@@ -1,0 +1,29 @@
+root_schema: {}
+llm:
+  model: ${CORTEX_LLM_MODEL}
+  base_url: ${CORTEX_LLM_BASE_URL}
+  api_key: ${CORTEX_LLM_API_KEY}
+  temperature: 0
+  timeout: 300
+  max_retries: 2
+  embedding:
+    model: ${CORTEX_EMBEDDING_MODEL}
+database:
+  type: sqlite
+  path: data/databases/demo/demo.sqlite
+services:
+  sql_training:
+    workspace: workspace/sql_training
+    case_max_workers: 1
+    extraction_max_workers: 1
+    llm_key_pool_path: configs/sql-training.keys
+    max_rounds: 3
+    max_iterations: 3
+    required_consecutive_correct_replays: 3
+    validation:
+      dialect: sqlite
+  online_context:
+    question_budget: null  # Maximum questions per request; includes JOIN choices.
+    evaluation_key_pool_path: configs/sql-training.keys
+    evaluation_case_max_workers: 1
+    query_example_top_k: 0

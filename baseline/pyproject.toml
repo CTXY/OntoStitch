@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cortex-nl2sql-baseline"
+version = "0.1.0"
+description = "Standalone schema-linking and prompting NL2SQL evaluation baseline"
+requires-python = ">=3.11"
+dependencies = [
+  "click>=8.1",
+  "langchain-openai>=1.0,<2",
+  "pymysql>=1.1",
+  "pyyaml>=6.0",
+  "sqlalchemy>=2.0",
+]
+
+[project.scripts]
+cortex-nl2sql = "nl2sql_baseline.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nl2sql_baseline"]

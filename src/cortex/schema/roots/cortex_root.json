@@ -1,0 +1,1161 @@
+{
+  "node_types": [
+    {
+      "id": "table",
+      "family": "structured",
+      "name": "数据表",
+      "description": "可直接参与查询的数据源物理表或逻辑视图；描述数据结构和查询边界，不表示抽象业务概念。",
+      "extends": null,
+      "fields": {
+        "database": {
+          "type": "string",
+          "required": false,
+          "description": "该表所属的数据库、数据源或连接名称。",
+          "enum": null,
+          "default": null
+        },
+        "database_description": {
+          "type": "string",
+          "required": false,
+          "description": "所属数据库或数据源的业务范围说明。",
+          "enum": null,
+          "default": null
+        },
+        "table_name": {
+          "type": "string",
+          "required": true,
+          "description": "数据源中可被查询引用的物理表名或视图名。",
+          "enum": null,
+          "default": null
+        },
+        "table_schema": {
+          "type": "string|object",
+          "required": false,
+          "description": "用于字段解析和查询生成的原始建表语句或结构化 Schema 快照。",
+          "enum": null,
+          "default": null
+        },
+        "important_columns": {
+          "type": "string[]",
+          "required": false,
+          "description": "默认召回和查询上下文需要优先保留的字段引用。",
+          "enum": null,
+          "default": null
+        },
+        "primary_keys": {
+          "type": "string[]",
+          "required": false,
+          "description": "表的主键字段引用。",
+          "enum": null,
+          "default": null
+        },
+        "foreign_keys": {
+          "type": "string[]",
+          "required": false,
+          "description": "表的外键字段引用。",
+          "enum": null,
+          "default": null
+        },
+        "available_time_columns": {
+          "type": "string[]",
+          "required": false,
+          "description": "可用于时间过滤和分析的字段引用。",
+          "enum": null,
+          "default": null
+        },
+        "default_time_column": {
+          "type": "string",
+          "required": false,
+          "description": "默认时间字段引用。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "exact",
+        "fields": [
+          "properties.database",
+          "properties.table_name"
+        ],
+        "description": "The same physical table."
+      },
+      "merge_role": "fact"
+    },
+    {
+      "id": "column",
+      "family": "structured",
+      "name": "数据字段",
+      "description": "数据表中可被投影、计算、过滤、分组或关联的物理字段；字段的业务含义应通过语义角色和关系补充。",
+      "extends": null,
+      "fields": {
+        "table_ref": {
+          "type": "string",
+          "required": false,
+          "description": "该字段所属物理或逻辑表的规范 Table 引用。",
+          "enum": null,
+          "default": null
+        },
+        "column_name": {
+          "type": "string",
+          "required": true,
+          "description": "数据源中可被 SQL 引用的物理字段名。",
+          "enum": null,
+          "default": null
+        },
+        "data_type": {
+          "type": "string",
+          "required": false,
+          "description": "数据源声明的原始字段类型。",
+          "enum": null,
+          "default": null
+        },
+        "sample_values": {
+          "type": "array",
+          "required": false,
+          "description": "用于理解字段取值形态的脱敏代表性样例。",
+          "enum": null,
+          "default": null
+        },
+        "unit": {
+          "type": "string",
+          "required": false,
+          "description": "字段数值使用的业务计量单位。",
+          "enum": null,
+          "default": null
+        },
+        "nullable": {
+          "type": "boolean",
+          "required": false,
+          "description": "数据源约束是否允许该字段为空。",
+          "enum": null,
+          "default": null
+        },
+        "semantic_role": {
+          "type": "string",
+          "required": false,
+          "description": "字段在分析和查询生成中的主要语义角色。",
+          "enum": [
+            "DIMENSION",
+            "MEASURE",
+            "TIME",
+            "IDENTIFIER"
+          ],
+          "default": null
+        },
+        "references": {
+          "type": "string[]",
+          "required": false,
+          "description": "字段所属表等规范资产引用。",
+          "enum": null,
+          "default": null
+        },
+        "key_role": {
+          "type": "string",
+          "required": false,
+          "description": "字段的主键、外键或非键角色。",
+          "enum": [
+            "PRIMARY_KEY",
+            "FOREIGN_KEY",
+            "NONE"
+          ],
+          "default": null
+        },
+        "statistics": {
+          "type": "object",
+          "required": false,
+          "description": "用于理解数据分布和辅助查询规划的字段统计信息。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "exact",
+        "fields": [
+          "properties.table_ref",
+          "properties.column_name"
+        ],
+        "description": "The same producer-scoped column business key."
+      },
+      "merge_role": "fact"
+    },
+    {
+      "id": "dimension_value",
+      "family": "structured",
+      "name": "标准维度值",
+      "description": "字段取值域中需要独立治理、召回、映射或维护别名的标准值；普通样例值不应注册为独立节点。",
+      "extends": null,
+      "fields": {
+        "column_ref": {
+          "type": "string",
+          "required": false,
+          "description": "该维值所属字段的规范 Column 引用。",
+          "enum": null,
+          "default": null
+        },
+        "value": {
+          "type": "string|number|boolean",
+          "required": true,
+          "description": "写入过滤条件或与数据源值比较时使用的规范真实值。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "exact",
+        "fields": [
+          "properties.column_ref",
+          "properties.value"
+        ],
+        "description": "The same producer-scoped dimension value."
+      },
+      "merge_role": "fact"
+    },
+    {
+      "id": "metric",
+      "family": "structured",
+      "name": "指标",
+      "description": "具有稳定业务名称、明确计算表达式和可追踪依赖的量化语义资产；",
+      "extends": null,
+      "fields": {
+        "references": {
+          "type": "string[]",
+          "required": false,
+          "description": "指标直接依赖或用于生成计划的规范资产引用。",
+          "enum": null,
+          "default": null
+        },
+        "metric_name": {
+          "type": "string",
+          "required": false,
+          "description": "训练运行时使用的规范指标名称。",
+          "enum": null,
+          "default": null
+        },
+        "metric_kind": {
+          "type": "string",
+          "required": false,
+          "description": "指标的业务或计算类别。",
+          "enum": null,
+          "default": null
+        },
+        "pattern": {
+          "type": "string",
+          "required": false,
+          "description": "指标口径的自然语言计算模式。",
+          "enum": null,
+          "default": null
+        },
+        "expression": {
+          "type": "string|object",
+          "required": true,
+          "description": "可被编译或解释执行的指标计算表达式及口径。",
+          "enum": null,
+          "default": null
+        },
+        "filters": {
+          "type": "object[]",
+          "required": false,
+          "description": "指标计算必须施加的固定过滤谓词。",
+          "enum": null,
+          "default": null
+        },
+        "default_time": {
+          "type": "string",
+          "required": false,
+          "description": "默认时间分析字段引用。",
+          "enum": null,
+          "default": null
+        },
+        "allowed_dimension_refs": {
+          "type": "string[]",
+          "required": false,
+          "description": "允许用于指标分组或切片的字段引用。",
+          "enum": null,
+          "default": null
+        },
+        "aggregation_policy": {
+          "type": "string",
+          "required": false,
+          "description": "指标在查询执行中的聚合阶段和组合策略。",
+          "enum": [
+            "DIRECT_AGGREGATE",
+            "POST_AGGREGATE_CALC",
+            "AGGREGATE_THEN_JOIN"
+          ],
+          "default": null
+        },
+        "calculation_policy": {
+          "type": "object",
+          "required": false,
+          "description": "指标计算阶段和组合方式的结构化补充策略。",
+          "enum": null,
+          "default": null
+        },
+        "sql_generation_plans": {
+          "type": "object[]",
+          "required": false,
+          "description": "经编译或人工确认、可供查询生成器执行的结构化计划。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "semantic",
+        "fields": [
+          "name",
+          "aliases",
+          "properties.metric_name",
+          "properties.metric_kind"
+        ],
+        "description": "The same stable business measure or metric intent. Names, aliases, metric_name, and metric_kind are primary identity evidence. Description, pattern, expression, filters, unit, grain, and generation plans are implementation evidence: differences in them do not alone create a different identity and must be reconciled later. Return a different identity only when the measured business quantity, numerator/denominator meaning, unit semantics, or metric category changes."
+      },
+      "merge_role": "knowledge"
+    },
+    {
+      "id": "generation_rule",
+      "family": "structured",
+      "name": "查询生成规则",
+      "description": "由自然语言触发并对 SQL 或查询计划进行确定性补充、约束或改写的规则；",
+      "extends": null,
+      "fields": {
+        "sql_trigger": {
+          "type": "string|object",
+          "required": false,
+          "description": "规则触发后注入或执行的 SQL 片段、约束或结构化改写动作。",
+          "enum": null,
+          "default": null
+        },
+        "nl_triggers": {
+          "type": "string[]",
+          "required": false,
+          "description": "能够稳定触发该查询生成规则的自然语言表达。",
+          "enum": null,
+          "default": null
+        },
+        "references": {
+          "type": "string[]",
+          "required": false,
+          "description": "condition 明确需要的完整规范资产 ID；所有引用必须共同满足。语义目标编译为 applies_to，物理目标编译为 grounded_on。",
+          "enum": null,
+          "default": null
+        },
+        "operation_intent": {
+          "type": "string",
+          "required": false,
+          "description": "Initial Extraction 使用的 Operation Registry 意图提示；不替代 condition/action，也不参与规则 identity。",
+          "enum": null,
+          "default": null
+        },
+        "triggers": {
+          "type": "object",
+          "required": false,
+          "description": "自然语言短语与 SQL 操作组成的结构化触发信号。",
+          "enum": null,
+          "default": null
+        },
+        "condition": {
+          "type": "string",
+          "required": false,
+          "description": "规则成立和执行的前置条件。",
+          "enum": null,
+          "default": null
+        },
+        "action": {
+          "type": "string",
+          "required": false,
+          "description": "规则触发后执行的确定性查询生成动作。",
+          "enum": null,
+          "default": null
+        },
+        "reason": {
+          "type": "string",
+          "required": false,
+          "description": "将 action 与同一操作意图的另一种合理实现进行比较，并说明可观察的结果差异。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "semantic",
+        "fields": [
+          "name",
+          "properties.condition",
+          "properties.action"
+        ],
+        "description": "The same reusable SQL generation behavior."
+      },
+      "merge_role": "knowledge"
+    },
+    {
+      "id": "example",
+      "family": "structured",
+      "name": "查询示例",
+      "description": "经验证的自然语言任务与参考 SQL 配对，用于检索、示范或评测查询生成；",
+      "extends": null,
+      "fields": {
+        "task": {
+          "type": "string",
+          "required": true,
+          "description": "用户意图明确的自然语言任务或问题。",
+          "enum": null,
+          "default": null
+        },
+        "sql": {
+          "type": "string",
+          "required": true,
+          "description": "已验证能够正确回答该任务的参考 SQL。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "exact",
+        "fields": [
+          "properties.task",
+          "properties.sql"
+        ],
+        "description": "The same training example."
+      },
+      "merge_role": "fact"
+    },
+    {
+      "id": "knowledge_unit",
+      "family": "unstructured",
+      "name": "知识单元",
+      "description": "具有完整、独立、可引用含义，但现阶段无法可靠归入 Concept、Entity、Event、Process 或 Rule 的兜底知识节点。",
+      "extends": null,
+      "fields": {
+        "topics": {
+          "type": "string[]",
+          "required": false,
+          "description": "用于知识归类、召回和后续类型演化的主题标签。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "semantic",
+        "fields": [
+          "name",
+          "description"
+        ],
+        "description": "The same knowledge unit."
+      },
+      "merge_role": "fact"
+    },
+    {
+      "id": "entity",
+      "family": "unstructured",
+      "name": "实体",
+      "description": "具有可区分身份、能够被独立引用并参与关系的具体业务对象；",
+      "extends": null,
+      "fields": {
+        "identifiers": {
+          "type": "object",
+          "required": false,
+          "description": "用于跨来源识别和对齐该实体的外部系统标识集合。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "semantic",
+        "fields": [
+          "name",
+          "aliases",
+          "description"
+        ],
+        "description": "The same real-world entity."
+      },
+      "merge_role": "fact"
+    },
+    {
+      "id": "event",
+      "family": "unstructured",
+      "name": "事件",
+      "description": "在特定时间或时间范围内实际发生、计划发生或被观察到的一次实例；可重复执行的方法和步骤应建模为 Process。",
+      "extends": null,
+      "fields": {
+        "occurred_at": {
+          "type": "date|datetime",
+          "required": false,
+          "description": "事件开始或实际发生的时间。",
+          "enum": null,
+          "default": null
+        },
+        "ended_at": {
+          "type": "date|datetime",
+          "required": false,
+          "description": "事件结束时间或有效期终点。",
+          "enum": null,
+          "default": null
+        },
+        "result": {
+          "type": "string|object",
+          "required": false,
+          "description": "该次事件已经产生或预期产生的结果。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "semantic",
+        "fields": [
+          "name",
+          "description"
+        ],
+        "description": "The same event."
+      },
+      "merge_role": "fact"
+    },
+    {
+      "id": "process",
+      "family": "unstructured",
+      "name": "流程",
+      "description": "为达成稳定目标而可重复执行的步骤、阶段或操作路径；某次流程执行记录应建模为 Event。",
+      "extends": null,
+      "fields": {
+        "objective": {
+          "type": "string",
+          "required": false,
+          "description": "执行该流程希望达成的业务目标。",
+          "enum": null,
+          "default": null
+        },
+        "steps": {
+          "type": "object[]",
+          "required": false,
+          "description": "按先后顺序描述的操作步骤、输入、输出或参与方。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "semantic",
+        "fields": [
+          "name",
+          "description"
+        ],
+        "description": "The same process."
+      },
+      "merge_role": "fact"
+    },
+    {
+      "id": "rule",
+      "family": "unstructured",
+      "name": "规则",
+      "description": "可独立引用的条件—结论、限制、推导或决策逻辑；",
+      "extends": null,
+      "fields": {
+        "condition": {
+          "type": "string|object",
+          "required": false,
+          "description": "规则适用、触发或成立所要求的前提条件。",
+          "enum": null,
+          "default": null
+        },
+        "conclusion": {
+          "type": "string|object",
+          "required": true,
+          "description": "条件满足后必须遵循的限制、可推导的事实或决策结果。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "semantic",
+        "fields": [
+          "name",
+          "description"
+        ],
+        "description": "The same rule."
+      },
+      "merge_role": "fact"
+    },
+    {
+      "id": "concept",
+      "family": "common",
+      "name": "概念",
+      "description": "跨结构化与非结构化来源共享的稳定术语、类别或业务含义；概念本身不要求具有具体身份或可直接执行的计算表达式。",
+      "extends": null,
+      "fields": {
+        "definition": {
+          "type": "string",
+          "required": false,
+          "description": "用于消除歧义并支持一致理解的概念规范定义。",
+          "enum": null,
+          "default": null
+        },
+        "scope": {
+          "type": "string",
+          "required": false,
+          "description": "该概念成立或使用时适用的业务领域和上下文边界。",
+          "enum": null,
+          "default": null
+        },
+        "mapping_type": {
+          "type": "string",
+          "required": false,
+          "description": "概念映射到物理语义资产时采用的映射类别。",
+          "enum": null,
+          "default": null
+        },
+        "targets": {
+          "type": "object[]",
+          "required": false,
+          "description": "具有稳定 target ID、表达式、引用和过滤模板的候选展开目标。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "inclusion_criteria": [],
+      "exclusion_criteria": [],
+      "identity_policy": {
+        "mode": "semantic",
+        "fields": [
+          "name",
+          "aliases",
+          "description"
+        ],
+        "description": "The same normalized business concept."
+      },
+      "merge_role": "fact"
+    }
+  ],
+  "edge_types": [
+    {
+      "id": "belongs_to",
+      "name": "字段归属",
+      "description": "起点 Column 是终点 Table 直接包含的物理字段；只表达字段与所属表的结构归属，不表达跨表关联。",
+      "from_node_types": [
+        "column"
+      ],
+      "to_node_types": [
+        "table"
+      ],
+      "fields": {
+        "is_default_time": {
+          "type": "boolean",
+          "required": false,
+          "description": "该字段是否为所属表在默认分析和时间过滤中使用的时间列。",
+          "enum": null,
+          "default": false
+        },
+        "is_important": {
+          "type": "boolean",
+          "required": false,
+          "description": "该字段是否应作为所属表的重要字段参与默认召回和上下文构建。",
+          "enum": null,
+          "default": false
+        },
+        "is_available_time": {
+          "type": "boolean",
+          "required": false,
+          "description": "该字段是否为所属表可用于时间分析的字段。",
+          "enum": null,
+          "default": false
+        },
+        "is_primary_key": {
+          "type": "boolean",
+          "required": false,
+          "description": "该字段是否为所属表主键。",
+          "enum": null,
+          "default": false
+        },
+        "is_foreign_key": {
+          "type": "boolean",
+          "required": false,
+          "description": "该字段是否为所属表外键。",
+          "enum": null,
+          "default": false
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "value_of",
+      "name": "维值归属",
+      "description": "起点 DimensionValue 是终点 Column 取值域中的标准值；用于值召回、别名映射和过滤条件生成。",
+      "from_node_types": [
+        "dimension_value"
+      ],
+      "to_node_types": [
+        "column"
+      ],
+      "fields": {},
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "joins_with",
+      "name": "明细表连接",
+      "description": "起点 Table 与终点 Table 可以在明细层按照完整字段条件直接连接；聚合后才能建立的跨粒度关系应使用 AlignsWith。",
+      "from_node_types": [
+        "table"
+      ],
+      "to_node_types": [
+        "table"
+      ],
+      "fields": {
+        "default_join_type": {
+          "type": "string",
+          "required": true,
+          "description": "未被查询上下文覆盖时使用的默认 SQL Join 类型。",
+          "enum": [
+            "INNER",
+            "LEFT",
+            "RIGHT",
+            "FULL",
+            "SEMI",
+            "ANTI",
+            "CROSS"
+          ],
+          "default": null
+        },
+        "cardinality": {
+          "type": "string",
+          "required": false,
+          "description": "从起点表记录到终点表记录的基数关系。",
+          "enum": [
+            "ONE_TO_ONE",
+            "ONE_TO_MANY",
+            "MANY_TO_ONE",
+            "MANY_TO_MANY",
+            "UNKNOWN"
+          ],
+          "default": null
+        },
+        "conditions": {
+          "type": "object[]",
+          "required": true,
+          "description": "可直接转换为 Join On 表达式的完整字段对和比较条件。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "aligns_with",
+      "name": "聚合结果对齐",
+      "description": "起点 Table 与终点 Table 必须先各自聚合，再按声明的共同粒度对齐结果；该关系不表示原始明细记录可以直接连接。",
+      "from_node_types": [
+        "table"
+      ],
+      "to_node_types": [
+        "table"
+      ],
+      "fields": {
+        "default_join_type": {
+          "type": "string",
+          "required": true,
+          "description": "两侧聚合结果完成粒度对齐时使用的默认 Join 类型。",
+          "enum": [
+            "INNER",
+            "LEFT",
+            "RIGHT",
+            "FULL",
+            "SEMI",
+            "ANTI",
+            "CROSS"
+          ],
+          "default": null
+        },
+        "conditions": {
+          "type": "object[]",
+          "required": true,
+          "description": "两侧独立聚合后用于结果对齐的粒度字段和比较条件。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "depends_on",
+      "name": "指标依赖",
+      "description": "起点 Metric 的计算表达式直接依赖终点 Metric；只记录稳定语义依赖。",
+      "from_node_types": [
+        "metric"
+      ],
+      "to_node_types": [
+        "metric"
+      ],
+      "fields": {},
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "computed_from",
+      "name": "指标固定物理依赖",
+      "description": "起点 Metric 的定义不可替换地依赖终点 Column。",
+      "from_node_types": [
+        "metric"
+      ],
+      "to_node_types": [
+        "column"
+      ],
+      "fields": {
+        "constraint": {
+          "type": "string",
+          "required": true,
+          "description": "替换该字段会改变指标定义的原因。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "analyzable_by",
+      "name": "可分析维度",
+      "description": "起点 Metric 可以按照终点 Column 进行分组、切片或时间分析；该关系不表示指标表达式直接引用该字段。",
+      "from_node_types": [
+        "metric"
+      ],
+      "to_node_types": [
+        "column"
+      ],
+      "fields": {
+        "is_default_time": {
+          "type": "boolean",
+          "required": false,
+          "description": "该字段是否为此指标进行默认时间分析时使用的时间列。",
+          "enum": null,
+          "default": false
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "filters_on",
+      "name": "固定字段过滤",
+      "description": "起点 Metric 或 Concept 的稳定业务口径要求对终点 Column 施加固定过滤；不记录用户查询运行时临时输入的过滤条件。",
+      "from_node_types": [
+        "metric",
+        "concept"
+      ],
+      "to_node_types": [
+        "column"
+      ],
+      "fields": {
+        "operator": {
+          "type": "string",
+          "required": true,
+          "description": "生成字段过滤表达式时使用的规范比较操作符。",
+          "enum": [
+            "=",
+            "!=",
+            ">",
+            ">=",
+            "<",
+            "<=",
+            "IN",
+            "NOT_IN",
+            "BETWEEN",
+            "LIKE",
+            "IS_NULL",
+            "IS_NOT_NULL"
+          ],
+          "default": null
+        },
+        "values": {
+          "type": "array",
+          "required": true,
+          "description": "与操作符配套的规范过滤值；空值判断操作符可使用空数组。",
+          "enum": null,
+          "default": null
+        },
+        "target_id": {
+          "type": "string",
+          "required": false,
+          "description": "Concept 多目标映射中该过滤所属的稳定 target ID。",
+          "enum": null,
+          "default": null
+        },
+        "predicate_id": {
+          "type": "string",
+          "required": false,
+          "description": "过滤谓词在训练 revision 中的稳定 ID。",
+          "enum": null,
+          "default": null
+        },
+        "value_refs": {
+          "type": "string[]",
+          "required": false,
+          "description": "过滤值对应的 DimensionValue 节点引用。",
+          "enum": null,
+          "default": null
+        },
+        "pattern": {
+          "type": "string",
+          "required": false,
+          "description": "LIKE 等模式匹配谓词使用的规范模式。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "maps_to_column",
+      "name": "概念映射字段",
+      "description": "起点 Concept 的一个稳定映射目标直接落到终点 Column。",
+      "from_node_types": [
+        "concept"
+      ],
+      "to_node_types": [
+        "column"
+      ],
+      "fields": {
+        "target_id": {
+          "type": "string",
+          "required": true,
+          "description": "Concept 多目标映射中的稳定 target ID。",
+          "enum": null,
+          "default": null
+        },
+        "binding_operator": {
+          "type": "string",
+          "required": true,
+          "description": "同一映射目标内多个端点的逻辑组合方式。",
+          "enum": [
+            "exact",
+            "one_of",
+            "all_of"
+          ],
+          "default": null
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "maps_to_value",
+      "name": "概念映射维值",
+      "description": "起点 Concept 的一个稳定映射目标直接落到终点 DimensionValue。",
+      "from_node_types": [
+        "concept"
+      ],
+      "to_node_types": [
+        "dimension_value"
+      ],
+      "fields": {
+        "target_id": {
+          "type": "string",
+          "required": true,
+          "description": "Concept 多目标映射中的稳定 target ID。",
+          "enum": null,
+          "default": null
+        },
+        "binding_operator": {
+          "type": "string",
+          "required": true,
+          "description": "同一映射目标内多个端点的逻辑组合方式。",
+          "enum": [
+            "exact",
+            "one_of",
+            "all_of"
+          ],
+          "default": null
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "grounded_on",
+      "name": "资产物理落地",
+      "description": "由 Metric 或 GenerationRule references 确定性编译；起点资产依赖终点 Table、Column 或 DimensionValue 作为物理依据，不重复编码公式或应用角色。",
+      "from_node_types": [
+        "metric",
+        "generation_rule"
+      ],
+      "to_node_types": [
+        "table",
+        "column",
+        "dimension_value"
+      ],
+      "fields": {},
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "applies_to",
+      "name": "生成规则适用范围",
+      "description": "由 GenerationRule references 确定性编译；起点规则的定义或适用范围强依赖终点 Metric 或 Concept。",
+      "from_node_types": [
+        "generation_rule"
+      ],
+      "to_node_types": [
+        "metric",
+        "concept"
+      ],
+      "fields": {},
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "expands_to",
+      "name": "概念展开",
+      "description": "起点 Concept 可以直接展开为终点 Metric 或更具体的 Concept，用于把抽象用户意图转换为可查询语义；只保存直接展开关系。",
+      "from_node_types": [
+        "concept"
+      ],
+      "to_node_types": [
+        "metric",
+        "concept"
+      ],
+      "fields": {
+        "target_id": {
+          "type": "string",
+          "required": false,
+          "description": "Concept 多目标映射中的稳定 target ID。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "uses",
+      "name": "示例引用",
+      "description": "起点 Example 的参考 SQL 或任务解释直接使用终点结构化资产或 Concept；用于说明示例的可复现依赖。",
+      "from_node_types": [
+        "example"
+      ],
+      "to_node_types": [
+        "table",
+        "column",
+        "dimension_value",
+        "metric",
+        "generation_rule",
+        "example",
+        "concept"
+      ],
+      "fields": {},
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "broader_than",
+      "name": "直接上位概念",
+      "description": "起点 Concept 是终点 Concept 的直接上位概念；不保存可由多跳关系推导的传递层级，也不表示一般相关性。",
+      "from_node_types": [
+        "concept"
+      ],
+      "to_node_types": [
+        "concept"
+      ],
+      "fields": {},
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "related_to",
+      "name": "弱关联",
+      "description": "起点与终点非结构化知识之间存在有证据的稳定关联，但当前无法可靠归入更具体的 EdgeType；存在明确关系时不应使用。",
+      "from_node_types": [
+        "concept",
+        "knowledge_unit",
+        "entity",
+        "event",
+        "process",
+        "rule"
+      ],
+      "to_node_types": [
+        "concept",
+        "knowledge_unit",
+        "entity",
+        "event",
+        "process",
+        "rule"
+      ],
+      "fields": {
+        "reason": {
+          "type": "string",
+          "required": true,
+          "description": "建立关联的证据，以及无法使用更具体 EdgeType 的原因。",
+          "enum": null,
+          "default": null
+        },
+        "strength": {
+          "type": "number",
+          "required": false,
+          "description": "关联证据的置信强度，取值范围为 0 到 1。",
+          "enum": null,
+          "default": null
+        },
+        "relation_hint": {
+          "type": "string",
+          "required": false,
+          "description": "证据充分后可能升级采用的具体 EdgeType ID。",
+          "enum": null,
+          "default": null
+        }
+      },
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    },
+    {
+      "id": "constrains_metric",
+      "name": "业务规则约束指标",
+      "description": "起点 Rule 对终点 Metric 的适用条件、计算口径、结果解释或使用方式施加直接业务约束；不表示指标计算依赖该规则。",
+      "from_node_types": [
+        "rule"
+      ],
+      "to_node_types": [
+        "metric"
+      ],
+      "fields": {},
+      "direction_semantics": null,
+      "evidence_requirement": null,
+      "identity_fields": []
+    }
+  ]
+}

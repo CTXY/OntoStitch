@@ -1,0 +1,19 @@
+dataset:
+  type: bird
+test_set_path: ../../data/dev.json
+workspace_root: ../../workspace/baseline
+database:
+  root: ../../data/databases
+schema_linking:
+  type: full_schema
+memory:
+  type: none
+llm:
+  model: ${CORTEX_LLM_MODEL}
+  base_url: ${CORTEX_LLM_BASE_URL}
+  api_key: ${CORTEX_LLM_API_KEY}
+  temperature: 0
+  timeout: 300
+evaluation:
+  top_k: 5
+  sql_timeout: 30
