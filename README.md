@@ -71,6 +71,160 @@ python scripts/run_guided_evaluation.py --database demo \
 Use a new evaluation output directory for each run. Results are saved under
 `workspace/eval`, including predictions and the evaluation report in `final_results/`.
 
+## Core interfaces
+
+Examples below assume one run under each training output directory. If you have
+multiple runs, pass the path to the specific run instead of using `*`.
+
+### SQL training
+
+`sql-train` extracts knowledge and merges it into the graph in one command:
+
+```bash
+cortex sql-train --config configs/cortex.yaml \
+  --training-set data/train.qa_sql.jsonl --output workspace/train
+```
+
+| Parameter | Required | Description / default |
+| --- | --- | --- |
+| `--training-set PATH` | Yes | Training records in JSONL or JSON format |
+| `--output DIR` | Yes | Parent directory for the generated run directory |
+| `--config PATH` | No | Configuration; default `configs/cortex.yaml` |
+| `--schema PATH` | No | Schema JSON; defaults to the configured root schema |
+| `--graph-state DIR` | No | Persistent graph bundle to load and update; defaults inside the new run directory |
+
+The command prints the run path in its `output` field and exports
+`graph_state.json` there. `--graph-state` is the persistent bundle directory used
+for incremental training, not the exported `graph_state.json` file. Exit code 2
+means the training result needs review.
+
+### Separate training and graph merge
+
+To run extraction and graph integration separately:
+
+```bash
+python scripts/run_sql_training_premerge.py --config configs/cortex.yaml \
+  --training-set data/train.qa_sql.jsonl --output workspace/premerge
+
+python scripts/merge_training_output.py \
+  --training-workspace workspace/premerge/* \
+  --config configs/cortex.yaml --output workspace/merged
+```
+
+The pre-merge command requires all three flags: `--config`, `--training-set`
+(JSONL), and `--output` (parent directory). It writes `incoming_state.json` and
+case artifacts inside a generated run directory.
+
+The merge command has these parameters:
+
+| Parameter | Required | Description / default |
+| --- | --- | --- |
+| `--training-workspace DIR` | Yes | One pre-merge run containing `incoming_state.json` and its evidence artifacts |
+| `--output DIR` | Yes | New output directory; must not already exist |
+| `--config PATH` | No | Configuration; default `configs/cortex.yaml` |
+
+This command merges the incoming state into an empty graph and writes
+`workspace/merged/graph_state.json`. It has no `--existing-state` option.
+
+For merging into an existing graph, use the Python operator. This example loads
+the same pre-merge artifacts; replace `existing` with a loaded `GraphState` when
+performing an incremental merge:
+
+```python
+import asyncio
+from pathlib import Path
+
+from cortex.bootstrap.graph_merge import build_graph_merge_operator
+from cortex.capabilities.sql_training.artifacts.workspace import Workspace
+from cortex.capabilities.sql_training.graph_merge_evidence import (
+    SqlTrainingGraphMergeEvidenceResolver,
+    WorkspaceEvidenceRepository,
+)
+from cortex.config import load_config
+from cortex.schema import GraphSpace, GraphState, load_root_schema
+
+incoming_path = next(Path("workspace/premerge").glob("*/incoming_state.json"))
+config = load_config("configs/cortex.yaml")
+schema = load_root_schema(config.root_schema.external_path)
+existing = GraphState(graph=GraphSpace(), node_conflicts=())
+incoming = GraphState.model_validate_json(incoming_path.read_text())
+resolver = SqlTrainingGraphMergeEvidenceResolver(
+    WorkspaceEvidenceRepository(Workspace(incoming_path.parent))
+)
+operator = build_graph_merge_operator(config, evidence_resolver=resolver)
+result = asyncio.run(operator.merge(existing, incoming, schema))
+merged_state = result.state
+```
+
+| `merge()` argument | Type | Meaning |
+| --- | --- | --- |
+| `existing` | `GraphState` | Current graph, or an empty state for the first merge |
+| `incoming` | `GraphState` | New knowledge to integrate |
+| `schema` | `SchemaDefinition` | Root schema used to validate the graph |
+
+The returned `GraphMergeResult` contains `state`, `node_mappings`, `edge_mappings`
+and `diagnostics`. The evidence resolver reads the source training artifacts used
+for semantic merge decisions.
+
+### Online context
+
+Run guidance for one question using the graph from the quick start:
+
+```bash
+cortex online-context run "What is the total revenue for North?" \
+  --graph-state workspace/train/*/graph_state.json \
+  --config configs/cortex.yaml --output workspace/online.json
+```
+
+For the separate merge workflow, use `workspace/merged/graph_state.json` instead.
+
+| Parameter | Required | Description / default |
+| --- | --- | --- |
+| `QUESTION` | Yes | Positional natural-language question |
+| `--graph-state PATH` | Yes | Exported `graph_state.json` or a run directory containing that file |
+| `--config PATH` | No | Configuration; default `configs/cortex.yaml` |
+| `--initial-sql TEXT` | No | Initial candidate SQL |
+| `--question-budget INTEGER` | No | Maximum clarification questions, including JOIN questions; defaults to configuration |
+| `--schema-context DIR` | No | BIRD-style column description directory; alias `--column-context-dir` |
+| `--output PATH` | No | Save the result JSON; the result is also printed to stdout |
+| `--trace-output PATH` | No | Save organizer trace JSON |
+
+If the result has `status: needs_user_input`, read `interaction_questions` and
+create `workspace/answers.json` using the returned question and option IDs:
+
+```json
+[
+  {
+    "question_id": "question-1",
+    "selected_option_ids": ["option-1"],
+    "explanation": ""
+  }
+]
+```
+
+Select one or more option IDs, or use an empty list with a nonempty explanation.
+Resume using the original result file, which already contains `pending`:
+
+```bash
+cortex online-context resume \
+  --graph-state workspace/train/*/graph_state.json \
+  --pending workspace/online.json --answers workspace/answers.json \
+  --config configs/cortex.yaml --output workspace/resolved.json
+```
+
+| Parameter | Required | Description / default |
+| --- | --- | --- |
+| `--graph-state PATH` | Yes | Same graph used for the pending request |
+| `--pending PATH` | Yes | Result JSON containing `pending`, or a JSON file containing just that state |
+| `--answers PATH` | Yes | Answer array as above, or an object with an `answers` array |
+| `--config PATH` | No | Configuration; default `configs/cortex.yaml` |
+| `--output PATH` | No | Save the resumed result JSON; also printed to stdout |
+
+Repeat if another clarification round is returned. The final result contains
+`downstream_guidance.guidance_content` for use in SQL generation. Online context
+produces guidance; the guided evaluation command in the quick start also generates
+SQL and evaluates it.
+
 ## Dataset format
 
 Training and guided evaluation use UTF-8 JSONL files, with one example per line:
