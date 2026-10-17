@@ -1,6 +1,6 @@
-# AutoOnto for NL2SQL
+# OntoStitch for NL2SQL
 
-AutoOnto learns ontology knowledge from question–SQL examples, integrates it into
+OntoStitch learns ontology knowledge from question–SQL examples, integrates it into
 an ontology graph, and retrieves guidance for natural-language-to-SQL generation.
 The repository includes training, graph integration, online guidance, SQL generation
 and execution evaluation. Python 3.11 or newer is required; the dependency versions
