@@ -126,46 +126,6 @@ The merge command has these parameters:
 This command merges the incoming state into an empty graph and writes
 `workspace/merged/graph_state.json`. It has no `--existing-state` option.
 
-For merging into an existing graph, use the Python operator. This example loads
-the same pre-merge artifacts; replace `existing` with a loaded `GraphState` when
-performing an incremental merge:
-
-```python
-import asyncio
-from pathlib import Path
-
-from cortex.bootstrap.graph_merge import build_graph_merge_operator
-from cortex.capabilities.sql_training.artifacts.workspace import Workspace
-from cortex.capabilities.sql_training.graph_merge_evidence import (
-    SqlTrainingGraphMergeEvidenceResolver,
-    WorkspaceEvidenceRepository,
-)
-from cortex.config import load_config
-from cortex.schema import GraphSpace, GraphState, load_root_schema
-
-incoming_path = next(Path("workspace/premerge").glob("*/incoming_state.json"))
-config = load_config("configs/cortex.yaml")
-schema = load_root_schema(config.root_schema.external_path)
-existing = GraphState(graph=GraphSpace(), node_conflicts=())
-incoming = GraphState.model_validate_json(incoming_path.read_text())
-resolver = SqlTrainingGraphMergeEvidenceResolver(
-    WorkspaceEvidenceRepository(Workspace(incoming_path.parent))
-)
-operator = build_graph_merge_operator(config, evidence_resolver=resolver)
-result = asyncio.run(operator.merge(existing, incoming, schema))
-merged_state = result.state
-```
-
-| `merge()` argument | Type | Meaning |
-| --- | --- | --- |
-| `existing` | `GraphState` | Current graph, or an empty state for the first merge |
-| `incoming` | `GraphState` | New knowledge to integrate |
-| `schema` | `SchemaDefinition` | Root schema used to validate the graph |
-
-The returned `GraphMergeResult` contains `state`, `node_mappings`, `edge_mappings`
-and `diagnostics`. The evidence resolver reads the source training artifacts used
-for semantic merge decisions.
-
 ### Online context
 
 Run guidance for one question using the graph from the quick start:
