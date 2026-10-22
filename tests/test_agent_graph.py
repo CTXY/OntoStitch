@@ -142,13 +142,24 @@ def test_edit_dedup_does_not_restore_old_head(case_graph):
             ],
         }
     )
-    first = apply_edit(store, request, database=database, source_id="case")
+    from test_agent_runtime import session_for
+
+    from cortex.capabilities.sql_training.learning.tools import build_tools
+
+    tool = next(
+        t for t in build_tools(session_for(case_graph)) if t.name == "edit_graph"
+    )
+    first = tool.invoke({"edit": request.model_dump(mode="json")})
     last = edit(store, database, make_rule(action="new"), "update", "next")
     assert (
-        apply_edit(store, request, database=database, source_id="case").revision
-        == first.revision
+        tool.invoke({"edit": request.model_dump(mode="json")})["applied_revision"]
+        == first["applied_revision"]
     )
     assert store.working_revision == last.revision
+    changed = request.model_copy(update={"expected_revision": last.revision})
+    with pytest.raises(ValueError, match="different"):
+        tool.invoke({"edit": changed.model_dump(mode="json")})
+    assert not (store.root.parent / "edits").exists()
 
 
 def test_same_target_groups_merge(case_graph):
@@ -173,7 +184,7 @@ def test_same_target_groups_merge(case_graph):
 
 
 def test_discarded_edit_receipt_cannot_claim_success_after_recovery(case_graph):
-    store, database, _ = case_graph
+    store, _database, _ = case_graph
     base = store.working_revision
     request = GraphEdit.model_validate(
         {
@@ -188,11 +199,23 @@ def test_discarded_edit_receipt_cannot_claim_success_after_recovery(case_graph):
             ],
         }
     )
-    apply_edit(store, request, database=database, source_id="case")
+    from test_agent_runtime import session_for
+
+    from cortex.capabilities.sql_training.learning.tools import build_tools
+
+    tool = next(
+        t for t in build_tools(session_for(case_graph)) if t.name == "edit_graph"
+    )
+    tool.invoke({"edit": request.model_dump(mode="json")})
     store.restore(base, base)
     with pytest.raises(ValueError, match="discarded"):
-        apply_edit(store, request, database=database, source_id="case")
+        tool.invoke({"edit": request.model_dump(mode="json")})
     assert store.working_revision == base
+    fresh_tool = next(
+        t for t in build_tools(session_for(case_graph)) if t.name == "edit_graph"
+    )
+    fresh_tool.invoke({"edit": request.model_dump(mode="json")})
+    assert store.working.semantic_assets[0].id == make_rule().id
 
 
 def test_repeated_value_materialization_preserves_aliases_and_sources(case_graph):
@@ -245,8 +268,8 @@ def test_empty_acceptance_does_not_advance_l(case_graph):
     assert store.accepted_revision == before
 
 
-def test_receipt_storage_failure_does_not_apply_edit(case_graph, monkeypatch):
-    import cortex.capabilities.sql_training.graph.mutations as module
+def test_snapshot_storage_failure_does_not_apply_edit(case_graph, monkeypatch):
+    import cortex.capabilities.sql_training.graph.snapshots as module
 
     store, database, _ = case_graph
     initial = store.working_revision

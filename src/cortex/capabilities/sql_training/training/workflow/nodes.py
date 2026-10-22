@@ -262,7 +262,7 @@ class CaseRuntime:
         self.merge_values(self.graph)
         result = case_result(self.record, s, self.graph, self.services, self.root)
         seal_case(self.root, result, self.graph)
-        s.bundle_ref = str(self.root / "bundle" / "case_result.json")
+        s.result_ref = str(self.root / "result" / "result.json")
 
     def correct(self, s: CaseState):
         return self.services.replay(s.validation_ref).correct

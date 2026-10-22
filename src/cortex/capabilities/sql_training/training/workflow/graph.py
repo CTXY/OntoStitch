@@ -4,13 +4,11 @@ from langgraph.graph import END, START, StateGraph
 
 from cortex.capabilities.sql_training.training.observability import SummaryTracer
 from cortex.capabilities.sql_training.training.workflow.nodes import CaseRuntime
-from cortex.capabilities.sql_training.training.workflow.operations import OperationStore
 from cortex.capabilities.sql_training.training.workflow.state import CaseState
 
 
 def build_case_graph(runtime: CaseRuntime, checkpointer, *, skip_direct=False):
     builder = StateGraph(CaseState)
-    operations = OperationStore(runtime.root / "operations")
 
     def node(name):
         def execute(state: CaseState):
@@ -33,7 +31,13 @@ def build_case_graph(runtime: CaseRuntime, checkpointer, *, skip_direct=False):
                 context_id=state.context_id,
                 revision=state.working_revision,
             ) as summary:
-                result = operations.execute(name, state, action)
+                result = CaseState.model_validate(
+                    runtime.evidence.completed(
+                        name,
+                        state.model_dump(mode="json"),
+                        lambda: action().model_dump(mode="json"),
+                    )
+                )
                 runtime.graph.restore(result.working_revision, result.accepted_revision)
                 summary.update(
                     revision=result.working_revision, evidence_ref=result.validation_ref

@@ -31,7 +31,7 @@ def case_graph(tmp_path):
     workspace.write_draft_assets(NodeType.COLUMN, assets.columns)
     workspace.write_catalog_edges(assets.join_edges)
     store = GraphStore(
-        tmp_path / "case" / "snapshots", workspace=workspace, schema=load_root_schema()
+        tmp_path / "case" / "ontology", workspace=workspace, schema=load_root_schema()
     )
     store.initialize([*assets.tables, *assets.columns], list(assets.join_edges))
     yield store, database, workspace

@@ -9,10 +9,9 @@ from typing import Any
 from cortex.capabilities.sql_training.artifacts.jsonl import (
     read_json,
     write_json_atomic,
-    write_jsonl,
 )
 from cortex.capabilities.sql_training.artifacts.workspace import (
-    ASSET_GROUP_FILES,
+    deserialize_asset_envelope,
     serialize_asset_envelope,
 )
 from cortex.capabilities.sql_training.core.enums import NodeType
@@ -22,6 +21,7 @@ from cortex.capabilities.sql_training.graph.snapshots import (
     GraphStore,
     fingerprint,
 )
+from cortex.capabilities.sql_training.models import NodeAsset
 from cortex.capabilities.sql_training.training.services import CaseServices
 from cortex.capabilities.sql_training.training.workflow.state import CaseState
 
@@ -99,7 +99,6 @@ def case_result(
         "accepted_assets": len(assets),
         "ontology_updated": False,
         "draft_nodes_generated": bool(assets),
-        "draft_nodes": [serialize_asset_envelope(a) for a in assets],
         "draft_node_ids": sorted(ids),
         "draft_node_count": len(assets),
         "draft_edge_ids": [e.id for e in draft_edges],
@@ -134,7 +133,8 @@ def case_result(
             "assessment_rounds": len(state.acceptance_refs),
             "diagnosis_rounds": state.round_number,
         },
-        "bundle_path": str(root / "bundle"),
+        "result_path": str(root / "result" / "result.json"),
+        "ontology_path": str(root / "result" / "ontology.json"),
         "checkpoint_path": str(root / "checkpoints.sqlite"),
         "thread_id": "case-" + fingerprint(record["source_id"]),
         "context_id": state.context_id,
@@ -143,7 +143,7 @@ def case_result(
     }
 
 
-def bundle_signature(result: dict[str, Any]) -> str:
+def result_signature(result: dict[str, Any]) -> str:
     return fingerprint(
         {
             key: result.get(key)
@@ -168,44 +168,41 @@ def bundle_signature(result: dict[str, Any]) -> str:
 
 
 def seal_case(root: Path, result: dict[str, Any], graph: GraphStore) -> dict[str, Any]:
-    target = root / "bundle"
+    target = root / "result"
     if target.exists():
-        previous = read_json(target / "case_result.json")
-        if previous and bundle_signature(previous) == bundle_signature(result):
+        previous = read_json(target / "result.json")
+        if previous and result_signature(previous) == result_signature(result):
+            load_case_assets(previous)
             return previous
-        raise ValueError("existing case bundle belongs to different graph content")
+        raise ValueError("existing case result belongs to different completion")
     root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".bundle-", dir=root) as tmp:
+    with tempfile.TemporaryDirectory(prefix=".result-", dir=root) as tmp:
         staging = Path(tmp)
         assets = graph.accepted.semantic_assets
-        for kind in SEMANTIC_TYPES:
-            write_json_atomic(
-                staging / "assets" / ASSET_GROUP_FILES[kind],
-                [serialize_asset_envelope(a) for a in assets if a.node_type == kind],
-            )
-        write_json_atomic(staging / "draft_nodes.json", result["draft_nodes"])
-        write_jsonl(
-            staging / "draft_edges.jsonl",
-            [e.model_dump(mode="json") for e in project_case_edges(assets)],
-        )
-        write_json_atomic(staging / "case_result.json", result)
         write_json_atomic(
-            staging / "manifest.json",
-            {
-                "schema_version": 1,
-                "source_id": result["source_id"],
-                "asset_outcome": result["asset_outcome"],
-                "merge_eligible": result["asset_outcome"] == "ready",
-                "snapshot_revision": graph.accepted_revision,
-                "content_fingerprint": result["final_graph_fingerprint"],
-                "checkpoint_path": "../checkpoints.sqlite",
-                "thread_id": result["thread_id"],
-                "context_id": result["context_id"],
-                "workflow_version": result["workflow_version"],
-                "snapshots_path": "../snapshots",
-                "evidence_path": "../evidence",
-                "draft_nodes_path": "draft_nodes.json",
-            },
+            staging / "ontology.json", [serialize_asset_envelope(a) for a in assets]
         )
+        write_json_atomic(staging / "result.json", result)
         staging.replace(target)
     return result
+
+
+def load_case_assets(result: dict[str, Any]) -> list[NodeAsset]:
+    """Read the sole semantic export; report metadata never embeds graph content."""
+    path = result.get("ontology_path")
+    if not path:
+        raise ValueError("case has no formal ontology export")
+    rows = read_json(Path(path))
+    if not isinstance(rows, list):
+        raise TypeError("case ontology export must be an array")
+    assets = [deserialize_asset_envelope(row) for row in rows]
+    if any(asset.node_type not in SEMANTIC_TYPES for asset in assets):
+        raise ValueError("case export must contain only semantic assets")
+    actual = fingerprint(
+        [a.model_dump(mode="json") for a in sorted(assets, key=lambda a: a.id)]
+    )
+    if result.get("final_ontology_fingerprint") != actual:
+        raise ValueError("case ontology export fingerprint mismatch")
+    if len({asset.id for asset in assets}) != len(assets):
+        raise ValueError("duplicate assets in case ontology export")
+    return assets

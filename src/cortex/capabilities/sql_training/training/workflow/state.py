@@ -8,7 +8,7 @@ from cortex.capabilities.sql_training.graph.mutations import ChangeGroup
 from cortex.capabilities.sql_training.learning.session import WorkingNotes
 from cortex.capabilities.sql_training.models.base import NodeModel
 
-WORKFLOW_VERSION = "case-graph-v1"
+WORKFLOW_VERSION = "case-graph-v2"
 
 
 class CaseState(NodeModel):
@@ -40,4 +40,4 @@ class CaseState(NodeModel):
     tool_calls: int = 0
     database_calls: int = 0
     events: list[dict[str, Any]] = Field(default_factory=list)
-    bundle_ref: str | None = None
+    result_ref: str | None = None

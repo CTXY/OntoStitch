@@ -8,10 +8,6 @@ from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from cortex.capabilities.sql_training.artifacts.jsonl import (
-    read_json,
-    write_json_atomic,
-)
 from cortex.capabilities.sql_training.error_analysis.workflow import (
     ErrorAnalysisWorkflow,
 )
@@ -115,8 +111,7 @@ class CaseServices:
                 ),
             }
         )
-        self._index_path = evidence.root.parent / "validation_index.json"
-        self._index = read_json(self._index_path, default={})
+        self._index = evidence.read_index()
 
     def validate(self, snapshot: GraphSnapshot) -> str:
         if database_stamp(self.config.database.url or "") != self._data_stamp:
@@ -198,7 +193,7 @@ class CaseServices:
             )
             retries += 1
             self._index[key] = {"evidence_ref": evidence_id, "attempts": retries}
-            write_json_atomic(self._index_path, self._index)
+            self.evidence.write_index(self._index)
             if replay.status.value != "unavailable":
                 break
         return evidence_id
@@ -208,7 +203,7 @@ class CaseServices:
             key: value for key, value in self._index.items()
             if self.replay(value["evidence_ref"]).status.value != "unavailable"
         }
-        write_json_atomic(self._index_path, self._index)
+        self.evidence.write_index(self._index)
 
     def replay(self, evidence_id: str) -> StableReplayResult:
         payload = self.evidence.read(evidence_id)["payload"]

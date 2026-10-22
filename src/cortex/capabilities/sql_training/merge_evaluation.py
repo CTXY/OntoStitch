@@ -10,6 +10,9 @@ from typing import Any
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
 from cortex.bootstrap.knowledge import build_sql_training_evaluation_physical_graph
 from cortex.capabilities.graph_merge.edges import remap_property_node_ids
+from cortex.capabilities.sql_training.artifacts.cases import load_case_assets
+from cortex.capabilities.sql_training.graph.adapter import NodeGraphAdapter
+from cortex.capabilities.sql_training.graph.case import project_case_edges
 from cortex.capabilities.sql_training.graph.join_edges import merge_join_edges
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,
@@ -25,7 +28,6 @@ from cortex.schema import (
     GraphNode,
     GraphSpace,
     GraphState,
-    SourceReference,
     load_root_schema,
     validate_graph_state,
 )
@@ -208,16 +210,20 @@ def _load_cases(
         if selected and case_id not in selected:
             continue
         case_root = root / _case_path(entry)
-        node_rows = json.loads(
-            (case_root / "draft_nodes.json").read_text(encoding="utf-8")
+        result = json.loads(
+            (case_root / "result" / "result.json").read_text(encoding="utf-8")
         )
-        edge_rows = _read_jsonl(case_root / "draft_edges.jsonl")
+        if result["source_id"] != case_id:
+            raise ValueError(f"case result source does not match collection: {case_id}")
+        assets = load_case_assets(result)
+        nodes = tuple(NodeGraphAdapter.project_asset_node(asset) for asset in assets)
+        edges = project_case_edges(assets)
         cases.append(
             (
                 case_id,
                 GraphSpace(
-                    nodes=tuple(_node(item, case_id) for item in node_rows),
-                    edges=tuple(_edge(item, case_id) for item in edge_rows),
+                    nodes=tuple(_tag_case(node, case_id) for node in nodes),
+                    edges=tuple(_tag_case(edge, case_id) for edge in edges),
                 ),
             )
         )
@@ -265,8 +271,8 @@ def _load_evidence(
     selected = set(case_ids or ())
     return {
         entry["source_id"]: json.loads(
-            (root / _case_path(entry) / "source.json").read_text(encoding="utf-8")
-        )
+            (root / _case_path(entry) / "case.json").read_text(encoding="utf-8")
+        )["source"]
         for entry in manifest["cases"]
         if not selected or entry["source_id"] in selected
     }
@@ -279,43 +285,14 @@ def _case_path(entry: dict[str, Any]) -> str:
     return case_path
 
 
-def _node(payload: dict[str, Any], case_id: str) -> GraphNode:
-    properties = {
-        key: value
-        for key, value in payload.get("properties", {}).items()
-        if value is not None
-    }
-    # Consolidated extraction bundles created before the current Metric contract may still
-    # contain this derived cache. Physical dependencies are reconstructed from canonical
-    # references and edges, so the legacy field must not cross the bundle-loading boundary.
-    if payload.get("node_type") == "metric":
-        properties.pop("physical_dependencies", None)
-    if properties.get("aggregation_policy") == "custom_sql":
-        properties["aggregation_policy"] = "POST_AGGREGATE_CALC"
-    return GraphNode(
-        **{
-            **payload,
-            "properties": properties,
-            "sources": _sources(payload.get("sources", ()), case_id),
+def _tag_case(item: GraphNode | GraphEdge, case_id: str):
+    return item.model_copy(
+        update={
+            "sources": tuple(
+                source.model_copy(update={"case_id": case_id})
+                for source in item.sources
+            )
         }
-    )
-
-
-def _edge(payload: dict[str, Any], case_id: str) -> GraphEdge:
-    return GraphEdge(
-        **{**payload, "sources": _sources(payload.get("sources", ()), case_id)}
-    )
-
-
-def _sources(rows, case_id: str) -> tuple[SourceReference, ...]:
-    return tuple(
-        SourceReference(
-            source_id=item["source_id"],
-            chunk_id=item.get("chunk_id"),
-            locator=item.get("locator") or item.get("source_type"),
-            case_id=case_id,
-        )
-        for item in rows
     )
 
 
@@ -577,14 +554,6 @@ def _tree_hash(root: Path) -> str:
         digest.update(str(path.relative_to(root)).encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
 
 
 def main() -> None:

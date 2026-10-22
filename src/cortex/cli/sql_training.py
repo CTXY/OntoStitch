@@ -309,8 +309,8 @@ def _write_result(workspace: Path, result: SqlTrainingResult) -> Path:
 def _write_case_review_index(workspace: Path, result: SqlTrainingResult) -> Path:
     """Write a compact, one-row-per-case review entry beside the final graph.
 
-    The linked bundle contains the complete per-case draft ontology and the
-    runtime workspace's ``train_runs/.../extraction_graphs`` directory contains
+    The linked result/ontology.json contains the final semantic assets and the
+    case workspace's ``ontology/<revision>.json`` files contain
     the pre-merge extraction snapshot.  Keeping this index at the CLI artifact
     boundary lets reviewers inspect an interrupted or needs-review run without
     parsing the large trace JSONL file.
@@ -333,7 +333,8 @@ def _write_case_review_index(workspace: Path, result: SqlTrainingResult) -> Path
                 "residual_status": case.residual_status,
                 "case_stable_correct": case.case_stable_correct,
                 "message": case.message,
-                "bundle_path": case.bundle_path,
+                "result_path": case.result_path,
+                "ontology_path": case.ontology_path,
                 "draft_node_count": case.draft_node_count,
                 "draft_node_ids": list(case.draft_node_ids),
                 "accepted_metric_ids": list(case.accepted_metric_ids),

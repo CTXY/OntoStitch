@@ -98,16 +98,17 @@ def test_default_application_runs_case_graph_and_merges_valid_incoming(case_grap
         "generation_rule",
     }
     assert any(n.node_type == "table" and n.name == "unused" for n in state.graph.nodes)
-    bundle = Path(report.cases[0].bundle_path)
-    raw = json.loads((bundle / "case_result.json").read_text())
+    result_file = Path(report.cases[0].result_path)
+    case_root = result_file.parent.parent
+    raw = json.loads(result_file.read_text())
     assert raw["asset_outcome"] == "ready"
     assert raw["direct_completed"]
     assert raw["draft_node_ids"] == [make_rule().id]
     snapshot = json.loads(
-        (bundle.parent / "snapshots" / f"{raw['final_revision']}.json").read_text()
+        (case_root / "ontology" / f"{raw['final_revision']}.json").read_text()
     )
     assert "column.unused.code" in {a["id"] for a in snapshot["assets"]}
-    assert (bundle.parent / "checkpoints.sqlite").exists()
+    assert (case_root / "checkpoints.sqlite").exists()
 
 
 def test_resource_shutdown_failure_does_not_erase_retained_assets_or_publish_passed_bundle(
@@ -177,7 +178,8 @@ def test_resource_shutdown_failure_does_not_erase_retained_assets_or_publish_pas
     assert result["validation_status"] == "stable_correct"
     assert result["draft_node_ids"] == [make_rule().id]
     assert result["asset_outcome"] == "partial"
-    assert not Path(result["bundle_path"]).exists()
+    assert result["result_path"] is None
+    assert result["ontology_path"] is None
 
 
 def test_prepared_catalog_missing_configured_table_fails_before_learning(

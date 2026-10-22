@@ -34,7 +34,7 @@ def test_direct_retention_export_and_evaluation_match(case_graph):
         case_result(ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root),
         ctrl.runtime.graph,
     )
-    saved = json.loads((Path(result["bundle_path"]) / "case_result.json").read_text())
+    saved = json.loads(Path(result["result_path"]).read_text())
     assert result["directly_retained_asset_ids"] == [rule().id]
     assert result["assessment_accepted_asset_ids"] == []
     assert result["draft_node_ids"] == [rule().id]

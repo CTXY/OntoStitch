@@ -180,7 +180,7 @@ def test_direct_success_one_gate_and_semantic_only_bundle(case_graph):
     assert result["draft_node_ids"] == [make_rule().id]
     assert result["directly_retained_asset_ids"] == [make_rule().id]
     assert result["assessment_accepted_asset_ids"] == []
-    assert json.loads((Path(result["bundle_path"]) / "case_result.json").read_text())[
+    assert json.loads(Path(result["result_path"]).read_text())[
         "correct"
     ]
 
@@ -360,10 +360,9 @@ def test_public_resume_api_reconstructs_graph_and_finishes_without_repeating_dir
 
     ctrl, services, validator = make_workflow(case_graph, EditingAgent([[make_rule()]]))
     ctrl.run(interrupt_after=["direct"])
-    write_json_atomic(ctrl.root / "source.json", ctrl.runtime.record)
-    write_json_atomic(
-        ctrl.root / "run_context.json", {"run_id": "resumed", "case_index": 1}
-    )
+    write_json_atomic(ctrl.root / "case.json", {
+        "source": ctrl.runtime.record, "run_id": "resumed", "case_index": 1
+    })
     model = ScriptModel([])
     pipeline = TrainPipeline(
         services.config,
@@ -385,10 +384,9 @@ def test_resume_context_mismatch_refuses_without_mutating_checkpoint(case_graph)
 
     ctrl, services, validator = make_workflow(case_graph, EditingAgent([[make_rule()]]))
     ctrl.run(interrupt_after=["direct"])
-    write_json_atomic(ctrl.root / "source.json", ctrl.runtime.record)
-    write_json_atomic(
-        ctrl.root / "run_context.json", {"run_id": "refused", "case_index": 1}
-    )
+    write_json_atomic(ctrl.root / "case.json", {
+        "source": ctrl.runtime.record, "run_id": "refused", "case_index": 1
+    })
     original = ctrl.inspect().values
     changed = services.config.model_copy(
         update={
@@ -473,7 +471,8 @@ def test_incomplete_direct_does_not_promote_legal_partial_semantics(case_graph):
         ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root
     )
     assert not result["direct_completed"]
-    assert result["draft_nodes"] == []
+    assert result["draft_node_count"] == 0
+    assert "draft_nodes" not in result
     assert result["asset_outcome"] == "empty"
     assert result[
         "correct"
@@ -510,7 +509,7 @@ def test_empty_generated_sql_finishes_without_assessment_or_infrastructure_resum
     assert workflow.runtime.graph.accepted.semantic_assets[0].properties.action == "m1"
     assert not workflow.inspect().next
     resumed, _, _ = make_workflow(case_graph, EditingAgent([]), validator)
-    assert resumed.run(resume=True).bundle_ref == state.bundle_ref
+    assert resumed.run(resume=True).result_ref == state.result_ref
 
 
 def test_skip_direct_policy_uses_same_graph_and_repairs_from_physical_base(case_graph):

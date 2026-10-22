@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from threading import Lock
 from time import monotonic
 from typing import Any, Literal
-from uuid import uuid4
 
 from pydantic import Field
 
@@ -60,7 +59,7 @@ class LearningSession:
     database_calls: int = 0
     errors: int = 0
     no_progress: int = 0
-    attempt_id: str = field(default_factory=lambda: uuid4().hex)
+    edit_receipts: dict[str, tuple[str, str]] = field(default_factory=dict)
     closed: bool = False
     stop_reason: str | None = None
     handoff_result: dict[str, Any] | None = None

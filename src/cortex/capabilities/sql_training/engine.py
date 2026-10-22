@@ -15,9 +15,9 @@ from cortex.application.sql_training import (
 )
 from cortex.capabilities.sql_training.artifacts import (
     Workspace,
-    deserialize_asset_envelope,
     write_jsonl,
 )
+from cortex.capabilities.sql_training.artifacts.cases import load_case_assets
 from cortex.capabilities.sql_training.core.enums import NodeType, SourceType
 from cortex.capabilities.sql_training.core.ids import make_node_id
 from cortex.capabilities.sql_training.graph.adapter import NodeGraphAdapter
@@ -265,9 +265,7 @@ def _merge_eligible_case_fragments(
         source_id = str(case.get("source_id") or "")
         if not source_id:
             raise ValueError("merge-eligible Trace case is missing source_id")
-        assets = tuple(
-            deserialize_asset_envelope(row) for row in case.get("draft_nodes") or []
-        )
+        assets = tuple(load_case_assets(case))
         if not assets:
             raise ValueError(
                 f"merge-eligible Trace case {source_id!r} has no draft assets"
@@ -398,7 +396,8 @@ def _case_result(
         asset_outcome=value.get("asset_outcome"),
         draft_node_ids=tuple(value.get("draft_node_ids") or []),
         draft_node_count=int(value.get("draft_node_count") or 0),
-        bundle_path=value.get("bundle_path"),
+        result_path=value.get("result_path"),
+        ontology_path=value.get("ontology_path"),
         iterations=int(value.get("iterations") or 0),
         trace_id=value.get("trace_id"),
         execution_comparison={

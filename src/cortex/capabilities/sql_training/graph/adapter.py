@@ -83,7 +83,7 @@ class NodeGraphAdapter:
                 if edge is not None:
                     edges.append(edge)
                 continue
-            node = self._node(asset, formal_ids[asset.id])
+            node = self.project_asset_node(asset, formal_ids[asset.id])
             nodes.append(node)
             edges.extend(self._asset_edges(asset, formal_ids, asset_by_id, warnings))
 
@@ -150,7 +150,7 @@ class NodeGraphAdapter:
                 if edge is not None:
                     edges.append(edge)
                 continue
-            nodes.append(self._node(asset, formal_ids[asset.id]))
+            nodes.append(self.project_asset_node(asset, formal_ids[asset.id]))
             edges.extend(
                 self._asset_edges(
                     asset,
@@ -241,7 +241,7 @@ class NodeGraphAdapter:
                 local_mapping[asset.id] = transport_id
                 first_transport_id.setdefault(asset.id, transport_id)
                 occupied_node_ids.add(transport_id)
-                nodes.append(self._node(asset, transport_id))
+                nodes.append(self.project_asset_node(asset, transport_id))
             mappings.append((case_id, local_mapping, case_edges))
 
         for case_id, local_mapping, case_edges in mappings:
@@ -301,7 +301,7 @@ class NodeGraphAdapter:
                 if edge is not None:
                     edges.append(edge)
                 continue
-            nodes.append(self._node(asset, asset.id))
+            nodes.append(self.project_asset_node(asset, asset.id))
             edges.extend(self._asset_edges(asset, endpoint_ids, asset_by_id, warnings))
         edges.extend(
             catalog_edges if catalog_edges is not None else self.workspace.read_catalog_edges()
@@ -330,7 +330,9 @@ class NodeGraphAdapter:
             )
         return result
 
-    def _node(self, asset: NodeAsset, formal_id: str) -> GraphNode:
+    @staticmethod
+    def project_asset_node(asset: NodeAsset, formal_id: str | None = None) -> GraphNode:
+        """Project one authoring asset without allocating or persisting identities."""
         data = asset.properties
         type_id = asset.node_type.value
         name = asset.name or asset.id.split(".", 1)[-1]
@@ -386,7 +388,7 @@ class NodeGraphAdapter:
         # GraphSpace exposes authoritative adjacency through typed GraphEdges only.
         properties = _without_references(properties)
         return GraphNode(
-            id=formal_id,
+            id=formal_id or asset.id,
             node_type=type_id,
             name=name,
             description=asset.description,

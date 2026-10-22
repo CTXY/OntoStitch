@@ -69,7 +69,8 @@ class SqlTrainingCaseResult(_SqlTrainingModel):
     asset_outcome: str | None = None
     draft_node_ids: tuple[str, ...] = ()
     draft_node_count: int = Field(default=0, ge=0)
-    bundle_path: str | None = None
+    result_path: str | None = None
+    ontology_path: str | None = None
     iterations: int = Field(default=0, ge=0)
     trace_id: str | None = None
     execution_comparison: dict[str, Any] = Field(default_factory=dict)

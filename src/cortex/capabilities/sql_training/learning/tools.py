@@ -196,9 +196,6 @@ def build_tools(session: LearningSession):
         acceptance is decided independently after handoff and validation.
         """
         edit = GraphEdit.model_validate(edit)
-        edit = edit.model_copy(
-            update={"edit_id": fingerprint([session.attempt_id, edit.edit_id])}
-        )
         targets = {str(t["target_id"]) for t in session.targets}
         if session.mode == "repair" and any(
             set(g.target_ids) - targets for g in edit.proposed_groups
@@ -207,13 +204,24 @@ def build_tools(session: LearningSession):
                 "proposed_groups must reference this round's fixed target IDs"
             )
         before = session.graph.working
-        result = apply_edit(
-            session.graph,
-            edit,
-            database=GroundingDatabase(session),
-            source_id=str(session.record["source_id"]),
-        )
-        session.groups.extend(edit.proposed_groups)
+        request_hash = fingerprint(edit.model_dump(mode="json"))
+        previous = session.edit_receipts.get(edit.edit_id)
+        if previous is not None:
+            if previous[0] != request_hash:
+                raise ValueError("edit_id was already used for different content")
+            cursor = session.graph.working
+            while cursor.revision != previous[1] and cursor.parent_revision:
+                cursor = session.graph.read(cursor.parent_revision)
+            if cursor.revision != previous[1]:
+                raise ValueError("edit was discarded; inspect graph and use a new edit_id")
+            result = cursor
+        else:
+            result = apply_edit(
+                session.graph, edit, database=GroundingDatabase(session),
+                source_id=str(session.record["source_id"]),
+            )
+            session.edit_receipts[edit.edit_id] = (request_hash, result.revision)
+            session.groups.extend(edit.proposed_groups)
         return {
             "status": "ok",
             "applied_revision": result.revision,

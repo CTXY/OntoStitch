@@ -20,7 +20,7 @@ flowchart TB
     CASE --> ONTO
     CASE --> EV[(Evidence Store)]
     AGENT --> EV
-    CASE --> BUNDLE[正式 case bundle]
+    CASE --> BUNDLE[正式 case result]
     BUNDLE --> MERGE[汇总与全局 Merge]
 ```
 
@@ -31,8 +31,8 @@ flowchart TB
 | 执行位置、W/L/B 引用、目标、notes、当前结果引用 | LangGraph State/checkpoint |
 | 某个 revision 的完整内容、schema、内容指纹、JOIN | 不可变 GraphSnapshot |
 | 对话、工具、验证、诊断、评审、接受原因 | 不可变 EvidenceStore |
-| 已完成节点的可重放结果 | operations 下按输入指纹保存的更新收据 |
-| 可供系统集成的最终产物 | 原子封存 bundle |
+| 已完成节点的可重放结果 | EvidenceStore 内按输入指纹保存的完成节点回执 |
+| 可供系统集成的最终产物 | 原子封存 result 目录 |
 
 操作收据只保存已完成节点的输出字段变化，不保存执行位置，也不能被扫描为最新状态。它不是第二套 checkpoint。恢复必须从 LangGraph checkpoint 开始，再按相同节点和输入查找结果；未引用快照和证据不得自动成为 Working 或 accepted。
 
@@ -83,7 +83,7 @@ flowchart TD
 
 ## 5. State 与依赖
 
-State 仅保存：case_id/context_id/workflow_version，W/L/B，round/iteration，固定 targets 和 groups，短 notes，最新反馈、Trial/验证/评审/episode/接受引用，计数、紧凑事件和 bundle_ref。没有驱动执行的 phase/done 字段，后续执行位置由 LangGraph 管理。
+State 仅保存：case_id/context_id/workflow_version，W/L/B，round/iteration，固定 targets 和 groups，短 notes，最新反馈、Trial/验证/评审/episode/接受引用，计数、紧凑事件和 result_ref。没有驱动执行的 phase/done 字段，后续执行位置由 LangGraph 管理。
 
 模型、数据库连接、Runner、文件锁、GraphStore 对象和 EvidenceStore 对象属于本次执行的 CaseRuntime，不进入序列化 State。每个节点开始时，以及命中结果收据后，都依据 State 恢复 W/L，禁止依赖上一节点遗留的内存指针。
 
@@ -112,9 +112,9 @@ Direct 必须明确覆盖三类语义节点，允许某类无产物。自然语�
 
 编辑事实源为完整 NodeAsset，而非派生 GraphSpace。每个 revision 保存完整 authoring assets、JOIN、父版本、schema 和内容指纹。所有版本不可变。
 
-create/update 提交完整节点，revert 恢复 L 版本或撤销相对 L 的暂定新增。一次编辑先构造临时完整图，查证条件 Value，验证类型、引用、Metric 依赖和环、物理落点及整体 schema，再原子保存快照与编辑收据，最后推进 episode 内 W。失败不改变 W。
+create/update 提交完整节点，revert 恢复 L 版本或撤销相对 L 的暂定新增。一次编辑先构造临时完整图，查证条件 Value，验证类型、引用、Metric 依赖和环、物理落点及整体 schema，再原子保存快照，最后推进 episode 内 W，并在 session 内记下编辑收据。失败不改变 W。
 
-模型提供的 edit_id 在工具层与随机 episode attempt_id 一起哈希。相同 attempt 的重复操作可识别；未完成 episode 重跑时新 attempt 不会被旧的已丢弃编辑收据阻塞。
+模型提供的 edit_id 仅在当前 LearningSession 内去重，收据记录请求指纹和生成版本。相同 ID 不允许对应不同请求；重复请求只确认仍在当前版本祖先链上的结果，不能恢复已丢弃的修改。收据不写磁盘，未完成 episode 重跑时使用新的空 session；完整版本仍保存在 ontology 目录。
 
 ## 8. 接受、回退与物理事实
 
@@ -136,10 +136,10 @@ create/update 提交完整节点，revert 恢复 L 版本或撤销相对 L 的�
 
 Assessment 不因 Trial 正确而省略。筛选后最终图内容不同于 Trial，就需要对应最终图的验证；接受不等于正确。
 
-stable correct 路径：retain → 匹配最终验证 → 资源关闭成功 → 原子 ready/empty bundle。
+stable correct 路径：retain → 匹配最终验证 → 资源关闭成功 → 原子 ready/empty result。
 修复上限路径：retain 最近 L → 最终验证 → 正确则正常完成，否则 partial/empty 并保留原因。达到 K/R 不提升当前 W，不跳过最后验证。
 
-只有 ready semantic fragments 正常集成。全部物理节点不重复塞入 draft_nodes；已查证 Value 增量独立汇总。
+只有 ready semantic fragments 正常集成。全部物理节点不重复塞入正式语义导出；已查证 Value 增量独立汇总。
 
 ## 10. 故障与恢复
 
@@ -152,11 +152,11 @@ stable correct 路径：retain → 匹配最终验证 → 资源关闭成功 →
 | 验证服务暂时不可用 | 单次执行有限重试；失败保留 graph 位置，手动 resume 开新有限窗口 |
 | 完成的错误 SQL gate | 缓存保留，不因 resume 重新抽样 |
 | accept 已写结果收据 | 恢复同一个 accepted revision，不再 promote |
-| seal 已完成但 checkpoint 失败 | 核对完整完成签名，复用原 bundle |
-| source/schema/data/prompt/config 不匹配 | 作为恢复拒绝返回，不修改证据、进度和 checkpoint |
-| 数据或存储损坏、case 资源关闭失败 | 报运行故障；保留 checkpoint，不发布新的 ready bundle |
+| seal 已完成但 checkpoint 失败 | 核对完整完成签名，复用原 result |
+| source/schema/data/prompt/config 不匹配 | 作为恢复拒绝返回，不修改证据和 checkpoint |
+| 数据或存储损坏、case 资源关闭失败 | 报运行故障；保留 checkpoint，不发布新的 ready result |
 
-空 SQL 属于已完成的生成失败，收尾且不进入 Assessment，不误作需恢复的基础设施故障。基础设施异常不伪装为业务终止，不封存不可重试的失败 bundle。外层失败报告从最近 checkpoint 的 L 构造 partial，可供 review；它不是正式完成事实。允许未引用中间产物，不承诺外部调用 exactly-once。
+空 SQL 属于已完成的生成失败，收尾且不进入 Assessment，不误作需恢复的基础设施故障。基础设施异常不伪装为业务终止，不封存不可重试的失败 result。外层失败报告从最近 checkpoint 的 L 构造 partial，可供 review；它不是正式完成事实。允许未引用中间产物，不承诺外部调用 exactly-once。
 
 seal 的幂等签名包括 case/context/workflow、最终 revision/完整图指纹、验证/接受引用、状态、终止原因和 Direct 完成依据，不能仅比较图内容。
 
@@ -167,3 +167,9 @@ LangSmith 保留显式 stage/model/tool 摘要及 case/revision/evidence 关联�
 评测分别覆盖语义质量（SQL 稳定正确、未知 case 泛化、误接受）和执行可靠性（故障重放、预算、资源、并发隔离）。测试不代替真实模型质量实验。
 
 本轮没有增加人工审批、内部工具级持久化、分布式锁、任意旧版本恢复迁移、长期记忆或第二种 runtime。后续确有需求时再独立扩展。
+
+## 12. 最小存储约定
+
+每个 case 只保留 case.json、checkpoints.sqlite、ontology/、evidence/、result/ 和 writer 锁。result/result.json 保存紧凑元数据，result/ontology.json 是唯一正式语义资产导出；完整图版本用于接受、回退与验证，不能用语义导出替代。
+
+完成节点回执与验证索引归入 evidence，不建立第二套状态目录。episode 编辑收据只驻留内存。故障报告的 result_path/ontology_path 为空，恢复仍使用 checkpoint 和完整图版本。此轮不引入自动清理策略，以免把恢复所需版本或证据误删。

@@ -190,10 +190,6 @@ class TrainPipeline:
             "dimension_value_bootstrap": bootstrap,
             "cases": cases,
             "compile": {"mode": "agent_loop"},
-            "case_draft_nodes": [
-                {"source_id": c["source_id"], "draft_nodes": c.get("draft_nodes", [])}
-                for c in cases
-            ],
             "sql_correct_cases": sum(c["correct"] for c in cases),
             "ontology_updated_cases": 0,
             "generation_rule_updated_cases": sum(
@@ -231,8 +227,8 @@ class TrainPipeline:
     def resume_case(self, case_root: str | Path) -> dict[str, Any]:
         """Continue the same case from its persistent LangGraph thread."""
         root = Path(case_root)
-        source = read_json(root / "source.json")
-        info = read_json(root / "run_context.json")
+        info = read_json(root / "case.json")
+        source = info.get("source") if info else None
         if not source or not info or not (root / "checkpoints.sqlite").is_file():
             raise CaseResumeError(
                 "case resume requires source, run context and a LangGraph checkpoint"
@@ -278,7 +274,7 @@ class TrainPipeline:
             )
         )
         graph = GraphStore(
-            root / "snapshots", workspace=self.workspace, schema=self.schema
+            root / "ontology", workspace=self.workspace, schema=self.schema
         )
         evidence = EvidenceStore(root / "evidence")
         workflow = services = None
@@ -308,15 +304,12 @@ class TrainPipeline:
                     raise ValueError("training requires a validation client")
 
                 def initialize():
-                    previous = read_json(root / "source.json")
-                    if previous is not None and previous != record:
+                    metadata = {"source": record, "run_id": run_id, "case_index": index}
+                    previous = read_json(root / "case.json")
+                    if previous is not None and previous != metadata:
                         raise CaseResumeError("case source cannot be replaced")
                     graph.initialize(physical, edges)
-                    write_json_atomic(root / "source.json", record)
-                    write_json_atomic(
-                        root / "run_context.json",
-                        {"run_id": run_id, "case_index": index},
-                    )
+                    write_json_atomic(root / "case.json", metadata)
 
                 services = CaseServices(
                     config=self.config,
@@ -343,9 +336,9 @@ class TrainPipeline:
                     merge_values=self._merge_case_values,
                 )
                 state = workflow.run(resume=resume)
-                if not state.bundle_ref:
+                if not state.result_ref:
                     raise RuntimeError("case graph stopped without a sealed result")
-                result = read_json(Path(state.bundle_ref))
+                result = read_json(Path(state.result_ref))
                 summary.update(
                     status=result["case_status"],
                     revision=state.accepted_revision,
@@ -375,24 +368,14 @@ class TrainPipeline:
                     "case_status": "failed",
                     "asset_outcome": "empty",
                     "completion_reason": "operational_failure",
-                    "draft_nodes": [],
                     "events": [],
                 }
             result.update(
                 reason=f"{type(exc).__name__}: {exc}",
                 resumable=bool(workflow and workflow.has_checkpoint),
+                result_path=None,
+                ontology_path=None,
             )
-        write_json_atomic(
-            root / "progress.json",
-            {
-                "source_id": record["source_id"],
-                "case_status": result["case_status"],
-                "checkpoint_path": str(root / "checkpoints.sqlite"),
-                "thread_id": workflow.thread_id if workflow else None,
-                "bundle_path": result.get("bundle_path"),
-                "completion_reason": result.get("completion_reason"),
-            },
-        )
         return result
 
     def _merge_case_values(self, graph: GraphStore) -> None:

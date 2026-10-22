@@ -9,6 +9,10 @@ from cortex.bootstrap.sql_training_ablation import (
     build_repair_only_capability,
     preflight_repair_only,
 )
+from cortex.capabilities.sql_training.artifacts.cases import load_case_assets
+from cortex.capabilities.sql_training.artifacts.workspace import (
+    serialize_asset_envelope,
+)
 from cortex.schema import GraphSpace, load_root_schema
 
 from .bundles import finalize_collection, validate_assets, write_case
@@ -47,7 +51,10 @@ def run_repair_only(spec: dict, root: Path, workspace: Path):
     from cortex.application.sql_training import QASqlTrainingRecord
 
     for name, expected in spec.get("physical_hashes", {}).items():
-        if sha256(Path(spec["physical_workspace"]) / "assets" / "draft" / name) != expected:
+        if (
+            sha256(Path(spec["physical_workspace"]) / "assets" / "draft" / name)
+            != expected
+        ):
             raise ValueError("frozen physical snapshot changed")
 
     config = prepare_config(spec, workspace)
@@ -65,15 +72,21 @@ def run_repair_only(spec: dict, root: Path, workspace: Path):
         raise ValueError("runtime workspace belongs to different frozen inputs")
     write_json(lock_path, {"spec_fingerprint": lock})
     existing = {}
-    for native_result in (workspace / "runtime").glob("train_runs/*/cases/*/case_result.json"):
-        raw = read_json(native_result)
-        sid = raw["source_id"]
+    for native_case in (workspace / "runtime").glob("train_runs/*/cases/*/case.json"):
+        sid = read_json(native_case)["source"]["source_id"]
         if sid in existing:
-            raise ValueError(f"multiple native bundles for Case: {sid}")
-        existing[sid] = native_result.parent
+            raise ValueError(f"multiple native cases for source: {sid}")
+        native_result = native_case.parent / "result" / "result.json"
+        if not native_result.is_file():
+            raise RuntimeError(
+                f"unfinished native case {sid}; resume it through TrainPipeline.resume_case before exporting"
+            )
+        existing[sid] = native_result
     remaining = [r for r in spec["records"] if r["source_id"] not in existing]
     if remaining:
-        print(f"train_engine_start {spec['database']} cases={len(remaining)}", flush=True)
+        print(
+            f"train_engine_start {spec['database']} cases={len(remaining)}", flush=True
+        )
         _, report = engine.train(
             tuple(QASqlTrainingRecord.model_validate(r) for r in remaining),
             schema,
@@ -81,46 +94,45 @@ def run_repair_only(spec: dict, root: Path, workspace: Path):
         )
         write_json(workspace / "evaluation_report.json", report.model_dump(mode="json"))
         if report.fatal or len(report.cases) != len(remaining):
-            raise RuntimeError(f"training failed before completing frozen Cases: {report.errors}")
+            raise RuntimeError(
+                f"training failed before completing frozen Cases: {report.errors}"
+            )
         for case in report.cases:
-            if not case.bundle_path:
-                raise RuntimeError(f"missing native bundle: {case.source_id}")
-            existing[case.source_id] = Path(case.bundle_path)
-    for record in spec["records"]:
-        checkpoint = workspace / "checkpoints" / (record["source_id"] + ".json")
-        if checkpoint.exists():
-            saved = read_json(checkpoint)
-            if saved["spec_fingerprint"] != lock:
-                raise ValueError("checkpoint inputs changed")
-            raw, rows, provenance = saved["result"], saved["assets"], saved["provenance"]
-        else:
-            native = existing[record["source_id"]]
-            raw = read_json(native / "case_result.json")
-            rows = read_json(native / "draft_nodes.json")
-            provenance = {
-                "native_bundle": str(native),
-                "trace_path": str(
-                    workspace
-                    / "runtime"
-                    / "logs"
-                    / "train"
-                    / (native.parent.parent.name + ".trace.jsonl")
-                ),
-                "max_rounds": 1,
-                "max_iterations": 1,
-                "initial_candidates": [],
-            }
-            write_json(
-                checkpoint,
-                {"spec_fingerprint": lock, "result": raw, "assets": rows, "provenance": provenance},
-            )
-            print(
-                f"case_complete {record['source_id']} assets={len(rows)} "
-                f"correct={raw.get('correct')}",
-                flush=True,
-            )
+            if not case.result_path or not Path(case.result_path).is_file():
+                raise RuntimeError(f"missing native result: {case.source_id}")
+            existing[case.source_id] = Path(case.result_path)
+    for case_index, record in enumerate(spec["records"], 1):
+        native_result = existing[record["source_id"]]
+        native_case = native_result.parent.parent
+        raw = read_json(native_result)
+        rows = [serialize_asset_envelope(a) for a in load_case_assets(raw)]
+        info = read_json(native_case / "case.json")
+        provenance = {
+            "native_case": str(native_case),
+            "trace_path": str(
+                workspace
+                / "runtime"
+                / "logs"
+                / "train"
+                / (info["run_id"] + ".trace.jsonl")
+            ),
+            "max_rounds": 1,
+            "max_iterations": 1,
+        }
         assets = validate_assets(rows, Path(spec["physical_workspace"]))
         cases.append(
-            write_case(root, record, assets, arm="repair_only", result=raw, provenance=provenance)
+            write_case(
+                root,
+                record,
+                assets,
+                arm="repair_only",
+                result=raw,
+                provenance=provenance,
+                case_index=case_index,
+            )
+        )
+        print(
+            f"case_complete {record['source_id']} assets={len(rows)} correct={raw.get('correct')}",
+            flush=True,
         )
     return finalize_collection(root, spec=spec, arm="repair_only", cases=cases)

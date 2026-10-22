@@ -1,4 +1,4 @@
-"""Small, serial graph mutation boundary shared by Learning tools and controller."""
+"""Small, serial graph mutation boundary shared by Learning tools and workflow."""
 
 from __future__ import annotations
 
@@ -6,16 +6,11 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from cortex.capabilities.sql_training.artifacts.jsonl import (
-    read_json,
-    write_json_atomic,
-)
 from cortex.capabilities.sql_training.core.enums import NodeType, SourceType
 from cortex.capabilities.sql_training.graph.snapshots import (
     SEMANTIC_TYPES,
     GraphSnapshot,
     GraphStore,
-    fingerprint,
     semantic_diff,
     table_schema,
 )
@@ -61,22 +56,6 @@ class GraphEdit(NodeModel):
 def apply_edit(
     store: GraphStore, edit: GraphEdit, *, database: DatabaseConnector, source_id: str
 ) -> GraphSnapshot:
-    receipt_path = store.root.parent / "edits" / f"{edit.edit_id}.json"
-    request_hash = fingerprint(edit.model_dump(mode="json"))
-    previous = read_json(receipt_path)
-    if previous:
-        if previous["request_hash"] != request_hash:
-            raise ValueError("edit_id was already used for different content")
-        # Safe-boundary recovery can deliberately discard an uncheckpointed edit.
-        # Never report that discarded edit as currently applied, or resurrect it.
-        cursor = store.working
-        while cursor.revision != previous["revision"] and cursor.parent_revision:
-            cursor = store.read(cursor.parent_revision)
-        if cursor.revision != previous["revision"]:
-            raise ValueError(
-                "edit was discarded by rollback/recovery; inspect graph and use a new edit_id"
-            )
-        return store.read(previous["revision"])
     if edit.expected_revision != store.working_revision:
         raise ValueError(f"stale expected_revision; current={store.working_revision}")
     current, accepted = store.working, store.accepted
@@ -130,15 +109,6 @@ def apply_edit(
     )
     by_id.update({a.id: a for a in [*semantics, *values]})
     snap = store.save(list(by_id.values()), parent_revision=current.revision)
-    write_json_atomic(
-        receipt_path,
-        {
-            "request_hash": request_hash,
-            "revision": snap.revision,
-            "changed_ids": semantic_diff(current, snap),
-            "groups": [g.model_dump(mode="json") for g in edit.proposed_groups],
-        },
-    )
     store.restore(snap.revision, store.accepted_revision)
     return snap
 

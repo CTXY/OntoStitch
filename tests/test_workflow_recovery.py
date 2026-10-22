@@ -11,9 +11,10 @@ from cortex.capabilities.sql_training.graph.mutations import ChangeGroup
 from cortex.capabilities.sql_training.graph.snapshots import GraphStore
 from cortex.capabilities.sql_training.learning.session import EpisodeResult
 from cortex.capabilities.sql_training.learning.tools import build_tools
+from cortex.capabilities.sql_training.training.evidence import EvidenceStore
 from cortex.capabilities.sql_training.training.workflow import CaseResumeError
-from cortex.capabilities.sql_training.training.workflow.operations import OperationStore
 from cortex.capabilities.sql_training.training.workflow.runtime import case_writer
+from cortex.capabilities.sql_training.training.workflow.state import CaseState
 from cortex.schema import load_root_schema
 
 
@@ -41,17 +42,17 @@ def correct_when_action(action):
 
 
 def fail_after_completed_operation(monkeypatch, target):
-    execute = OperationStore.execute
+    completed = EvidenceStore.completed
     captured = {}
 
-    def crash(self, node, state, action):
-        result = execute(self, node, state, action)
+    def crash(self, node, inputs, action):
+        result = completed(self, node, inputs, action)
         if node == target and not captured:
-            captured["result"] = result.model_copy(deep=True)
+            captured["result"] = CaseState.model_validate(result)
             raise RuntimeError(f"crash after {target} receipt before checkpoint")
         return result
 
-    monkeypatch.setattr(OperationStore, "execute", crash)
+    monkeypatch.setattr(EvidenceStore, "completed", crash)
     return captured
 
 
@@ -100,7 +101,7 @@ def test_accept_receipt_replay_advances_exact_same_version_without_reassessment(
     assert not resumed.inspect().next
 
 
-def test_incomplete_episode_restarts_from_checkpoint_and_new_edit_attempt_namespace(
+def test_incomplete_episode_restarts_from_checkpoint_with_fresh_session_memory(
     case_graph,
 ):
     class ToolEditingAgent:
@@ -173,8 +174,7 @@ def test_incomplete_episode_restarts_from_checkpoint_and_new_edit_attempt_namesp
     base = snapshot.values["working_revision"]
     assert workflow.runtime.graph.working_revision == base
     assert workflow.runtime.graph.working.semantic_assets[0].properties.action == "m1"
-    orphan_edits = sorted((workflow.root / "edits").glob("*.json"))
-    assert len(orphan_edits) == 2
+    assert not (workflow.root / "edits").exists()
 
     second = ToolEditingAgent(fail_repair=False)
     resumed, _services, _ = make_workflow(
@@ -184,11 +184,11 @@ def test_incomplete_episode_restarts_from_checkpoint_and_new_edit_attempt_namesp
     assert second.starts == [("repair", base, "")]
     assert state.completion_reason == "stable_correct"
     assert resumed.runtime.graph.accepted.semantic_assets[0].properties.action == "m2"
-    assert len(list((workflow.root / "edits").glob("*.json"))) == 3
+    assert not (workflow.root / "edits").exists()
     assert state.iteration == 1
 
 
-def test_seal_receipt_replay_preserves_exact_bundle_and_closes_new_resources(
+def test_seal_receipt_replay_preserves_exact_result_and_closes_new_resources(
     case_graph, monkeypatch
 ):
     workflow, _services, validator = make_workflow(
@@ -197,7 +197,7 @@ def test_seal_receipt_replay_preserves_exact_bundle_and_closes_new_resources(
     captured = fail_after_completed_operation(monkeypatch, "seal")
     with pytest.raises(RuntimeError, match="crash after seal"):
         workflow.run()
-    bundle = Path(captured["result"].bundle_ref)
+    bundle = Path(captured["result"].result_ref)
     before = bundle.read_bytes()
     assert workflow.inspect().next == ("seal",)
 
@@ -207,12 +207,47 @@ def test_seal_receipt_replay_preserves_exact_bundle_and_closes_new_resources(
     closed = []
     resumed.runtime.close_resources = lambda: closed.append("closed")
     state = resumed.run(resume=True)
-    assert state.bundle_ref == str(bundle)
+    assert state.result_ref == str(bundle)
     assert bundle.read_bytes() == before
-    assert json.loads(before)["correct"]
+    metadata = json.loads(before)
+    assert metadata["correct"]
+    assert metadata["result_path"] == str(bundle)
+    assert Path(metadata["ontology_path"]) == bundle.parent / "ontology.json"
+    assert "draft_nodes" not in metadata
+    assert {path.name for path in bundle.parent.iterdir()} == {
+        "result.json",
+        "ontology.json",
+    }
     assert closed == ["closed"]
     assert resumed.runtime.agent.calls == 0
     assert validator.generate_calls == 3
+
+
+def test_deterministic_completed_node_evidence_is_available_to_read_tool(case_graph):
+    from test_agent_runtime import session_for
+
+    workflow, _, _ = make_workflow(case_graph, EditingAgent([[make_rule()]]))
+    state = workflow.run(interrupt_after=["direct"])
+    records = [
+        json.loads(path.read_text())
+        for path in (workflow.root / "evidence").glob("*.json")
+    ]
+    completed = next(
+        item
+        for item in records
+        if item["kind"] == "node_result" and item["payload"]["node"] == "direct"
+    )
+    evidence_id = completed["evidence_id"]
+    assert len(evidence_id) == 64
+    session = session_for(case_graph)
+    reader = next(tool for tool in build_tools(session) if tool.name == "read_evidence")
+    page = reader.invoke({"evidence_id": evidence_id})
+    assert page["kind"] == "node_result"
+    saved = json.loads(page["content"])
+    assert saved["updates"]["accepted_revision"] == state.accepted_revision
+    assert saved["node"] == "direct"
+    assert page["next_offset"] is None
+    assert not (workflow.root / "operations").exists()
 
 
 def test_same_case_writer_lock_refuses_second_execution_without_running_agent(
@@ -239,10 +274,6 @@ def test_context_mismatch_refuses_before_checkpoint_or_evidence_changes(case_gra
         path.relative_to(workflow.root): path.read_bytes()
         for path in (workflow.root / "evidence").glob("*.json")
     }
-    operations = {
-        path.name: path.read_bytes()
-        for path in (workflow.root / "operations").glob("*.json")
-    }
     resumed, services, _ = make_workflow(
         fresh_case_graph(case_graph), EditingAgent([]), validator
     )
@@ -259,14 +290,11 @@ def test_context_mismatch_refuses_before_checkpoint_or_evidence_changes(case_gra
         path.relative_to(workflow.root): path.read_bytes()
         for path in (workflow.root / "evidence").glob("*.json")
     }
-    assert operations == {
-        path.name: path.read_bytes()
-        for path in (workflow.root / "operations").glob("*.json")
-    }
+    assert not (workflow.root / "operations").exists()
     assert resumed.runtime.agent.calls == 0
 
 
-def test_schema_change_refuses_public_resume_before_evidence_or_progress_changes(
+def test_schema_change_refuses_public_resume_before_evidence_changes(
     case_graph,
 ):
     from test_agent_runtime import ScriptModel
@@ -278,19 +306,14 @@ def test_schema_change_refuses_public_resume_before_evidence_or_progress_changes
         case_graph, EditingAgent([[make_rule()]])
     )
     workflow.run(interrupt_after=["direct"])
-    write_json_atomic(workflow.root / "source.json", workflow.runtime.record)
     write_json_atomic(
-        workflow.root / "run_context.json",
-        {"run_id": "schema-resume", "case_index": 1},
+        workflow.root / "case.json",
+        {"source": workflow.runtime.record, "run_id": "schema-resume", "case_index": 1},
     )
     original = workflow.inspect()
     evidence = {
         path.name: path.read_bytes()
         for path in (workflow.root / "evidence").glob("*.json")
-    }
-    operations = {
-        path.name: path.read_bytes()
-        for path in (workflow.root / "operations").glob("*.json")
     }
     schema = workflow.runtime.graph.schema
     changed = schema.model_copy(
@@ -324,10 +347,7 @@ def test_schema_change_refuses_public_resume_before_evidence_or_progress_changes
         path.name: path.read_bytes()
         for path in (workflow.root / "evidence").glob("*.json")
     }
-    assert operations == {
-        path.name: path.read_bytes()
-        for path in (workflow.root / "operations").glob("*.json")
-    }
+    assert not (workflow.root / "operations").exists()
     assert not (workflow.root / "progress.json").exists()
 
 
@@ -366,18 +386,18 @@ def test_manual_resume_retries_only_unavailable_gate_without_repeating_direct(
     assert validator.generate_calls == 3
 
 
-def test_existing_bundle_cannot_be_reused_for_different_completion(case_graph):
+def test_existing_result_cannot_be_reused_for_different_completion(case_graph):
     from cortex.capabilities.sql_training.artifacts.cases import seal_case
 
     workflow, _, _ = make_workflow(case_graph, EditingAgent([[make_rule()]]))
     state = workflow.run()
-    original = json.loads(Path(state.bundle_ref).read_text())
+    original = json.loads(Path(state.result_ref).read_text())
     changed = {
         **original,
         "correct": False,
         "asset_outcome": "partial",
         "completion_reason": "no_progress",
     }
-    with pytest.raises(ValueError, match="existing case bundle"):
+    with pytest.raises(ValueError, match="existing case result"):
         seal_case(workflow.root, changed, workflow.runtime.graph)
-    assert json.loads(Path(state.bundle_ref).read_text()) == original
+    assert json.loads(Path(state.result_ref).read_text()) == original
