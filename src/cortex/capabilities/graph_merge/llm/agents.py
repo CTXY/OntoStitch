@@ -9,7 +9,9 @@ from typing import Any, Protocol
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import model_validator
 
-from cortex.capabilities.graph_merge.mining.concept_hierarchy.models import ConceptMinerOutcome
+from cortex.capabilities.graph_merge.mining.concept_hierarchy.models import (
+    ConceptMinerOutcome,
+)
 from cortex.capabilities.graph_merge.models import (
     BranchReconciliationGroup,
     BranchSelection,
@@ -37,7 +39,7 @@ from cortex.capabilities.graph_merge.reconciliation.strategy import (
     request_scope_candidates,
 )
 from cortex.infrastructure.llm.diagnostics import exception_details
-from cortex.infrastructure.llm.parsing import run_llm_extraction
+from cortex.infrastructure.llm.parsing import run_llm_extraction_sync
 from cortex.schema.ontology_asset_definitions import render_ontology_asset_contract
 
 _DATABASE_ONTOLOGY_TYPES = frozenset({"concept", "metric", "generation_rule"})
@@ -57,7 +59,7 @@ class _Agent:
         self.llm = llm
         self.trace_sink = trace_sink
 
-    async def _run(
+    def _run(
         self,
         name: str,
         output_model,
@@ -66,7 +68,9 @@ class _Agent:
         prompt_extension: str = "",
         ontology_asset_type: str | None = None,
     ):
-        from cortex.capabilities.graph_merge.reconciliation.consolidation import active_memory
+        from cortex.capabilities.graph_merge.reconciliation.consolidation import (
+            active_memory,
+        )
 
         memory = active_memory.get()
         if memory is not None:
@@ -110,7 +114,7 @@ class _Agent:
         trace: dict[str, Any] = {}
         started = monotonic()
         try:
-            result = await run_llm_extraction(
+            result = run_llm_extraction_sync(
                 llm=self.llm,
                 prompt=prompt,
                 output_model=output_model,
@@ -234,7 +238,7 @@ def _is_ref_payload(value: Any) -> bool:
 
 
 class LLMSemanticIdentityResolver(_Agent):
-    async def resolve(
+    def resolve(
         self,
         seed: NodeIdentityView,
         collection_candidates: tuple[GroupIdentityView, ...],
@@ -268,7 +272,7 @@ class LLMSemanticIdentityResolver(_Agent):
                 ),
             },
         }
-        return await self._run(
+        return self._run(
             "identity",
             CandidateIdentitySelection,
             payload,
@@ -277,8 +281,8 @@ class LLMSemanticIdentityResolver(_Agent):
 
 
 class LLMCrossTypeAssetResolver(_Agent):
-    async def resolve(self, candidates: tuple[CrossTypeCandidate, ...]) -> CrossTypeResolution:
-        return await self._run(
+    def resolve(self, candidates: tuple[CrossTypeCandidate, ...]) -> CrossTypeResolution:
+        return self._run(
             "cross_type_identity",
             CrossTypeResolution,
             {"candidates": [item.model_dump(mode="json") for item in candidates]},
@@ -291,7 +295,7 @@ class LLMNodeReconciler(_Agent):
         super().__init__(llm, trace_sink)
         self.prompt_variant = prompt_variant
 
-    async def reconcile(
+    def reconcile(
         self,
         group,
         evidence,
@@ -306,7 +310,7 @@ class LLMNodeReconciler(_Agent):
         )
         if not type_prompt.is_file():
             type_prompt = prompt_root.joinpath("reconcile_types", "strict_default.md")
-        return await self._run(
+        return self._run(
             "reconcile",
             ReconcileOutcome,
             {
@@ -327,7 +331,7 @@ class LLMReconciliationPairAnalyzer(_Agent):
         super().__init__(llm, trace_sink)
         self.compact_payload = compact_payload
 
-    async def analyze(
+    def analyze(
         self, left, right, evidence, policy, *, node_type: str | None = None, dependency_nodes=()
     ):
         evidence_payload = [item.model_dump(mode="json") for item in evidence]
@@ -356,7 +360,7 @@ class LLMReconciliationPairAnalyzer(_Agent):
                 for key in ("left_node", "right_node"):
                     payload[key]["content"]["properties"].pop("sql_generation_plans", None)
                     payload[key]["content"]["properties"].pop("physical_dependencies", None)
-        return await self._run(
+        return self._run(
             "reconcile_semantic_pair",
             ReconciliationPairDecision,
             payload,
@@ -364,7 +368,7 @@ class LLMReconciliationPairAnalyzer(_Agent):
 
 
 class LLMReconciliationOutcomeComposer(_Agent):
-    async def compose(
+    def compose(
         self,
         group,
         evidence,
@@ -381,7 +385,7 @@ class LLMReconciliationOutcomeComposer(_Agent):
                 compact["content"]["properties"].pop("sql_generation_plans", None)
                 compact["content"]["properties"].pop("physical_dependencies", None)
             members.append(compact)
-        return await self._run(
+        return self._run(
             "reconcile_from_pairs",
             ReconcileOutcome,
             {
@@ -418,9 +422,9 @@ class LLMReconciliationOutcomeComposer(_Agent):
 
 
 class LLMReconciliationInputAnalyzer(_Agent):
-    async def analyze(self, group, evidence, *, validation_feedback=None):
+    def analyze(self, group, evidence, *, validation_feedback=None):
         evidence_by_source = {item.source: item for item in evidence}
-        return await self._run(
+        return self._run(
             "reconcile_input_analysis",
             ReconciliationInputAnalysis,
             {
@@ -468,7 +472,7 @@ class LLMCostSensitiveNodeReconciler:
         self.metric_scope_arbiter = LLMMetricScopePairArbiter(llm, trace_sink)
         self.fallback = LLMNodeReconciler(llm, trace_sink, prompt_variant=prompt_variant)
 
-    async def reconcile(
+    def reconcile(
         self,
         group,
         evidence,
@@ -478,7 +482,7 @@ class LLMCostSensitiveNodeReconciler:
         validation_feedback=None,
     ) -> ReconcileOutcome:
         if isinstance(group, BranchReconciliationGroup):
-            return await self.fallback.reconcile(
+            return self.fallback.reconcile(
                 group,
                 evidence,
                 policy,
@@ -488,16 +492,16 @@ class LLMCostSensitiveNodeReconciler:
         if not isinstance(group, FinalNodeGroup):
             raise TypeError("expected a final or branch reconciliation group")
         if validation_feedback is not None:
-            return await self.fallback.reconcile(
+            return self.fallback.reconcile(
                 group,
                 evidence,
                 policy,
                 dependency_nodes=dependency_nodes,
                 validation_feedback=validation_feedback,
             )
-        analysis = await self.analyzer.analyze(group, evidence)
+        analysis = self.analyzer.analyze(group, evidence)
         if not _complete_input_analysis(analysis, group):
-            analysis = await self.analyzer.analyze(
+            analysis = self.analyzer.analyze(
                 group,
                 evidence,
                 validation_feedback={
@@ -508,14 +512,14 @@ class LLMCostSensitiveNodeReconciler:
                 },
             )
         if not _complete_input_analysis(analysis, group):
-            return await self.fallback.reconcile(
+            return self.fallback.reconcile(
                 group,
                 evidence,
                 policy,
                 dependency_nodes=dependency_nodes,
                 validation_feedback=validation_feedback,
             )
-        outcome = await self.composer.compose(
+        outcome = self.composer.compose(
             group,
             evidence,
             (),
@@ -538,7 +542,7 @@ class LLMCostSensitiveNodeReconciler:
                 for right_ref in refs[index + 1 :]:
                     left = by_ref[left_ref]
                     right = by_ref[right_ref]
-                    decision = await self.pair_analyzer.analyze(
+                    decision = self.pair_analyzer.analyze(
                         left,
                         right,
                         evidence,
@@ -547,7 +551,7 @@ class LLMCostSensitiveNodeReconciler:
                         dependency_nodes=dependency_nodes,
                     )
                     if group.node_type == "metric" and decision.resolution == "conflict":
-                        scope = await self.metric_scope_arbiter.analyze(
+                        scope = self.metric_scope_arbiter.analyze(
                             left,
                             right,
                             evidence,
@@ -561,7 +565,7 @@ class LLMCostSensitiveNodeReconciler:
             for decision in decisions
         ):
             return outcome
-        outcome = await self.composer.compose(
+        outcome = self.composer.compose(
             group,
             evidence,
             tuple(decisions),
@@ -585,7 +589,7 @@ class LLMCostSensitiveNodeReconciler:
                 if decision.resolution == "conflict"
                 and group_by_ref.get(decision.left_ref) == group_by_ref.get(decision.right_ref)
             )
-            return await self.fallback.reconcile(
+            return self.fallback.reconcile(
                 group,
                 evidence,
                 policy,
@@ -638,8 +642,8 @@ def _merged_operand_review_sets(outcome: ReconcileOutcome, analysis: Reconciliat
 
 
 class LLMMetricScopePairArbiter(_Agent):
-    async def analyze(self, left, right, evidence, *, dependency_nodes=()):
-        return await self._run(
+    def analyze(self, left, right, evidence, *, dependency_nodes=()):
+        return self._run(
             "reconcile_metric_scope_pair",
             ReconciliationPairDecision,
             {
@@ -663,7 +667,7 @@ class LLMKnowledgeGeneralizer(_Agent):
         super().__init__(llm, trace_sink)
         self.prompt_variant = prompt_variant
 
-    async def generalize(
+    def generalize(
         self,
         *,
         baseline,
@@ -700,7 +704,7 @@ class LLMKnowledgeGeneralizer(_Agent):
             baseline_payload["properties"].pop("physical_dependencies", None)
             for item in representation_payloads:
                 item["content"]["properties"].pop("physical_dependencies", None)
-        return await self._run(
+        return self._run(
             "generalize",
             GeneralizationProposal,
             {
@@ -730,7 +734,7 @@ class LLMFactFuser(_Agent):
         super().__init__(llm, trace_sink)
         self.prompt_variant = prompt_variant
 
-    async def fuse(
+    def fuse(
         self,
         *,
         mode,
@@ -750,7 +754,7 @@ class LLMFactFuser(_Agent):
             else None
         )
         extension = type_prompt.read_text(encoding="utf-8") if type_prompt else ""
-        return await self._run(
+        return self._run(
             "fuse",
             FusionProposal,
             {
@@ -769,13 +773,13 @@ class LLMFactFuser(_Agent):
 
 
 class LLMGeneralizationCoverageVerifier(_Agent):
-    async def verify(
+    def verify(
         self, *, proposal, representations, evidence_by_ref, node_type, dependency_nodes=()
     ) -> GeneralizationVerification:
         proposal_payload = proposal.model_dump(mode="json")
         proposal_payload.pop("reason", None)
         evidence = tuple(item for items in evidence_by_ref.values() for item in items)
-        return await self._run(
+        return self._run(
             "coverage_verifier",
             GeneralizationVerification,
             {
@@ -825,10 +829,10 @@ def _consolidation_context(group, schema, evidence_by_ref, dependency_nodes, dep
 
 
 class LLMGroupConsolidator(_Agent):
-    async def propose(
+    def propose(
         self, *, group, schema, evidence_by_ref, dependency_nodes=(), dependency_conflicts=()
     ):
-        return await self._run(
+        return self._run(
             "consolidate",
             ConsolidationProposal,
             _consolidation_context(
@@ -839,7 +843,7 @@ class LLMGroupConsolidator(_Agent):
 
 
 class LLMConsolidationChecker(_Agent):
-    async def check(
+    def check(
         self,
         *,
         proposal,
@@ -849,9 +853,11 @@ class LLMConsolidationChecker(_Agent):
         dependency_nodes=(),
         dependency_conflicts=(),
     ):
-        from cortex.capabilities.graph_merge.reconciliation.proposal import review_checklists
+        from cortex.capabilities.graph_merge.reconciliation.proposal import (
+            review_checklists,
+        )
 
-        return await self._run(
+        return self._run(
             "consolidation_check",
             ConsolidationReview,
             {
@@ -866,10 +872,10 @@ class LLMConsolidationChecker(_Agent):
 
 
 class LLMConflictBranchSelector(_Agent):
-    async def select(
+    def select(
         self, incoming, alternatives, evidence, node_type, identity_policy
     ) -> BranchSelection:
-        return await self._run(
+        return self._run(
             "branch",
             BranchSelection,
             {
@@ -883,8 +889,8 @@ class LLMConflictBranchSelector(_Agent):
 
 
 class LLMConceptResolver(_Agent):
-    async def resolve(self, subgraph, schema, *, allow_grounding_removal) -> ConceptMinerOutcome:
-        return await self._run(
+    def resolve(self, subgraph, schema, *, allow_grounding_removal) -> ConceptMinerOutcome:
+        return self._run(
             "concept_mine",
             ConceptMinerOutcome,
             {

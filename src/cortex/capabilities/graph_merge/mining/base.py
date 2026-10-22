@@ -22,7 +22,7 @@ class BaseGraphMiner(ABC):
     miner_id: str
 
     @abstractmethod
-    async def propose(
+    def propose(
         self, state: GraphState, schema: SchemaDefinition
     ) -> GraphMiningResult:
         """Locate candidate subgraphs and resolve them into bounded rewrite proposals."""

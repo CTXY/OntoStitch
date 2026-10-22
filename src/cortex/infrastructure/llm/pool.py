@@ -85,6 +85,12 @@ class ThreadedChatModel(BaseChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
         return self._model._generate(messages, stop=stop, **kwargs)
 
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs: Any):
+        # Ask the provider to normalize tool schemas, but bind the resulting kwargs
+        # to this adapter so synchronous scheduling is never bypassed.
+        bound = self._model.bind_tools(tools, tool_choice=tool_choice, **kwargs)
+        return self.bind(**bound.kwargs)
+
 
 class CredentialBoundEmbeddings(Embeddings):
     """Bind embedding authentication failures to the worker credential state."""
@@ -155,6 +161,10 @@ class PooledChatModel(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         return "cortex-key-pool"
+
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs: Any):
+        bound = self._models[0].bind_tools(tools, tool_choice=tool_choice, **kwargs)
+        return self.bind(**bound.kwargs)
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
         for attempt in range(self._retries + 1):

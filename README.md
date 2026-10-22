@@ -98,14 +98,37 @@ The command prints the run path in its `output` field and exports
 for incremental training, not the exported `graph_state.json` file. Exit code 2
 means the training result needs review.
 
-Direct extraction retains structurally valid initial knowledge without an initial
-LLM assessment. Each execution gate requires three consecutive correct SQL
-regenerations by default and stops at the first failure. Incorrect SQL enters
-error diagnosis and candidate assessment; accepted repairs update the case working
-graph during refinement. When unaccepted candidates are discarded, execution
-evidence is refreshed if the retained graph differs from the tested graph.
-Case artifacts distinguish directly retained nodes from assessment-accepted repairs
-and record the evaluated and exported ontology fingerprints.
+Extraction now uses one Learning Agent (`LangChain create_agent`) for initial
+learning and repair, with six domain tools and short working notes. Independent
+Diagnosis and Assessment provide feedback; a Python controller owns validation,
+acceptance, recovery and output. All configured Tables/Columns are initialized;
+Values are included conditionally after database verification.
+
+Training and Graph Merge expose synchronous Python APIs: call
+`SqlTrainingService.run(...)`, `SqlTrainingCapability.train(...)`, or
+`GraphMergeOperator.merge(...)` directly, without `await` or `asyncio.run`.
+Case workers and parallel read-only agent tools retain their existing concurrency.
+Online retrieval/context APIs remain asynchronous; training adapts RetrieveDB at
+its dedicated retrieval boundary. An asynchronous host should dispatch the
+synchronous training service to a worker thread.
+
+Each execution gate requires three consecutive correct SQL regenerations by
+default and stops at the first failure. Working changes dynamically; accepted
+improvements advance a separate retained snapshot. Finalization discards tentative
+changes and verifies the actual retained graph, reusing exact matching evidence
+within the same case. Only `ready` semantic fragments enter normal Graph Merge.
+
+See the [case state machine](docs/design/extract-case-agent-loop.md),
+[implementation design](docs/design/extract-implementation.md), and
+[prompt maintenance guide](src/cortex/capabilities/sql_training/llm/prompts/README.md).
+Case directories under `train_runs/<run>/cases/` contain complete snapshots,
+evidence, a safe checkpoint and the final semantic bundle. The programmatic
+`TrainPipeline.resume_case(case_root)` resumes one case using the same configuration,
+source and fixed database; completed bundles can be read without rerunning learning.
+
+Set standard `LANGSMITH_TRACING=true` and LangSmith connection variables to enable
+explicit summary spans. Full model/tool payloads stay in local evidence. Without
+tracing configuration the pipeline runs locally.
 
 ### Separate training and graph merge
 

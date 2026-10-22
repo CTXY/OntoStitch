@@ -27,7 +27,9 @@ usecase/
 *.log
 .DS_Store
 /results_final/
-/docs/
-/tests/
+/docs/*
+!/docs/design/
+/tests/*
+!/tests/*.py
 /baseline/tests/
 /datasets/

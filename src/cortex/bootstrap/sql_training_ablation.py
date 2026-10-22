@@ -28,11 +28,11 @@ def build_repair_only_capability(config_path: Path, *, workspace: Path, physical
     )
 
 
-async def preflight_repair_only(capability, config_path: Path):
+def preflight_repair_only(capability, config_path: Path):
     result = execute_query("SELECT 1", database_url=capability.runtime_config.database.url)
     if not result.success:
         raise ValueError("database preflight failed")
     config = load_config(config_path)
     model = create_chat_model(config.llm, profile="sql_training")
-    await model.ainvoke("Reply with OK.")
+    model.invoke("Reply with OK.")
     return {"database": "connected", "sql_training_llm": "connected"}

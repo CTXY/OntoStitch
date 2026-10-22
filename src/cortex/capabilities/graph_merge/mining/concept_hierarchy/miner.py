@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
-from collections.abc import Awaitable
 from typing import Protocol
 
 from cortex.capabilities.graph_merge.mining.base import (
@@ -33,7 +32,7 @@ class ConceptResolver(Protocol):
         schema: SchemaDefinition,
         *,
         allow_grounding_removal: bool,
-    ) -> Awaitable[ConceptMinerOutcome]: ...
+    ) -> ConceptMinerOutcome: ...
 
 
 class ConceptConnectionMiner(BaseGraphMiner):
@@ -56,7 +55,7 @@ class ConceptConnectionMiner(BaseGraphMiner):
         self.max_edges_per_component = max_edges_per_component
         self.max_proposals = max_proposals
 
-    async def propose(
+    def propose(
         self, state: GraphState, schema: SchemaDefinition
     ) -> GraphMiningResult:
         subgraphs, diagnostics = self._locate(state)
@@ -71,7 +70,7 @@ class ConceptConnectionMiner(BaseGraphMiner):
                 )
                 break
             try:
-                outcome = await self.resolver.resolve(
+                outcome = self.resolver.resolve(
                     subgraph,
                     schema,
                     allow_grounding_removal=self.allow_grounding_removal,

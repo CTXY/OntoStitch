@@ -83,13 +83,13 @@ class ConsolidationMemory:
         self.calls += 1
         self.history.append({"round": self.round, "task": task, "call": self.calls})
 
-    async def invoke(self, task, method, *args, **kwargs):
+    def invoke(self, task, method, *args, **kwargs):
         # Built-in agents debit every internal call. Custom ports debit one call.
         if self.calls >= self.max_calls:
             self.consume(task)
         before = self.calls
         try:
-            return await method(*args, **kwargs)
+            return method(*args, **kwargs)
         except ConsolidationBudgetExceeded:
             raise
         except Exception as exc:
@@ -165,8 +165,8 @@ class ConsolidationMemory:
         )
 
 
-async def invoke(task, method, *args, **kwargs):
+def invoke(task, method, *args, **kwargs):
     memory = active_memory.get()
     if memory is None:
-        return await method(*args, **kwargs)
-    return await memory.invoke(task, method, *args, **kwargs)
+        return method(*args, **kwargs)
+    return memory.invoke(task, method, *args, **kwargs)

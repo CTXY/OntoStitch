@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -24,7 +24,7 @@ class NodeReconciler(Protocol):
         group: FinalNodeGroup | BranchReconciliationGroup,
         evidence: tuple[EvidenceItem, ...],
         policy: IdentityPolicy,
-    ) -> Awaitable[ReconcileOutcome]: ...
+    ) -> ReconcileOutcome: ...
 
 
 class ReconciliationSemanticsValidator(Protocol):

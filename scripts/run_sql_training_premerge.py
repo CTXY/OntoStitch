@@ -9,7 +9,6 @@ Graph Merge run.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
@@ -31,18 +30,24 @@ def _arguments() -> argparse.Namespace:
 
 
 def _load_records(path: Path) -> tuple[QASqlTrainingRecord, ...]:
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    rows = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
     return tuple(QASqlTrainingRecord.model_validate(row) for row in rows)
 
 
 def _dated_workspace(parent: Path) -> Path:
-    timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d-%H%M%S-%f")[:-3]
+    timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d-%H%M%S-%f")[
+        :-3
+    ]
     workspace = (parent / timestamp).resolve()
     workspace.mkdir(parents=True, exist_ok=False)
     return workspace
 
 
-async def _run(args: argparse.Namespace) -> dict[str, object]:
+def _run(args: argparse.Namespace) -> dict[str, object]:
     workspace = _dated_workspace(args.output)
     config = load_config(args.config)
     schema = load_root_schema(config.root_schema.external_path)
@@ -51,10 +56,12 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
 
     # Bootstrap owns construction; stopping at the Engine contract is the intentional
     # pre-merge boundary. SqlTrainingService.run() is deliberately not invoked.
-    incoming_state, report = await service._engine.train(records, schema, GraphSpace())
+    incoming_state, report = service._engine.train(records, schema, GraphSpace())
 
     graph_path = workspace / "incoming_graph.json"
-    graph_path.write_text(incoming_state.graph.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    graph_path.write_text(
+        incoming_state.graph.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
     (workspace / "incoming_state.json").write_text(
         incoming_state.model_dump_json(indent=2) + "\n", encoding="utf-8"
     )
@@ -85,7 +92,7 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
 
 
 def main() -> None:
-    print(json.dumps(asyncio.run(_run(_arguments())), ensure_ascii=False, indent=2))
+    print(json.dumps(_run(_arguments()), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

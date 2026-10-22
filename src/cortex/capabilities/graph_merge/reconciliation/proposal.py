@@ -202,7 +202,7 @@ def review_passes(review, proposal, group, evidence_by_ref):
     return True
 
 
-async def consolidate(
+def consolidate(
     group, *, schema, evidence_by_ref, dependency_nodes, dependency_conflicts, proposer, checker
 ):
     memory = active_memory.get()
@@ -214,7 +214,7 @@ async def consolidate(
         if needs_proposal:
             feedback_start = len(memory.feedback)
             try:
-                proposal = await invoke(
+                proposal = invoke(
                     "consolidate",
                     proposer.propose,
                     group=group,
@@ -250,7 +250,7 @@ async def consolidate(
         memory.history.append(record)
         feedback_start = len(memory.feedback)
         try:
-            review = await invoke(
+            review = invoke(
                 "consolidation_check",
                 checker.check,
                 proposal=proposal,

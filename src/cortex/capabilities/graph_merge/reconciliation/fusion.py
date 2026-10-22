@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Mapping
+from collections.abc import Mapping
 from typing import Literal, Protocol
 
 from cortex.capabilities.graph_merge.models import (
@@ -42,7 +42,7 @@ class FactFuser(Protocol):
         residuals: tuple[SemanticResidual, ...],
         validation_feedback: dict[str, object] | None = None,
         dependency_nodes: tuple[GraphNode, ...] = (),
-    ) -> Awaitable[FusionProposal]: ...
+    ) -> FusionProposal: ...
 
 
 class FactFuserRegistry:
@@ -66,7 +66,7 @@ class FactFuserRegistry:
         return fuser if required_fields <= set(effective_fields) else self.default
 
 
-async def fuse_if_eligible(
+def fuse_if_eligible(
     *,
     mode: Literal["equivalent", "compatible"],
     baseline: NodeContent,
@@ -86,7 +86,7 @@ async def fuse_if_eligible(
         return None, "FUSER_UNAVAILABLE"
     memory = active_memory.get()
     try:
-        proposal = await invoke(
+        proposal = invoke(
             "fuse",
             fuser.fuse,
             mode=mode,
@@ -148,7 +148,7 @@ async def fuse_if_eligible(
         else None
     )
     try:
-        verification = await invoke(
+        verification = invoke(
             "coverage",
             verifier.verify,
             proposal=proposal,

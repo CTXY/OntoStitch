@@ -7,7 +7,7 @@ from typing import Any
 from cortex.capabilities.sql_training.artifacts.jsonl import (
     read_json,
     read_jsonl,
-    write_json,
+    write_json_atomic,
     write_jsonl,
 )
 from cortex.capabilities.sql_training.core.enums import NodeType
@@ -71,13 +71,13 @@ class Workspace:
     def write_draft_assets(self, asset_type: NodeType, assets: Iterable[NodeAsset]) -> Path:
         self.init()
         path = self.draft_dir / ASSET_GROUP_FILES[asset_type]
-        return write_json(path, [_serialize_asset_row(asset) for asset in assets])
+        return write_json_atomic(path, [_serialize_asset_row(asset) for asset in assets])
 
     def write_catalog_edges(self, edges: Iterable[GraphEdge]) -> Path:
         """Persist physical relationships as edges, never as node assets."""
 
         self.init()
-        return write_json(
+        return write_json_atomic(
             self.draft_dir / "catalog_edges.json",
             [edge.model_dump(mode="json") for edge in edges],
         )

@@ -17,7 +17,7 @@ class SqlTrainingGraphMergeEvidenceResolver:
     def __init__(self, repository: SqlTrainingEvidenceRepository):
         self.repository = repository
 
-    async def resolve(self, sources: tuple[SourceReference, ...]) -> tuple[EvidenceItem, ...]:
+    def resolve(self, sources: tuple[SourceReference, ...]) -> tuple[EvidenceItem, ...]:
         evidence = []
         for source in sources:
             row = self.repository.get(source.source_id)

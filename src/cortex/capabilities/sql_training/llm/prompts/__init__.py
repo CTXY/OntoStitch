@@ -13,6 +13,10 @@ from cortex.schema.ontology_asset_definitions import (
 
 _PROMPT_DIR = Path(__file__).resolve().parent
 _PROMPT_FILES = {
+    "learning_system": "learning/system.md",
+    "learning_direct": "learning/direct.md",
+    "learning_repair": "learning/repair.md",
+    "learning_assessment": "learning/assessment.md",
     "gold_join_edges": "gold_join_edges.md",
     "metric": "metric.md",
     "semantic_mapping": "semantic_mapping.md",
@@ -112,4 +116,14 @@ def load_prompt(name: str) -> str:
         prompt = prompt.replace(
             "{generation_rule_taxonomy}", render_generation_rule_taxonomy()
         )
+    if name == "learning_system":
+        rules = (_PROMPT_DIR / "shared_initial_extraction_rules.md").read_text(encoding="utf-8")
+        # Reuse domain rules, excluding the legacy one-shot response envelope.
+        prompt += "\n\n" + rules.split("## Output", 1)[0].strip()
     return prompt
+
+
+def prompt_fingerprint(name: str) -> str:
+    """Content identity covers composed shared rules, not only the named file."""
+    import hashlib
+    return hashlib.sha256(load_prompt(name).encode()).hexdigest()

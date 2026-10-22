@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Awaitable
 from typing import Protocol
 
 from cortex.capabilities.graph_merge.identity import exact_identity_key
@@ -65,7 +64,7 @@ from cortex.schema import (
 class EvidenceResolver(Protocol):
     def resolve(
         self, sources: tuple[SourceReference, ...]
-    ) -> Awaitable[tuple[EvidenceItem, ...]]: ...
+    ) -> tuple[EvidenceItem, ...]: ...
 
 
 class CachedEvidenceResolver:
@@ -75,10 +74,10 @@ class CachedEvidenceResolver:
         self.resolver = resolver
         self._cache: dict[SourceReference, EvidenceItem] = {}
 
-    async def resolve(self, sources: tuple[SourceReference, ...]) -> tuple[EvidenceItem, ...]:
+    def resolve(self, sources: tuple[SourceReference, ...]) -> tuple[EvidenceItem, ...]:
         missing = tuple(source for source in sources if source not in self._cache)
         if missing:
-            resolved = await self.resolver.resolve(missing)
+            resolved = self.resolver.resolve(missing)
             self._cache.update({item.source: item for item in resolved})
         return tuple(self._cache[source] for source in sources if source in self._cache)
 
@@ -91,7 +90,7 @@ class ConflictBranchSelector(Protocol):
         evidence: tuple[EvidenceItem, ...],
         node_type: NodeType,
         identity_policy: IdentityPolicy,
-    ) -> Awaitable[BranchSelection]: ...
+    ) -> BranchSelection: ...
 
 
 class CanonicalIdFactory(Protocol):
@@ -169,7 +168,7 @@ class NodeGroupReconciler:
 
         return group.existing_node_id or self.id_factory.new_node_id(group)
 
-    async def reconcile_group(
+    def reconcile_group(
         self,
         group,
         *,
@@ -181,7 +180,7 @@ class NodeGroupReconciler:
         memory = ConsolidationMemory(self.consolidation_max_rounds, self.consolidation_max_calls)
         token = active_memory.set(memory)
         try:
-            result = await self._reconcile_group(
+            result = self._reconcile_group(
                 group,
                 schema=schema,
                 historical_conflict=historical_conflict,
@@ -204,7 +203,7 @@ class NodeGroupReconciler:
         finally:
             active_memory.reset(token)
 
-    async def _reconcile_group(
+    def _reconcile_group(
         self,
         group: FinalNodeGroup,
         *,
@@ -271,7 +270,7 @@ class NodeGroupReconciler:
                 and self._simple_outcome(group, node_type, schema) is None
             )
         ):
-            return await self._consolidate_proposal(
+            return self._consolidate_proposal(
                 group,
                 canonical_id=canonical_id,
                 schema=schema,
@@ -282,7 +281,7 @@ class NodeGroupReconciler:
         analysis = self._simple_outcome(group, node_type, schema)
         simple = analysis is not None
         if not simple:
-            evidence_by_ref, evidence, evidence_code = await self._evidence(group.members)
+            evidence_by_ref, evidence, evidence_code = self._evidence(group.members)
             if evidence_code:
                 diagnostics.append(evidence_code)
         memory.context = {
@@ -307,11 +306,11 @@ class NodeGroupReconciler:
                 for item in pending_feedback
             )
             if not simple and reanalyze:
-                analysis = await self._semantic_outcome(
+                analysis = self._semantic_outcome(
                     group, evidence, node_type, diagnostics, schema, dependency_nodes
                 )
             memory.analysis = analysis
-            outcomes = await self._resolve_groups(
+            outcomes = self._resolve_groups(
                 analysis.groups,
                 representations=group.members,
                 evidence_by_ref=evidence_by_ref,
@@ -416,7 +415,7 @@ class NodeGroupReconciler:
             result = result.model_copy(update={"conflict": conflict})
         return result
 
-    async def _consolidate_proposal(
+    def _consolidate_proposal(
         self,
         group,
         *,
@@ -429,7 +428,7 @@ class NodeGroupReconciler:
         from cortex.capabilities.graph_merge.reconciliation.proposal import consolidate
 
         memory = active_memory.get()
-        evidence_by_ref, _, code = await self._evidence(group.members)
+        evidence_by_ref, _, code = self._evidence(group.members)
         memory.context = {
             "historical_conflict": historical_conflict.model_dump(
                 mode="json", exclude={"consolidation"}
@@ -447,7 +446,7 @@ class NodeGroupReconciler:
             "dependency_nodes": [n.model_dump(mode="json") for n in dependency_nodes],
             "dependency_conflicts": [c.model_dump(mode="json") for c in dependency_conflicts],
         }
-        proposal = await consolidate(
+        proposal = consolidate(
             group,
             schema=schema,
             evidence_by_ref=evidence_by_ref,
@@ -501,7 +500,7 @@ class NodeGroupReconciler:
             )
         return result
 
-    async def _resolve_groups(
+    def _resolve_groups(
         self,
         groups: tuple[ReconciliationGroup, ...],
         *,
@@ -557,7 +556,7 @@ class NodeGroupReconciler:
             memory = active_memory.get()
             feedback_count = len(memory.feedback) if memory else 0
             if node_type.merge_role == MergeRole.FACT:
-                content, code = await fuse_if_eligible(
+                content, code = fuse_if_eligible(
                     mode=group.relation,
                     baseline=baseline.content,
                     representations=group_representations,
@@ -571,7 +570,7 @@ class NodeGroupReconciler:
                     dependency_nodes=dependency_nodes,
                 )
             else:
-                content, code = await generalize_if_eligible(
+                content, code = generalize_if_eligible(
                     mode=group.relation,
                     baseline=baseline.content,
                     representations=group_representations,
@@ -653,7 +652,7 @@ class NodeGroupReconciler:
             )
         return None
 
-    async def _semantic_outcome(
+    def _semantic_outcome(
         self, group, evidence, node_type, diagnostics, schema, dependency_nodes
     ):
         effective_fields = schema.effective_node_fields(node_type.id)
@@ -690,7 +689,7 @@ class NodeGroupReconciler:
                 kwargs = {"dependency_nodes": dependency_nodes} if dependency_nodes else {}
                 if validation_feedback is not None:
                     kwargs["validation_feedback"] = validation_feedback
-                outcome = await invoke(
+                outcome = invoke(
                     "reconcile",
                     strategy.reconciler.reconcile,
                     group,
@@ -755,12 +754,12 @@ class NodeGroupReconciler:
             reason="Reconciliation output failed contract validation.",
         )
 
-    async def _evidence(self, representations):
+    def _evidence(self, representations):
         sources = _union_sources(*(item.sources for item in representations))
         if not sources or self.evidence_resolver is None:
             return {item.ref: () for item in representations}, (), None
         try:
-            evidence = await self.evidence_resolver.resolve(sources)
+            evidence = self.evidence_resolver.resolve(sources)
         except Exception:
             return {item.ref: () for item in representations}, (), "EVIDENCE_UNAVAILABLE"
         by_source = {item.source: item for item in evidence}

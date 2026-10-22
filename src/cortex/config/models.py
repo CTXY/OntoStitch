@@ -236,6 +236,13 @@ class SqlTrainingConfig(_ConfigModel):
     max_trial_attempts: int = Field(default=3, ge=1)
     extraction_max_workers: int = Field(default=3, ge=1)
     case_max_workers: int | None = Field(default=None, ge=1)
+    agent_max_steps: int = Field(default=10, ge=1)
+    agent_read_concurrency: int = Field(default=4, ge=1, le=4)
+    agent_episode_timeout: float = Field(default=180.0, gt=0)
+    agent_context_characters: int = Field(default=64_000, ge=4_000)
+    agent_notes_characters: int = Field(default=4_000, ge=256)
+    agent_tool_characters: int = Field(default=12_000, ge=1_000)
+    agent_database_calls: int = Field(default=12, ge=1)
     trace_level: Literal["", "info", "debug"] = ""
     validation: SqlTrainingValidationConfig = Field(default_factory=SqlTrainingValidationConfig)
     error_analysis: SqlTrainingErrorAnalysisConfig = Field(

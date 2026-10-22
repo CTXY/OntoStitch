@@ -44,13 +44,13 @@ class HistoricalIdentityGrouper(IdentityGrouper):
                     (json.loads(event["request"][-1]["content"]), event.get("parsed_response"))
                 )
 
-    async def resolve(self, seed, entries, queries, policy):
+    def resolve(self, seed, entries, queries, policy):
         result = self.requests[seed.query_id][1]
         if result is None:
             raise ValueError("historical identity model failed")
         return NodeIdentitySelection.model_validate(result)
 
-    async def _select_semantic(self, seed, groups, queries, policy, effective_fields):
+    def _select_semantic(self, seed, groups, queries, policy, effective_fields):
         seed_id = seed.ref.ref_id
         self.used.add(seed_id)
         if seed_id not in self.requests:
@@ -60,7 +60,7 @@ class HistoricalIdentityGrouper(IdentityGrouper):
             return None, (), None
         payload, _ = self.requests[seed_id]
         seed_view = NodeIdentityView.model_validate(payload["seed"])
-        current = await self._view(seed, policy, effective_fields)
+        current = self._view(seed, policy, effective_fields)
         if _view_content(seed_view.representation) != _view_content(current):
             raise ValueError(f"historical identity seed content mismatch: {seed_id}")
         entries = tuple(
@@ -75,19 +75,19 @@ class HistoricalIdentityGrouper(IdentityGrouper):
             raise ValueError("historical identity candidates do not match reconstructed inputs")
         for row in entries:
             actual = [
-                await self._view(m, policy, effective_fields) for m in groups[row.entry_id].members
+                self._view(m, policy, effective_fields) for m in groups[row.entry_id].members
             ]
             if [_view_content(v) for v in row.representations] != [
                 _view_content(v) for v in actual
             ]:
                 raise ValueError(f"historical collection content mismatch: {row.entry_id}")
         for row in candidates:
-            actual = await self._view(queries[row.query_id], policy, effective_fields)
+            actual = self._view(queries[row.query_id], policy, effective_fields)
             if _view_content(row.representation) != _view_content(actual):
                 raise ValueError(f"historical candidate content mismatch: {row.query_id}")
-        return await self._resolve_semantic_selection(seed, seed_view, entries, candidates, policy)
+        return self._resolve_semantic_selection(seed, seed_view, entries, candidates, policy)
 
-    async def _cross_type_replacements(self, existing, incoming):
+    def _cross_type_replacements(self, existing, incoming):
         if not self.cross_type:
             return (), ()
         if len(self.cross_type) != 1:
@@ -97,9 +97,9 @@ class HistoricalIdentityGrouper(IdentityGrouper):
             return (), ("MODEL_FAILURE",)
         # The original pair ID is opaque; recover the two original refs from the
         # trace's complete candidate payload, then preserve the recorded keep ref.
-        return await super()._cross_type_replacements(existing, incoming)
+        return super()._cross_type_replacements(existing, incoming)
 
-    async def group(self, existing, incoming, node_types, effective_fields_by_type=None):
+    def group(self, existing, incoming, node_types, effective_fields_by_type=None):
         if self.cross_type:
             from cortex.capabilities.graph_merge.models import CrossTypeResolution
 
@@ -109,7 +109,7 @@ class HistoricalIdentityGrouper(IdentityGrouper):
             errors = []
 
             class FrozenCrossType:
-                async def resolve(self, candidates):
+                def resolve(self, candidates):
                     if resolution is None:
                         raise ValueError("historical cross-type model failed")
                     payload = {"candidates": [c.model_dump(mode="json") for c in candidates]}
@@ -122,7 +122,7 @@ class HistoricalIdentityGrouper(IdentityGrouper):
                     )
 
             self.cross_type_resolver = FrozenCrossType()
-        result = await super().group(existing, incoming, node_types, effective_fields_by_type)
+        result = super().group(existing, incoming, node_types, effective_fields_by_type)
         if self.cross_type and errors:
             raise ValueError(errors[0])
         unused = set(self.requests) - self.used

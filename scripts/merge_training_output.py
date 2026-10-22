@@ -1,7 +1,6 @@
 """Merge the public pre-merge training state using the existing graph operator."""
 
 import argparse
-import asyncio
 import json
 from pathlib import Path
 
@@ -16,7 +15,7 @@ from cortex.infrastructure.artifacts import FileSystemGraphMergeTraceSink
 from cortex.schema import GraphSpace, GraphState, load_root_schema, validate_graph_state
 
 
-async def merge(training_workspace: Path, config_path: Path, output: Path) -> None:
+def merge(training_workspace: Path, config_path: Path, output: Path) -> None:
     config = load_config(config_path)
     schema = load_root_schema(config.root_schema.external_path)
     incoming = GraphState.model_validate_json(
@@ -31,11 +30,13 @@ async def merge(training_workspace: Path, config_path: Path, output: Path) -> No
         ),
         trace_sink=FileSystemGraphMergeTraceSink(output / "llm_traces.jsonl"),
     )
-    result = await operator.merge(
+    result = operator.merge(
         GraphState(graph=GraphSpace(), node_conflicts=()), incoming, schema
     )
     validate_graph_state(result.state, schema)
-    (output / "graph_state.json").write_text(result.state.model_dump_json(indent=2) + "\n")
+    (output / "graph_state.json").write_text(
+        result.state.model_dump_json(indent=2) + "\n"
+    )
     (output / "merge_report.json").write_text(result.model_dump_json(indent=2) + "\n")
     print(json.dumps({"output": str(output), "nodes": len(result.state.graph.nodes)}))
 
@@ -46,4 +47,4 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=Path, default=Path("configs/cortex.yaml"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    asyncio.run(merge(args.training_workspace.resolve(), args.config, args.output.resolve()))
+    merge(args.training_workspace.resolve(), args.config, args.output.resolve())

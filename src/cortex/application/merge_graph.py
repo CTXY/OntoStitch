@@ -58,7 +58,7 @@ class GraphMergeResult(_MergeApplicationModel):
 
 
 class GraphMergeUseCase(Protocol):
-    async def merge(
+    def merge(
         self,
         existing: GraphState,
         incoming: GraphState,

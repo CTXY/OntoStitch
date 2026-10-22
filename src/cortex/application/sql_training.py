@@ -119,7 +119,7 @@ class SqlTrainingResult(_SqlTrainingModel):
 
 
 class SqlTrainingEngine(Protocol):
-    async def train(
+    def train(
         self,
         training_set: tuple[QASqlTrainingRecord, ...],
         schema: SchemaDefinition,
@@ -147,7 +147,7 @@ class SqlTrainingService:
         self._state_repository = state_repository
         self._config_fingerprint = config_fingerprint
 
-    async def run(
+    def run(
         self,
         training_set: tuple[QASqlTrainingRecord, ...],
         schema: SchemaDefinition,
@@ -164,7 +164,7 @@ class SqlTrainingService:
         validate_graph_space(existing_state.graph, schema)
         engine_graph = _copy_graph(existing_state.graph)
         engine_schema = SchemaDefinition.model_validate(schema.model_dump(mode="python"))
-        trained, report = await self._engine.train(training_set, engine_schema, engine_graph)
+        trained, report = self._engine.train(training_set, engine_schema, engine_graph)
         incoming_state = GraphState.model_validate(trained.model_dump(mode="python"))
         evaluation_report = SqlTrainingEvaluationReport.model_validate(
             report.model_dump(mode="python")
@@ -186,7 +186,7 @@ class SqlTrainingService:
                     },
                 ),
             )
-        merged = await self._graph_merge.merge(existing_state, incoming_state, schema)
+        merged = self._graph_merge.merge(existing_state, incoming_state, schema)
         self._state_repository.save(merged.state)
         graph = merged.state.graph
         status = (

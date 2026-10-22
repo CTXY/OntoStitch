@@ -43,7 +43,7 @@ def prepare_config(spec: dict, workspace: Path):
     return target
 
 
-async def run_repair_only(spec: dict, root: Path, workspace: Path):
+def run_repair_only(spec: dict, root: Path, workspace: Path):
     # Application's record type is consumed only by Bootstrap's assembled capability boundary.
     from cortex.application.sql_training import QASqlTrainingRecord
 
@@ -57,7 +57,7 @@ async def run_repair_only(spec: dict, root: Path, workspace: Path):
         workspace=workspace / "runtime",
         physical_workspace=Path(spec["physical_workspace"]),
     )
-    write_json(workspace / "preflight.json", await preflight_repair_only(engine, config))
+    write_json(workspace / "preflight.json", preflight_repair_only(engine, config))
     schema = load_root_schema(engine.config.root_schema.external_path)
     cases = []
     lock = fingerprint(spec)
@@ -75,7 +75,7 @@ async def run_repair_only(spec: dict, root: Path, workspace: Path):
     remaining = [r for r in spec["records"] if r["source_id"] not in existing]
     if remaining:
         print(f"train_engine_start {spec['database']} cases={len(remaining)}", flush=True)
-        _, report = await engine.train(
+        _, report = engine.train(
             tuple(QASqlTrainingRecord.model_validate(r) for r in remaining),
             schema,
             GraphSpace(),

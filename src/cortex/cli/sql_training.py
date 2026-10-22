@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import tempfile
@@ -16,7 +15,6 @@ from cortex.application import (
     QASqlTrainingRecord,
     RunStatus,
     SqlTrainingResult,
-    SqlTrainingService,
 )
 from cortex.bootstrap import build_sql_training_service
 from cortex.config import load_config
@@ -88,13 +86,7 @@ def sql_training_cli(
             workspace=workspace,
             state_repository=repository,
         )
-        result = asyncio.run(
-            _run_sql_training(
-                service=service,
-                training_set=training_set,
-                schema=schema,
-            )
-        )
+        result = service.run(training_set=training_set, schema=schema)
         _write_result(workspace, result)
         _write_case_review_index(workspace, result)
         if result.status != RunStatus.FAILED:
@@ -131,21 +123,11 @@ def sql_training_cli(
         ctx.exit(2)
 
 
-async def _run_sql_training(
-    *,
-    service: SqlTrainingService,
-    training_set: tuple[QASqlTrainingRecord, ...],
-    schema: SchemaDefinition,
-) -> SqlTrainingResult:
-    return await service.run(
-        training_set=training_set,
-        schema=schema,
-    )
-
-
 def _load_training_set(path: Path) -> tuple[QASqlTrainingRecord, ...]:
     payload = (
-        _read_jsonl(path) if path.suffix.lower() in {".jsonl", ".ndjson"} else _read_json(path)
+        _read_jsonl(path)
+        if path.suffix.lower() in {".jsonl", ".ndjson"}
+        else _read_json(path)
     )
     if isinstance(payload, list):
         rows = payload
@@ -163,7 +145,9 @@ def _load_training_set(path: Path) -> tuple[QASqlTrainingRecord, ...]:
         if not isinstance(row, dict):
             raise ValueError(f"{path}: training record {index} must be a JSON object")
         try:
-            records.append(QASqlTrainingRecord.model_validate(_normalize_record(row, index)))
+            records.append(
+                QASqlTrainingRecord.model_validate(_normalize_record(row, index))
+            )
         except ValidationError as exc:
             raise ValueError(f"{path}: invalid training record {index}: {exc}") from exc
     return tuple(records)
@@ -208,7 +192,9 @@ def _read_json(path: Path) -> Any:
 
 def _read_jsonl(path: Path) -> list[Any]:
     rows = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         if not line.strip():
             continue
         try:
@@ -236,7 +222,9 @@ def _reserve_dated_workspace(
             candidate += timedelta(milliseconds=1)
             continue
         except OSError as exc:
-            raise ValueError(f"unable to create SQL training workspace {workspace}: {exc}") from exc
+            raise ValueError(
+                f"unable to create SQL training workspace {workspace}: {exc}"
+            ) from exc
         return workspace
 
 
@@ -350,7 +338,9 @@ def _write_case_review_index(workspace: Path, result: SqlTrainingResult) -> Path
                 "draft_node_ids": list(case.draft_node_ids),
                 "accepted_metric_ids": list(case.accepted_metric_ids),
                 "accepted_generation_rule_ids": list(case.accepted_generation_rule_ids),
-                "committed_semantic_mapping_ids": list(case.committed_semantic_mapping_ids),
+                "committed_semantic_mapping_ids": list(
+                    case.committed_semantic_mapping_ids
+                ),
             }
         )
     target = workspace / "case_review.jsonl"
@@ -364,5 +354,6 @@ def _write_case_review_index(workspace: Path, result: SqlTrainingResult) -> Path
         temporary.unlink(missing_ok=True)
         raise
     return target
+
 
 __all__ = ["sql_training_cli"]

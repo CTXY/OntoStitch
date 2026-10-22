@@ -17,9 +17,18 @@ class QueryExecutionResult:
     error: str | None = None
 
 
-def execute_query(sql: str, *, database_url: str, timeout: float = 30.0) -> QueryExecutionResult:
+def execute_query(
+    sql: str,
+    *,
+    database_url: str,
+    timeout: float = 30.0,
+    read_only: bool = True,
+    row_limit: int | None = None,
+) -> QueryExecutionResult:
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(_execute_query, sql, database_url, timeout)
+    future = executor.submit(
+        _execute_query, sql, database_url, timeout, read_only, row_limit
+    )
     try:
         return future.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
@@ -35,7 +44,13 @@ def execute_query(sql: str, *, database_url: str, timeout: float = 30.0) -> Quer
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-def _execute_query(sql: str, database_url: str, timeout: float) -> QueryExecutionResult:
+def _execute_query(
+    sql: str,
+    database_url: str,
+    timeout: float,
+    read_only: bool = False,
+    row_limit: int | None = None,
+) -> QueryExecutionResult:
     deadline = time.monotonic() + timeout
     engine = create_engine(database_url)
 
@@ -43,6 +58,8 @@ def _execute_query(sql: str, database_url: str, timeout: float) -> QueryExecutio
 
         @event.listens_for(engine, "connect")
         def set_sqlite_deadline(dbapi_connection: Any, _connection_record: Any) -> None:
+            if read_only:
+                dbapi_connection.execute("PRAGMA query_only=ON")
             dbapi_connection.set_progress_handler(
                 lambda: int(time.monotonic() >= deadline),
                 1_000,
@@ -50,9 +67,18 @@ def _execute_query(sql: str, database_url: str, timeout: float) -> QueryExecutio
 
     try:
         with engine.connect() as connection:
-            result = connection.exec_driver_sql(_prepare_driver_sql(sql, engine.dialect.name))
+            if read_only and engine.dialect.name == "mysql":
+                connection.exec_driver_sql("START TRANSACTION READ ONLY")
+            result = connection.exec_driver_sql(
+                _prepare_driver_sql(sql, engine.dialect.name)
+            )
             columns = list(result.keys())
-            rows: list[list[Any]] = [list(row) for row in result.fetchall()]
+            values = (
+                result.fetchmany(row_limit)
+                if row_limit is not None
+                else result.fetchall()
+            )
+            rows: list[list[Any]] = [list(row) for row in values]
         return QueryExecutionResult(
             success=True,
             result={"columns": columns, "rows": rows},

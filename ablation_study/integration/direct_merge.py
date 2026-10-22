@@ -18,7 +18,7 @@ from cortex.capabilities.graph_merge.reconciliation.service import (
     _materialize_node,
     _sources_for_refs,
 )
-from cortex.infrastructure.llm.parsing import _parse_output, run_llm_extraction
+from cortex.infrastructure.llm.parsing import _parse_output, run_llm_extraction_sync
 from cortex.schema import GraphSpace, validate_graph_space
 from cortex.schema.ontology_asset_definitions import render_ontology_asset_contract
 
@@ -85,7 +85,7 @@ class DirectGroupMerger(NodeGroupReconciler):
         self.records = []
         self.available_nodes = {node.id: node for node in available_nodes}
 
-    async def reconcile_group(
+    def reconcile_group(
         self,
         group,
         *,
@@ -96,7 +96,7 @@ class DirectGroupMerger(NodeGroupReconciler):
         if historical_conflict is not None:
             raise ValueError("direct ablation requires a frozen pre-reconciliation input")
         if group.node_type not in SEMANTIC or len(group.members) == 1:
-            return await super().reconcile_group(
+            return super().reconcile_group(
                 group,
                 schema=schema,
                 dependency_nodes=dependency_nodes,
@@ -119,7 +119,7 @@ class DirectGroupMerger(NodeGroupReconciler):
                 dependencies[ref] = node
                 pending.extend(_content_references(node.properties))
         dependency_nodes = tuple(dependencies[key] for key in sorted(dependencies))
-        evidence_by_ref, _, evidence_code = await self._evidence(group.members)
+        evidence_by_ref, _, evidence_code = self._evidence(group.members)
         canonical = self.canonical_id_for_group(group)
         record = {
             "group_id": group.group_id,
@@ -203,7 +203,7 @@ class DirectGroupMerger(NodeGroupReconciler):
                         record["structural_revalidation"] = True
             else:
                 record["llm_calls"] = 1
-                proposal = await run_llm_extraction(
+                proposal = run_llm_extraction_sync(
                     llm=self.llm,
                     prompt=prompt,
                     output_model=DirectMergeOutcome,

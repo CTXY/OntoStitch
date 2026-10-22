@@ -4,7 +4,7 @@ import json
 import math
 import re
 import unicodedata
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
 from langchain_core.embeddings import Embeddings
@@ -23,7 +23,13 @@ from cortex.capabilities.graph_merge.models import (
     NodeRepresentation,
     RepresentationRef,
 )
-from cortex.schema import GraphNode, IdentityMode, IdentityPolicy, NodeType, SourceReference
+from cortex.schema import (
+    GraphNode,
+    IdentityMode,
+    IdentityPolicy,
+    NodeType,
+    SourceReference,
+)
 
 _TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
 _DECORATION_RE = re.compile(r"^[\s_`'\"\[\]（）()]+|[\s_`'\"\[\]（）()]+$")
@@ -37,19 +43,19 @@ class SemanticIdentityResolver(Protocol):
         collection_candidates: tuple[GroupIdentityView, ...],
         query_candidates: tuple[NodeIdentityView, ...],
         policy: IdentityPolicy,
-    ) -> Awaitable[NodeIdentitySelection]: ...
+    ) -> NodeIdentitySelection: ...
 
 
 class IdentityEvidenceResolver(Protocol):
     def resolve(
         self, sources: tuple[SourceReference, ...]
-    ) -> Awaitable[tuple[EvidenceItem, ...]]: ...
+    ) -> tuple[EvidenceItem, ...]: ...
 
 
 class CrossTypeAssetResolver(Protocol):
     def resolve(
         self, candidates: tuple[CrossTypeCandidate, ...]
-    ) -> Awaitable[CrossTypeResolution]: ...
+    ) -> CrossTypeResolution: ...
 
 
 class CandidateTraceSink(Protocol):
@@ -205,14 +211,14 @@ class IdentityGrouper:
         self.cross_type_resolver = cross_type_resolver
         self.embeddings = embeddings
 
-    async def group(
+    def group(
         self,
         existing: tuple[GraphNode, ...],
         incoming: tuple[GraphNode, ...],
         node_types: dict[str, NodeType],
         effective_fields_by_type: Mapping[str, frozenset[str]] | None = None,
     ) -> IdentityGroupingResult:
-        replacements, replacement_diagnostics = await self._cross_type_replacements(
+        replacements, replacement_diagnostics = self._cross_type_replacements(
             existing, incoming
         )
         discarded = {loser for loser, _winner in replacements}
@@ -239,7 +245,7 @@ class IdentityGrouper:
             if policy.mode == IdentityMode.EXACT:
                 selected_entry, selected_queries = self._select_exact(seed, groups, queries, policy)
             else:
-                selected_entry, selected_queries, diagnostic = await self._select_semantic(
+                selected_entry, selected_queries, diagnostic = self._select_semantic(
                     seed,
                     groups,
                     queries,
@@ -281,7 +287,7 @@ class IdentityGrouper:
             diagnostic_codes=tuple(diagnostics),
         )
 
-    async def _cross_type_replacements(self, existing, incoming):
+    def _cross_type_replacements(self, existing, incoming):
         if self.cross_type_resolver is None:
             return (), ()
         representations = tuple(
@@ -309,7 +315,7 @@ class IdentityGrouper:
         if not candidates:
             return (), ()
         try:
-            resolution = await self.cross_type_resolver.resolve(candidates)
+            resolution = self.cross_type_resolver.resolve(candidates)
         except Exception:
             return (), ("MODEL_FAILURE",)
         by_id = {item.pair_id: item for item in candidates}
@@ -353,9 +359,9 @@ class IdentityGrouper:
         )
         return (entries[0] if entries else None), selected_queries
 
-    async def _select_semantic(self, seed, groups, queries, policy, effective_fields):
+    def _select_semantic(self, seed, groups, queries, policy, effective_fields):
         if seed.node_type == "generation_rule":
-            return await self._select_generation_rule_semantic(
+            return self._select_generation_rule_semantic(
                 seed, groups, queries, policy, effective_fields
             )
         entry_channels: dict[str, list[tuple[str, FinalNodeGroup]]] = {}
@@ -399,7 +405,7 @@ class IdentityGrouper:
                 NodeIdentityView(
                     query_id=query_id,
                     node_type=query.node_type,
-                    representation=await self._view(query, policy, effective_fields),
+                    representation=self._view(query, policy, effective_fields),
                 )
             )
         query_views = tuple(query_views_list)
@@ -409,7 +415,7 @@ class IdentityGrouper:
         for group in entries:
             representations = []
             for member in group.members:
-                representations.append(await self._view(member, policy, effective_fields))
+                representations.append(self._view(member, policy, effective_fields))
             entry_views_list.append(
                 GroupIdentityView(
                     entry_id=group.group_id,
@@ -421,13 +427,13 @@ class IdentityGrouper:
         seed_view = NodeIdentityView(
             query_id=seed.ref.ref_id,
             node_type=seed.node_type,
-            representation=await self._view(seed, policy, effective_fields),
+            representation=self._view(seed, policy, effective_fields),
         )
-        return await self._resolve_semantic_selection(
+        return self._resolve_semantic_selection(
             seed, seed_view, entry_views, query_views, policy
         )
 
-    async def _select_generation_rule_semantic(
+    def _select_generation_rule_semantic(
         self, seed, groups, queries, policy, effective_fields
     ):
         seed_text = _condition_action_text(seed.content)
@@ -462,7 +468,7 @@ class IdentityGrouper:
             if texts:
                 query_candidates.append((query_id, query, texts))
 
-        embedding_vectors = await self._embedding_vectors((seed_text, *candidate_texts))
+        embedding_vectors = self._embedding_vectors((seed_text, *candidate_texts))
         entry_scores: list[tuple[str, FinalNodeGroup, dict[str, float]]] = []
         for group_id, group, texts in entry_candidates:
             score = _best_condition_action_score(seed_text, texts, embedding_vectors)
@@ -503,7 +509,7 @@ class IdentityGrouper:
                 NodeIdentityView(
                     query_id=query_id,
                     node_type=query.node_type,
-                    representation=await self._view(query, policy, effective_fields),
+                    representation=self._view(query, policy, effective_fields),
                 )
             )
         query_views = tuple(query_views_list)
@@ -513,7 +519,7 @@ class IdentityGrouper:
         for group in entries:
             representations = []
             for member in group.members:
-                representations.append(await self._view(member, policy, effective_fields))
+                representations.append(self._view(member, policy, effective_fields))
             entry_views_list.append(
                 GroupIdentityView(
                     entry_id=group.group_id,
@@ -525,20 +531,20 @@ class IdentityGrouper:
         seed_view = NodeIdentityView(
             query_id=seed.ref.ref_id,
             node_type=seed.node_type,
-            representation=await self._view(seed, policy, effective_fields),
+            representation=self._view(seed, policy, effective_fields),
         )
-        return await self._resolve_semantic_selection(
+        return self._resolve_semantic_selection(
             seed, seed_view, entry_views, query_views, policy
         )
 
-    async def _embedding_vectors(
+    def _embedding_vectors(
         self, texts: tuple[str, ...]
     ) -> dict[str, tuple[float, ...]]:
         unique_texts = tuple(dict.fromkeys(texts))
         if self.embeddings is None or len(unique_texts) < 2:
             return {}
         try:
-            vectors = await self.embeddings.aembed_documents(list(unique_texts))
+            vectors = self.embeddings.embed_documents(list(unique_texts))
         except Exception:  # noqa: BLE001 - embedding retrieval is an optional route.
             return {}
         if len(vectors) != len(unique_texts):
@@ -548,11 +554,11 @@ class IdentityGrouper:
             for text, vector in zip(unique_texts, vectors, strict=True)
         }
 
-    async def _resolve_semantic_selection(
+    def _resolve_semantic_selection(
         self, seed, seed_view, entry_views, query_views, policy
     ):
         try:
-            selection = await self.resolver.resolve(seed_view, entry_views, query_views, policy)
+            selection = self.resolver.resolve(seed_view, entry_views, query_views, policy)
         except Exception:
             return None, (), "MODEL_FAILURE"
         allowed_entries = {item.entry_id for item in entry_views}
@@ -575,7 +581,7 @@ class IdentityGrouper:
         )
         return selection.selected_entry_id, selected_queries, None
 
-    async def _view(
+    def _view(
         self,
         representation: NodeRepresentation,
         policy: IdentityPolicy,

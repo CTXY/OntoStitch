@@ -1,4 +1,4 @@
-"""Async structured-output helpers shared by knowledge capabilities."""
+"""Synchronous and asynchronous structured-output helpers for knowledge capabilities."""
 
 from __future__ import annotations
 
@@ -22,7 +22,9 @@ class ReasoningParser:
     """Extract the structured payload emitted inside optional result tags."""
 
     def parse(self, text: str) -> str:
-        match = re.search(r"<result>(.*?)</result>", text, flags=re.DOTALL | re.IGNORECASE)
+        match = re.search(
+            r"<result>(.*?)</result>", text, flags=re.DOTALL | re.IGNORECASE
+        )
         return match.group(1).strip() if match else text.strip()
 
 
@@ -138,6 +140,70 @@ async def _invoke(llm: BaseChatModel, messages: list[dict[str, str]]) -> str:
     return response_text(response)
 
 
+def run_llm_extraction_sync(
+    *,
+    llm: BaseChatModel,
+    prompt: str,
+    output_model: type[OutputModelT],
+    human_payload: Mapping[str, Any],
+    human_content: str | None = None,
+    trace_capture: dict[str, Any] | None = None,
+    allow_repair: bool = True,
+    repair_with_context: bool = False,
+) -> OutputModelT:
+    """Invoke the model and validate a structured response, with one repair attempt."""
+    messages = build_prompt_messages(
+        prompt,
+        output_model,
+        human_payload,
+        human_content=human_content,
+    )
+    if trace_capture is not None:
+        trace_capture["prompt"] = messages
+    raw_response = _invoke_sync(llm, messages)
+    if trace_capture is not None:
+        trace_capture["response"] = raw_response
+    first_error: json.JSONDecodeError | ValidationError | ValueError | None = None
+    try:
+        return _parse_output(raw_response, output_model)
+    except (json.JSONDecodeError, ValidationError, ValueError) as error:
+        first_error = error
+        if not allow_repair:
+            raise LLMStructuredOutputError(
+                f"LLM output did not match {output_model.__name__}"
+            ) from error
+
+    assert first_error is not None
+    repair_messages = _build_repair_messages(
+        raw_response,
+        output_model,
+        validation_error=first_error,
+    )
+    if repair_with_context:
+        repair_messages = [
+            *messages,
+            {"role": "assistant", "content": raw_response},
+            {"role": "user", "content": repair_messages[0]["content"]},
+        ]
+    repaired_response = _invoke_sync(llm, repair_messages)
+    if trace_capture is not None:
+        trace_capture["repair_response"] = repaired_response
+    try:
+        return _parse_output(repaired_response, output_model)
+    except (json.JSONDecodeError, ValidationError, ValueError) as repair_error:
+        raise LLMStructuredOutputError(
+            f"LLM output did not match {output_model.__name__} after one repair attempt"
+        ) from repair_error
+
+
+def _invoke_sync(llm: BaseChatModel, messages: list[dict[str, str]]) -> str:
+    try:
+        response = llm.invoke(messages)
+    except Exception as exc:
+        raise LLMInvocationError("LLM invocation failed") from exc
+    return response_text(response)
+
+
 def _parse_output(text: str, output_model: type[OutputModelT]) -> OutputModelT:
     candidate = _strip_json_fence(ReasoningParser().parse(text))
     return output_model.model_validate(json.loads(candidate))
@@ -145,7 +211,9 @@ def _parse_output(text: str, output_model: type[OutputModelT]) -> OutputModelT:
 
 def _strip_json_fence(text: str) -> str:
     stripped = text.strip()
-    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL | re.IGNORECASE)
+    match = re.fullmatch(
+        r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL | re.IGNORECASE
+    )
     return match.group(1).strip() if match else stripped
 
 
@@ -177,4 +245,5 @@ __all__ = [
     "build_prompt_messages",
     "response_text",
     "run_llm_extraction",
+    "run_llm_extraction_sync",
 ]

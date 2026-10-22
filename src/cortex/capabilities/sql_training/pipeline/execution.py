@@ -92,6 +92,8 @@ def evaluate_record(
                         "validation service response must be an object",
                         "validation intent response schema is invalid:",
                         "validation generation response schema is invalid:",
+                        "Cortex RetrieveDB failed:",
+                        "Cortex RetrieveDB did not produce a completed subGraph:",
                     )
                 )
                 for error in errors

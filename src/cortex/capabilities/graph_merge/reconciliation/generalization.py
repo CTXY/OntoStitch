@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Mapping
+from collections.abc import Mapping
 from typing import Literal, Protocol
 
 from cortex.capabilities.graph_merge.models import (
@@ -50,7 +50,7 @@ class KnowledgeGeneralizer(Protocol):
         residual_relations: tuple[ResidualRelation, ...],
         validation_feedback: dict[str, object] | None = None,
         dependency_nodes: tuple[GraphNode, ...] = (),
-    ) -> Awaitable[GeneralizationProposal]: ...
+    ) -> GeneralizationProposal: ...
 
 
 class KnowledgeGeneralizerRegistry:
@@ -83,10 +83,10 @@ class GeneralizationCoverageVerifier(Protocol):
         evidence_by_ref: Mapping[RepresentationRef, tuple[EvidenceItem, ...]],
         node_type: NodeType,
         dependency_nodes: tuple[GraphNode, ...] = (),
-    ) -> Awaitable[GeneralizationVerification]: ...
+    ) -> GeneralizationVerification: ...
 
 
-async def generalize_if_eligible(
+def generalize_if_eligible(
     *,
     baseline: NodeContent,
     representations: tuple[NodeRepresentation, ...],
@@ -159,7 +159,7 @@ async def generalize_if_eligible(
     for _attempt in range(1 if memory else 3):
         try:
             extra = {"dependency_nodes": dependency_nodes} if dependency_nodes else {}
-            proposal = await invoke(
+            proposal = invoke(
                 "generalize",
                 generalizer.generalize,
                 baseline=baseline,
@@ -304,7 +304,7 @@ async def generalize_if_eligible(
         )
         try:
             extra = {"dependency_nodes": dependency_nodes} if dependency_nodes else {}
-            verification = await invoke(
+            verification = invoke(
                 "coverage",
                 verifier.verify,
                 proposal=proposal,

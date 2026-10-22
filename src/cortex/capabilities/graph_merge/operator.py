@@ -13,7 +13,10 @@ from cortex.capabilities.graph_merge.edges import (
 )
 from cortex.capabilities.graph_merge.identity import IdentityGrouper
 from cortex.capabilities.graph_merge.mining import BaseGraphMiner
-from cortex.capabilities.graph_merge.models import FinalNodeGroup, IdentityGroupingResult
+from cortex.capabilities.graph_merge.models import (
+    FinalNodeGroup,
+    IdentityGroupingResult,
+)
 from cortex.capabilities.graph_merge.normalization import (
     EdgePropertyMappingKey,
     NodeGroupNormalizerRegistry,
@@ -51,7 +54,7 @@ class GraphMergeOperator:
         self.rewrite_applier = rewrite_applier or GraphRewriteApplier()
         self.normalizer_registry = normalizer_registry or NodeGroupNormalizerRegistry()
 
-    async def merge(
+    def merge(
         self,
         existing: GraphState,
         incoming: GraphState,
@@ -68,7 +71,7 @@ class GraphMergeOperator:
                 diagnostics=(),
             )
 
-        grouping = await self.identity_grouper.group(
+        grouping = self.identity_grouper.group(
             existing.graph.nodes,
             incoming.graph.nodes,
             schema.node_type_index(),
@@ -103,7 +106,7 @@ class GraphMergeOperator:
             extra_context = (
                 {"dependency_conflicts": dependency_conflicts} if dependency_conflicts else {}
             )
-            reconciled = await self.node_reconciler.reconcile_group(
+            reconciled = self.node_reconciler.reconcile_group(
                 group,
                 schema=schema,
                 dependency_nodes=dependencies,
@@ -215,7 +218,7 @@ class GraphMergeOperator:
             node_conflicts=tuple(sorted(conflicts, key=lambda item: item.node_id)),
         )
         if self.graph_miner is not None:
-            mining = await self.graph_miner.propose(state, schema)
+            mining = self.graph_miner.propose(state, schema)
             diagnostics.extend(
                 MergeDiagnostic(
                     code=DiagnosticCode(item.code),

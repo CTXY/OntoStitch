@@ -182,11 +182,15 @@ def _build_sql_service(
         if database is None and runtime.database.url:
             database = SQLAlchemyDatabase(runtime.database.url)
         validation_client_is_default = validation_client is None
-        retrieval_llm = llm
+        # An injected model can be shared across cases. Use its synchronous client
+        # from retrieval's async workers so native async transports never cross loops.
+        retrieval_llm = ThreadedChatModel(llm) if llm is not None else None
         semantic_llm = llm or _create_llm(config, "sql_training")
         if config.services.sql_training.case_max_workers is not None:
             semantic_llm = ThreadedChatModel(semantic_llm)
-            retrieval_llm = ThreadedChatModel(llm or _create_llm(config, "retrieve_db"))
+            retrieval_llm = retrieval_llm or ThreadedChatModel(
+                _create_llm(config, "retrieve_db")
+            )
         validation_client_factory = None
         if validation_client_is_default:
 

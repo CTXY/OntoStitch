@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import shutil
 from collections.abc import Callable
 from contextlib import AbstractContextManager, contextmanager
@@ -45,7 +44,7 @@ class SqlTrainingConfigurationError(ValueError):
 
 
 class SqlTrainingCapability:
-    """Historical Node training runtime exposed through the current Engine contract."""
+    """Synchronous ontology training runtime exposed through the Engine contract."""
 
     def __init__(
         self,
@@ -57,14 +56,17 @@ class SqlTrainingCapability:
         validation_client_factory: Callable[[], Any] | None = None,
         case_llm_factory: Callable[
             [], AbstractContextManager[tuple[BaseChatModel, Any]]
-        ] | None = None,
+        ]
+        | None = None,
         database: DatabaseConnector | None = None,
         pipeline_factory: Callable[..., TrainPipeline] | None = None,
         prepared_workspace: Path | None = None,
     ) -> None:
         self.llm = llm
         self.config = config
-        self.runtime_config = runtime_config or SqlTrainingRuntimeConfig.from_cortex(config)
+        self.runtime_config = runtime_config or SqlTrainingRuntimeConfig.from_cortex(
+            config
+        )
         self.validation_client = validation_client
         self.validation_client_factory = validation_client_factory
         self.case_llm_factory = case_llm_factory
@@ -72,33 +74,7 @@ class SqlTrainingCapability:
         self.pipeline_factory = pipeline_factory or TrainPipeline
         self.prepared_workspace = prepared_workspace
 
-    async def train(
-        self,
-        training_set: tuple[QASqlTrainingRecord, ...],
-        schema: SchemaDefinition,
-        existing_graph: GraphSpace,
-    ) -> tuple[GraphState, SqlTrainingEvaluationReport]:
-        # The migrated pipeline is still synchronous. Keep ownership of its worker
-        # until it has completed even when the caller is cancelled; otherwise
-        # asyncio.run() may begin interpreter shutdown while the worker continues
-        # scheduling LLM/database futures.
-        task = asyncio.create_task(
-            asyncio.to_thread(
-                self._train_sync,
-                training_set,
-                schema,
-                existing_graph,
-            )
-        )
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            try:
-                await task
-            finally:
-                raise
-
-    def _train_sync(
+    def train(
         self,
         training_set: tuple[QASqlTrainingRecord, ...],
         schema: SchemaDefinition,
@@ -114,17 +90,27 @@ class SqlTrainingCapability:
             if self.prepared_workspace is None:
                 ScanCatalogPipeline(self.runtime_config, database=self.database).run()
             else:
-                from cortex.capabilities.sql_training.artifacts.workspace import ASSET_GROUP_FILES
+                from cortex.capabilities.sql_training.artifacts.workspace import (
+                    ASSET_GROUP_FILES,
+                )
 
                 for kind in (NodeType.TABLE, NodeType.COLUMN, NodeType.DIMENSION_VALUE):
-                    source = self.prepared_workspace / "assets" / "draft" / ASSET_GROUP_FILES[kind]
+                    source = (
+                        self.prepared_workspace
+                        / "assets"
+                        / "draft"
+                        / ASSET_GROUP_FILES[kind]
+                    )
                     if not source.is_file():
                         raise ValueError(f"missing frozen physical assets: {source}")
                     shutil.copy2(source, workspace.draft_dir / source.name)
-                source = self.prepared_workspace / "assets" / "draft" / "catalog_edges.json"
+                source = (
+                    self.prepared_workspace / "assets" / "draft" / "catalog_edges.json"
+                )
                 if not source.is_file():
                     raise ValueError(f"missing frozen catalog edges: {source}")
                 shutil.copy2(source, workspace.draft_dir / source.name)
+                self._validate_prepared_catalog(workspace)
             dimension_path = self.config.services.sql_training.dimension_values_path
             if dimension_path is not None and self.prepared_workspace is None:
                 DimensionValuePipeline(
@@ -134,6 +120,7 @@ class SqlTrainingCapability:
 
             pipeline = self.pipeline_factory(
                 self.runtime_config,
+                model=self.llm,
                 llm_provider=NodeLLMProvider(self.llm),
                 validation_client=self.validation_client,
                 validation_client_factory=self.validation_client_factory,
@@ -143,7 +130,9 @@ class SqlTrainingCapability:
                 database=self.database,
                 schema=schema,
                 existing_join_edges=tuple(
-                    edge for edge in existing_graph.edges if edge.edge_type == "joins_with"
+                    edge
+                    for edge in existing_graph.edges
+                    if edge.edge_type == "joins_with"
                 ),
             )
             raw_result = pipeline.run(
@@ -168,7 +157,9 @@ class SqlTrainingCapability:
                 case_fragments,
                 existing_graph=existing_graph,
             )
-            state, adapter_warnings = NodeGraphAdapter(workspace).to_trace_incoming_state(
+            state, adapter_warnings = NodeGraphAdapter(
+                workspace
+            ).to_trace_incoming_state(
                 schema,
                 committed_assets=run_assets,
                 case_fragments=case_fragments,
@@ -185,7 +176,7 @@ class SqlTrainingCapability:
     @contextmanager
     def _case_resources(self):
         with self.case_llm_factory() as (llm, validation_client):
-            yield NodeLLMProvider(llm), validation_client
+            yield llm, validation_client
 
     def _validate_configuration(self) -> None:
         missing = []
@@ -194,6 +185,33 @@ class SqlTrainingCapability:
         if missing:
             raise SqlTrainingConfigurationError(
                 f"Missing required SQL training configuration: {', '.join(missing)}"
+            )
+
+    def _validate_prepared_catalog(self, workspace: Workspace) -> None:
+        """Check a supplied frozen catalog once, never silently run with missing tables."""
+        if self.database is None:
+            raise SqlTrainingConfigurationError(
+                "prepared catalog validation requires a database connector"
+            )
+        catalog = self.database.introspect_catalog(
+            include_tables=self.runtime_config.database.include_tables
+        )
+        expected = {
+            make_node_id(NodeType.TABLE, table.name) for table in catalog.tables
+        }
+        expected.update(
+            make_node_id(NodeType.COLUMN, column.table_name, column.column_name)
+            for column in catalog.columns
+        )
+        actual = {
+            asset.id
+            for kind in (NodeType.TABLE, NodeType.COLUMN)
+            for asset in workspace.read_draft_assets(kind)
+        }
+        if expected != actual:
+            raise SqlTrainingConfigurationError(
+                f"prepared Table/Column catalog does not match configured scope: "
+                f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
             )
 
 
@@ -215,7 +233,9 @@ def _upsert_training_records(
     workspace: Workspace,
     training_set: tuple[QASqlTrainingRecord, ...],
 ) -> None:
-    existing = {asset.id: asset for asset in workspace.read_draft_assets(NodeType.EXAMPLE)}
+    existing = {
+        asset.id: asset for asset in workspace.read_draft_assets(NodeType.EXAMPLE)
+    }
     for record in training_set:
         asset_id = make_node_id(NodeType.EXAMPLE, record.source_id)
         existing[asset_id] = NodeAsset(
@@ -249,28 +269,34 @@ def _merge_eligible_case_fragments(
             deserialize_asset_envelope(row) for row in case.get("draft_nodes") or []
         )
         if not assets:
-            raise ValueError(f"merge-eligible Trace case {source_id!r} has no draft assets")
+            raise ValueError(
+                f"merge-eligible Trace case {source_id!r} has no draft assets"
+            )
         fragments.append((source_id, assets, project_case_edges(assets)))
     return tuple(fragments)
 
 
 def _with_case_referenced_dimension_values(
     run_assets: tuple[NodeAsset, ...],
-    case_fragments: tuple[tuple[str, tuple[NodeAsset, ...], tuple[GraphEdge, ...]], ...],
+    case_fragments: tuple[
+        tuple[str, tuple[NodeAsset, ...], tuple[GraphEdge, ...]], ...
+    ],
     *,
     existing_graph: GraphSpace,
 ) -> tuple[NodeAsset, ...]:
     existing_ids = {node.id for node in existing_graph.nodes}
     asset_ids = {asset.id for asset in run_assets}
-    required_values = sorted({
-        reference
-        for _, assets, _ in case_fragments
-        for asset in assets
-        for reference in asset.references()
-        if reference.startswith("dimension_value.")
-        and reference not in existing_ids
-        and reference not in asset_ids
-    })
+    required_values = sorted(
+        {
+            reference
+            for _, assets, _ in case_fragments
+            for asset in assets
+            for reference in asset.references()
+            if reference.startswith("dimension_value.")
+            and reference not in existing_ids
+            and reference not in asset_ids
+        }
+    )
     if required_values:
         raise ValueError(
             "case assets reference Dimension Values absent from verified database assets: "
@@ -294,7 +320,9 @@ def _report(
     total = len(cases)
     passed = sum(case.passed for case in cases)
     errors = tuple(str(item) for item in result.get("errors") or [])
-    warnings = tuple(str(item) for item in result.get("warnings") or []) + adapter_warnings
+    warnings = (
+        tuple(str(item) for item in result.get("warnings") or []) + adapter_warnings
+    )
     fatal = bool(result.get("fatal")) or bool(errors and not cases)
     return SqlTrainingEvaluationReport(
         total=total,
@@ -306,11 +334,15 @@ def _report(
         run_id=result.get("run_id"),
         sql_correct_cases=int(result.get("sql_correct_cases") or passed),
         ontology_updated_cases=int(result.get("ontology_updated_cases") or 0),
-        generation_rule_updated_cases=int(result.get("generation_rule_updated_cases") or 0),
+        generation_rule_updated_cases=int(
+            result.get("generation_rule_updated_cases") or 0
+        ),
         metric_updated_cases=int(result.get("metric_updated_cases") or 0),
         optimization_trial_cases=int(result.get("optimization_trial_cases") or 0),
         failed_optimization_cases=int(result.get("failed_optimization_cases") or 0),
-        accepted_generation_rule_count=int(result.get("accepted_generation_rule_count") or 0),
+        accepted_generation_rule_count=int(
+            result.get("accepted_generation_rule_count") or 0
+        ),
         accepted_metric_count=int(result.get("accepted_metric_count") or 0),
         errors=errors,
         warnings=warnings,
@@ -344,7 +376,8 @@ def _case_result(
     return SqlTrainingCaseResult(
         source_id=str(value.get("source_id") or "unknown"),
         passed=passed,
-        question=value.get("question") or (record.question if record is not None else None),
+        question=value.get("question")
+        or (record.question if record is not None else None),
         gold_sql=record.sql if record is not None else value.get("gold_sql"),
         predicted_sql=predicted_sql,
         training_status=training_status,
@@ -354,7 +387,9 @@ def _case_result(
         failed_closed=failed_closed,
         accepted_metric_ids=tuple(value.get("accepted_metric_ids") or []),
         accepted_generation_rule_ids=tuple(value.get("accepted_rule_ids") or []),
-        committed_semantic_mapping_ids=tuple(value.get("committed_semantic_mapping_ids") or []),
+        committed_semantic_mapping_ids=tuple(
+            value.get("committed_semantic_mapping_ids") or []
+        ),
         replay_status=value.get("replay_status"),
         required_correct_replays=value.get("required_correct_replays"),
         completed_replays=value.get("completed_replays"),
@@ -381,8 +416,7 @@ def _case_result(
             )
         ),
         residual_status=str(
-            value.get("residual_status")
-            or ("none" if passed else "pending_analysis")
+            value.get("residual_status") or ("none" if passed else "pending_analysis")
         ),
         case_stable_correct=bool(value.get("case_stable_correct", passed)),
     )
