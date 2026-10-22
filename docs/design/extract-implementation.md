@@ -106,3 +106,11 @@ python -m compileall -q src scripts ablation_study
 - 全量 80 项测试通过，覆盖 session 内去重、跨 episode 重新开始、完成节点回执重放、正式输出完整性和消费者串联。
 - workflow version 升为 case-graph-v2；旧布局不能直接恢复，不提供双格式兼容。
 - 删除独立 operations.py；不再写 source.json、run_context.json、progress.json、磁盘编辑收据及重复语义导出。
+
+## 8. 简化复查
+
+三路 review 覆盖重复存储与消费者、接受回退、故障恢复。接受和回退协议保持不变；补上两个读取边界检查：已定位 case 目录的消费者从本地 result/ontology.json 读取，避免搬移 collection 后读取旧绝对路径；公开 resume 在返回成功前也验证正式导出的内容指纹，缺失或损坏时报运行故障，保留原 checkpoint 和 accepted revision。旧 checkpoint 在解析当前 State 之前检查原始版本标识，缺失版本或旧版本直接拒绝，不因默认值被误认成当前版本。没有新增状态层、存储文件或旧格式兼容。
+
+验证证据已写、索引尚未写时的崩溃，通过读取当前 context 的完成验证证据补回内存索引；不重新抽样，不从证据恢复流程位置。已有完成结果冲突时拒绝，unavailable 仍按有限重试窗口处理，兼容性检查前不写磁盘。
+
+本轮复查后全量 91 项测试通过；变更模块 lint 和 diff whitespace 检查通过。

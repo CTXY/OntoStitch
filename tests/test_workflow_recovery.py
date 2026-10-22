@@ -401,3 +401,77 @@ def test_existing_result_cannot_be_reused_for_different_completion(case_graph):
     with pytest.raises(ValueError, match="existing case result"):
         seal_case(workflow.root, changed, workflow.runtime.graph)
     assert json.loads(Path(state.result_ref).read_text()) == original
+
+
+@pytest.mark.parametrize("version", ["case-graph-v1", None])
+def test_retired_checkpoint_layout_is_refused_before_current_schema_parse(
+    case_graph, version
+):
+    workflow, _, _ = make_workflow(case_graph, EditingAgent([[make_rule()]]))
+    state = workflow.run(interrupt_after=["direct"])
+    retired = state.model_dump(mode="json")
+    retired["bundle_ref"] = retired.pop("result_ref")
+    if version is None:
+        retired.pop("workflow_version")
+    else:
+        retired["workflow_version"] = version
+    before = {
+        path.name: path.read_bytes()
+        for path in (workflow.root / "evidence").glob("*.json")
+    }
+    with pytest.raises(CaseResumeError, match="changed source/data/config/prompt/workflow"):
+        workflow._compatible(retired)
+    assert before == {
+        path.name: path.read_bytes()
+        for path in (workflow.root / "evidence").glob("*.json")
+    }
+
+
+@pytest.mark.parametrize(
+    ("query", "status", "calls"),
+    [("SELECT 0", "incorrect", 1), ("SELECT COUNT(*) FROM orders", "stable_correct", 3)],
+)
+def test_completed_validation_survives_index_write_failure(
+    case_graph, monkeypatch, query, status, calls
+):
+    validator = Validator(lambda _graph: query)
+    workflow, _, _ = make_workflow(
+        case_graph, EditingAgent([[make_rule()]]), validator
+    )
+    write_index = EvidenceStore.write_index
+    failed = False
+
+    def crash(self, index):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("index write failed after validation evidence")
+        write_index(self, index)
+
+    monkeypatch.setattr(EvidenceStore, "write_index", crash)
+    with pytest.raises(OSError, match="index write failed"):
+        workflow.run()
+    assert validator.generate_calls == calls
+    assert workflow.inspect().next == ("validate_initial",)
+    resumed, services, _ = make_workflow(
+        fresh_case_graph(case_graph), EditingAgent([]), validator
+    )
+    # Inspect the recovered lookup without allowing any new generation; an
+    # completed gate must keep its exact outcome after process recovery.
+    revision = workflow.inspect().values["working_revision"]
+    ref = services.validate(resumed.runtime.graph.read(revision))
+    assert services.replay(ref).status.value == status
+    assert validator.generate_calls == calls
+    assert resumed.runtime.agent.calls == 0
+
+
+def test_conflicting_completed_validation_evidence_is_rejected(case_graph):
+    workflow, services, _ = make_workflow(
+        case_graph, EditingAgent([[make_rule()]])
+    )
+    state = workflow.run(interrupt_after=["validate_initial"])
+    saved = services.evidence.read(state.validation_ref)["payload"]
+    conflicting = {**saved, "replay": {**saved["replay"], "correct": False}}
+    services.evidence.put("validation", conflicting)
+    with pytest.raises(ValueError, match="conflicting completed validation"):
+        make_workflow(fresh_case_graph(case_graph), EditingAgent([]))

@@ -13,7 +13,10 @@ from uuid import uuid4
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from cortex.capabilities.sql_training.artifacts import Workspace
-from cortex.capabilities.sql_training.artifacts.cases import case_result
+from cortex.capabilities.sql_training.artifacts.cases import (
+    case_result,
+    load_case_assets,
+)
 from cortex.capabilities.sql_training.artifacts.jsonl import (
     read_json,
     write_json_atomic,
@@ -339,6 +342,7 @@ class TrainPipeline:
                 if not state.result_ref:
                     raise RuntimeError("case graph stopped without a sealed result")
                 result = read_json(Path(state.result_ref))
+                load_case_assets(result, case_root=root)
                 summary.update(
                     status=result["case_status"],
                     revision=state.accepted_revision,
@@ -349,7 +353,7 @@ class TrainPipeline:
             raise
         except Exception as exc:  # noqa: BLE001 - report an isolated, resumable case failure
             # A failed graph remains resumable. Report from the last checkpoint,
-            # never seal a failure bundle over the graph's completed output.
+            # never seal a failure result over the graph's completed output.
             evidence.put(
                 "case_failure", {"error": str(exc), "error_type": type(exc).__name__}
             )
@@ -379,7 +383,7 @@ class TrainPipeline:
         return result
 
     def _merge_case_values(self, graph: GraphStore) -> None:
-        """Aggregate verified facts before publishing a merge-eligible bundle."""
+        """Aggregate verified facts before publishing a merge-eligible result."""
         values = [
             a
             for a in graph.working.physical_assets

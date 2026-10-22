@@ -51,16 +51,17 @@ class CaseWorkflow:
         self.state = None
 
     def _compatible(self, values):
-        state = CaseState.model_validate(values)
+        # Check the raw header before parsing the current schema: retired layouts
+        # may contain fields (such as bundle_ref) that this schema rejects.
         if (
-            state.context_id != self.runtime.services.context_id
-            or state.workflow_version != WORKFLOW_VERSION
-            or state.case_id != str(self.runtime.record["source_id"])
+            values.get("context_id") != self.runtime.services.context_id
+            or values.get("workflow_version") != WORKFLOW_VERSION
+            or values.get("case_id") != str(self.runtime.record["source_id"])
         ):
             raise CaseResumeError(
                 "cannot resume a case with changed source/data/config/prompt/workflow"
             )
-        return state
+        return CaseState.model_validate(values)
 
     def run(self, *, resume=False, interrupt_after=None):
         if resume and not self.checkpoint_path.is_file():

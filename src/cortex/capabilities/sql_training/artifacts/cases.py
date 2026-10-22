@@ -172,7 +172,7 @@ def seal_case(root: Path, result: dict[str, Any], graph: GraphStore) -> dict[str
     if target.exists():
         previous = read_json(target / "result.json")
         if previous and result_signature(previous) == result_signature(result):
-            load_case_assets(previous)
+            load_case_assets(previous, case_root=root)
             return previous
         raise ValueError("existing case result belongs to different completion")
     root.mkdir(parents=True, exist_ok=True)
@@ -187,9 +187,15 @@ def seal_case(root: Path, result: dict[str, Any], graph: GraphStore) -> dict[str
     return result
 
 
-def load_case_assets(result: dict[str, Any]) -> list[NodeAsset]:
+def load_case_assets(
+    result: dict[str, Any], *, case_root: Path | None = None
+) -> list[NodeAsset]:
     """Read the sole semantic export; report metadata never embeds graph content."""
-    path = result.get("ontology_path")
+    path = (
+        case_root / "result" / "ontology.json"
+        if case_root is not None
+        else result.get("ontology_path")
+    )
     if not path:
         raise ValueError("case has no formal ontology export")
     rows = read_json(Path(path))

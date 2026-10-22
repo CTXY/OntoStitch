@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
+from cortex.capabilities.sql_training.artifacts.jsonl import read_json
 from cortex.capabilities.sql_training.error_analysis.workflow import (
     ErrorAnalysisWorkflow,
 )
@@ -112,6 +113,39 @@ class CaseServices:
             }
         )
         self._index = evidence.read_index()
+        self._restore_completed_validations()
+
+    def _restore_completed_validations(self) -> None:
+        # A validation fact can be durable before its lookup index is written.
+        # Rebuild only that derived lookup, never workflow position or graph heads.
+        # Keep this in memory until the workflow has checked resume compatibility.
+        for path in self.evidence.root.glob("*.json"):
+            record = read_json(path)
+            if record.get("kind") != "validation":
+                continue
+            payload = record["payload"]
+            if (
+                payload.get("case_id") != self.record["source_id"]
+                or payload.get("context_id") != self.context_id
+            ):
+                continue
+            replay = self.replay(record["evidence_id"])
+            if replay.status.value == "unavailable":
+                continue
+            key = fingerprint(
+                {"context": self.context_id, "graph": payload["content_fingerprint"]}
+            )
+            existing = self._index.get(key)
+            if existing:
+                previous = self.replay(existing["evidence_ref"])
+                if previous.status.value != "unavailable":
+                    if previous != replay:
+                        raise ValueError("conflicting completed validation evidence")
+                    continue
+            self._index[key] = {
+                "evidence_ref": record["evidence_id"],
+                "attempts": existing["attempts"] if existing else 1,
+            }
 
     def validate(self, snapshot: GraphSnapshot) -> str:
         if database_stamp(self.config.database.url or "") != self._data_stamp:

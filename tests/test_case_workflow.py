@@ -535,3 +535,55 @@ def test_skip_direct_policy_uses_same_graph_and_repairs_from_physical_base(case_
     assert state.directly_retained_ids == []
     assert len(state.acceptance_refs) == 1
     assert workflow.runtime.agent.calls == 1
+
+
+@pytest.mark.parametrize("damage", ["missing", "tampered"])
+@pytest.mark.parametrize("pending_seal", [False, True])
+def test_resume_rejects_damaged_formal_ontology(
+    case_graph, damage, pending_seal, monkeypatch
+):
+    from test_agent_runtime import ScriptModel
+
+    from cortex.capabilities.sql_training.artifacts.jsonl import write_json_atomic
+    from cortex.capabilities.sql_training.pipeline.train import TrainPipeline
+
+    workflow, services, validator = make_workflow(
+        case_graph, EditingAgent([[make_rule()]])
+    )
+    if pending_seal:
+        from cortex.capabilities.sql_training.training.evidence import EvidenceStore
+
+        completed = EvidenceStore.completed
+
+        def crash_after_seal(self, node, inputs, action):
+            output = completed(self, node, inputs, action)
+            if node == "seal":
+                raise RuntimeError("checkpoint interrupted after seal")
+            return output
+
+        with monkeypatch.context() as patch:
+            patch.setattr(EvidenceStore, "completed", crash_after_seal)
+            with pytest.raises(RuntimeError, match="checkpoint interrupted"):
+                workflow.run()
+        assert workflow.inspect().next == ("seal",)
+        state = workflow.state
+    else:
+        state = workflow.run()
+    write_json_atomic(workflow.root / "case.json", {
+        "source": workflow.runtime.record, "run_id": "resumed", "case_index": 1
+    })
+    ontology = workflow.root / "result" / "ontology.json"
+    if damage == "missing":
+        ontology.unlink()
+    else:
+        ontology.write_text("[]")
+    pipeline = TrainPipeline(
+        services.config, model=ScriptModel([]),
+        database=workflow.runtime.database, validation_client=validator,
+    )
+    result = pipeline.resume_case(workflow.root)
+    assert not result["correct"]
+    assert result["case_status"] == "failed"
+    assert result["result_path"] is None
+    assert result["ontology_path"] is None
+    assert workflow.inspect().values["accepted_revision"] == state.accepted_revision

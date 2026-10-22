@@ -1,4 +1,5 @@
 import json
+import shutil
 
 import pytest
 from conftest import make_rule
@@ -108,3 +109,27 @@ def test_direct_export_consumes_versioned_graph_snapshot(case_graph, tmp_path):
     )
     assert manifest["case_count"] == 1
     assert [n.id for n in _load_cases(root)[0][1].nodes] == [asset.id]
+
+
+@pytest.mark.parametrize("keep_original", [True, False])
+def test_collection_uses_local_ontology_after_relocation(tmp_path, keep_original):
+    original = tmp_path / "original"
+    entry = write_case(
+        original,
+        {"source_id": "case", "question": "How many?", "sql": "SELECT 1"},
+        [make_rule()],
+        arm="direct", result={}, provenance={}, case_index=1,
+    )
+    (original / "manifest.json").write_text(json.dumps({"cases": [entry]}))
+    moved = tmp_path / "moved"
+    shutil.copytree(original, moved)
+    if keep_original:
+        # A copy must not silently read the old directory's valid graph.
+        (original / "cases/case/result/ontology.json").write_text("[]")
+    else:
+        shutil.rmtree(original)
+    cases = _load_cases(moved)
+    assert [node.id for node in cases[0][1].nodes] == [make_rule().id]
+    (moved / "cases/case/result/ontology.json").write_text("[]")
+    with pytest.raises(ValueError, match="fingerprint"):
+        _load_cases(moved)

@@ -215,7 +215,7 @@ def _load_cases(
         )
         if result["source_id"] != case_id:
             raise ValueError(f"case result source does not match collection: {case_id}")
-        assets = load_case_assets(result)
+        assets = load_case_assets(result, case_root=case_root)
         nodes = tuple(NodeGraphAdapter.project_asset_node(asset) for asset in assets)
         edges = project_case_edges(assets)
         cases.append(
@@ -241,7 +241,7 @@ def _load_catalog_edges(root: Path) -> tuple[GraphEdge, ...]:
         return ()
     rows = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(rows, list):
-        raise ValueError(f"bundle catalog edges must be a list: {path}")
+        raise TypeError(f"collection catalog edges must be a list: {path}")
     return tuple(GraphEdge.model_validate(row) for row in rows)
 
 
