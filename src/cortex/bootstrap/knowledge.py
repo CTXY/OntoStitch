@@ -23,10 +23,10 @@ from cortex.capabilities.sql_training.graph_merge_evidence import (
     WorkspaceEvidenceRepository,
 )
 from cortex.capabilities.sql_training.runtime_config import SqlTrainingRuntimeConfig
-from cortex.capabilities.sql_training.training.initial.bootstrap import (
+from cortex.capabilities.sql_training.pipeline.grounding.bootstrap import (
     TrainingDimensionValueBootstrap,
 )
-from cortex.capabilities.sql_training.training.initial.expansion import (
+from cortex.capabilities.sql_training.pipeline.grounding.expansion import (
     ReferencedDimensionValueExpander,
     analyze_referenced_string_columns,
 )

@@ -13,7 +13,7 @@ from uuid import uuid4
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from cortex.capabilities.sql_training.artifacts import Workspace
-from cortex.capabilities.sql_training.artifacts.cases import case_result, seal_case
+from cortex.capabilities.sql_training.artifacts.cases import case_result
 from cortex.capabilities.sql_training.artifacts.jsonl import (
     read_json,
     write_json_atomic,
@@ -27,13 +27,16 @@ from cortex.capabilities.sql_training.pipeline.physical import PhysicalPreparati
 from cortex.capabilities.sql_training.pipeline.prepare import PrepareQASQLPipeline
 from cortex.capabilities.sql_training.prepare import load_standard_qa_sql_records
 from cortex.capabilities.sql_training.runtime_config import SqlTrainingRuntimeConfig
-from cortex.capabilities.sql_training.training.controller import CaseController
 from cortex.capabilities.sql_training.training.evidence import EvidenceStore
 from cortex.capabilities.sql_training.training.observability import SummaryTracer
 from cortex.capabilities.sql_training.training.services import CaseServices
 from cortex.capabilities.sql_training.training.trace import (
     TracingLLMProvider,
     TrainTraceLogger,
+)
+from cortex.capabilities.sql_training.training.workflow import (
+    CaseResumeError,
+    CaseWorkflow,
 )
 from cortex.schema import load_root_schema
 
@@ -226,32 +229,27 @@ class TrainPipeline:
         return result
 
     def resume_case(self, case_root: str | Path) -> dict[str, Any]:
-        """Resume one persistent case with the same model/data/configuration.
-
-        Full run scheduling is intentionally not resumed; this narrow API restores
-        the case safe point and updates only its bundle and verified Value union.
-        """
+        """Continue the same case from its persistent LangGraph thread."""
         root = Path(case_root)
         source = read_json(root / "source.json")
         info = read_json(root / "run_context.json")
-        if not source or not info or not (root / "checkpoint.json").is_file():
-            raise ValueError(
-                "case resume requires source, run context and a complete checkpoint"
+        if not source or not info or not (root / "checkpoints.sqlite").is_file():
+            raise CaseResumeError(
+                "case resume requires source, run context and a LangGraph checkpoint"
             )
         logger = TrainTraceLogger(
             self.workspace.root, info["run_id"], level=self.config.train.trace_level
         )
-        with self.tracer.span("extract.resume", case_id=source["source_id"]):
-            return self._case(
-                source,
-                info["case_index"],
-                info["run_id"],
-                None,
-                None,
-                logger,
-                resume=True,
-                root_override=root,
-            )
+        return self._case(
+            source,
+            info["case_index"],
+            info["run_id"],
+            None,
+            None,
+            logger,
+            resume=True,
+            root_override=root,
+        )
 
     def _case(
         self,
@@ -269,127 +267,101 @@ class TrainPipeline:
             re.sub(r"[^A-Za-z0-9._-]+", "_", record["source_id"]).strip("._") or "case"
         )
         root = (
-            self.workspace.root
-            / "train_runs"
-            / run_id
-            / "cases"
-            / f"{index:04d}_{safe}"
+            Path(root_override)
+            if root_override
+            else (
+                self.workspace.root
+                / "train_runs"
+                / run_id
+                / "cases"
+                / f"{index:04d}_{safe}"
+            )
         )
-        if root_override is not None:
-            root = Path(root_override)
         graph = GraphStore(
             root / "snapshots", workspace=self.workspace, schema=self.schema
         )
         evidence = EvidenceStore(root / "evidence")
-        state = services = None
-        controller = None
-        resume_checked = not resume
+        workflow = services = None
         try:
-            with self.tracer.span(
-                "extract.case", case_id=record["source_id"]
-            ) as summary:
-                with ExitStack() as resources:
-                    if self.case_resources_factory:
-                        model, validator = resources.enter_context(
-                            self.case_resources_factory()
-                        )
-                    else:
-                        model = self.model
-                        validator = (
-                            self.validation_client_factory()
-                            if self.validation_client_factory
-                            else self.validation_client
-                        )
-                        if self.validation_client_factory and callable(
-                            getattr(validator, "close", None)
-                        ):
-                            resources.callback(validator.close)
-                    if validator is None:
-                        raise ValueError("training requires a validation client")
-                    if resume:
-                        checkpoint = read_json(root / "checkpoint.json")
-                        graph.restore(
-                            checkpoint["working_revision"],
-                            checkpoint["accepted_revision"],
-                        )
-                    else:
-                        graph.initialize(physical, edges)
-                        write_json_atomic(root / "source.json", record)
-                        write_json_atomic(
-                            root / "run_context.json",
-                            {"run_id": run_id, "case_index": index},
-                        )
-                    services = CaseServices(
-                        config=self.config,
-                        model=model,
-                        validation_client=validator,
-                        graph=graph,
-                        evidence=evidence,
-                        record=record,
-                        trace=logger,
-                    )
-                    if resume:
-                        if checkpoint["context_id"] != services.context_id:
-                            raise ValueError(
-                                "cannot resume a case with changed source/data/config/prompt"
-                            )
-                        if (
-                            checkpoint["phase"] != "done"
-                            and checkpoint.get("resume_count", 0) >= 3
-                        ):
-                            raise ValueError("case recovery retry limit reached")
-                        resume_checked = True
-                    controller = CaseController(
-                        root=root,
-                        graph=graph,
-                        evidence=evidence,
-                        services=services,
-                        agent=LearningAgent(model),
-                        database=self.database,
-                        record=record,
-                        max_rounds=self.config.train.max_rounds,
-                        max_iterations=self.config.train.max_iterations,
-                        skip_direct=self.skip_direct,
-                    )
-                    state = controller.run(resume=resume)
-                self._merge_case_values(graph)
-                result = case_result(record, state, graph, services, root)
-                try:
-                    result = seal_case(root, result, graph)
-                except Exception as exc:  # noqa: BLE001 - isolate run/case failures and preserve accepted assets
-                    evidence.put(
-                        "seal_failure",
-                        {"error": str(exc), "error_type": type(exc).__name__},
-                    )
-                    result.update(
-                        correct=False,
-                        fatal=True,
-                        failed_closed=True,
-                        case_status="failed",
-                        asset_outcome="partial"
-                        if result["draft_node_count"]
-                        else "empty",
-                        completion_reason="operational_failure",
-                        reason="case bundle sealing failed",
+            with (
+                self.tracer.span(
+                    "extract.case", case_id=record["source_id"]
+                ) as summary,
+                ExitStack() as resources,
+            ):
+                if self.case_resources_factory:
+                    model, validator = resources.enter_context(
+                        self.case_resources_factory()
                     )
                 else:
-                    state.phase = "done"
-                    controller.checkpoint()
+                    model = self.model
+                    validator = (
+                        self.validation_client_factory()
+                        if self.validation_client_factory
+                        else self.validation_client
+                    )
+                    if self.validation_client_factory and callable(
+                        getattr(validator, "close", None)
+                    ):
+                        resources.callback(validator.close)
+                if validator is None:
+                    raise ValueError("training requires a validation client")
+
+                def initialize():
+                    previous = read_json(root / "source.json")
+                    if previous is not None and previous != record:
+                        raise CaseResumeError("case source cannot be replaced")
+                    graph.initialize(physical, edges)
+                    write_json_atomic(root / "source.json", record)
+                    write_json_atomic(
+                        root / "run_context.json",
+                        {"run_id": run_id, "case_index": index},
+                    )
+
+                services = CaseServices(
+                    config=self.config,
+                    model=model,
+                    validation_client=validator,
+                    graph=graph,
+                    evidence=evidence,
+                    record=record,
+                    trace=logger,
+                )
+                workflow = CaseWorkflow(
+                    root=root,
+                    graph=graph,
+                    evidence=evidence,
+                    services=services,
+                    agent=LearningAgent(model),
+                    database=self.database,
+                    record=record,
+                    max_rounds=self.config.train.max_rounds,
+                    max_iterations=self.config.train.max_iterations,
+                    skip_direct=self.skip_direct,
+                    initialize=initialize if not resume else None,
+                    close_resources=resources.close,
+                    merge_values=self._merge_case_values,
+                )
+                state = workflow.run(resume=resume)
+                if not state.bundle_ref:
+                    raise RuntimeError("case graph stopped without a sealed result")
+                result = read_json(Path(state.bundle_ref))
                 summary.update(
                     status=result["case_status"],
-                    revision=graph.accepted_revision,
+                    revision=state.accepted_revision,
                     model_calls=state.model_calls,
                     tool_calls=state.tool_calls,
                 )
-        except Exception as exc:
-            if not resume_checked:
-                raise
-            if controller is not None:
-                state = controller.state
+        except CaseResumeError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - report an isolated, resumable case failure
+            # A failed graph remains resumable. Report from the last checkpoint,
+            # never seal a failure bundle over the graph's completed output.
             evidence.put(
                 "case_failure", {"error": str(exc), "error_type": type(exc).__name__}
             )
-            if state is not None and services is not None:
+            if workflow is not None and workflow.state is not None:
+                state = workflow.state.model_copy(deep=True)
                 state.operational_failure = True
                 state.completion_reason = "operational_failure"
                 result = case_result(record, state, graph, services, root)
@@ -403,37 +375,22 @@ class TrainPipeline:
                     "case_status": "failed",
                     "asset_outcome": "empty",
                     "completion_reason": "operational_failure",
-                    "reason": f"{type(exc).__name__}: {exc}",
                     "draft_nodes": [],
                     "events": [],
                 }
-            if graph.accepted_revision:
-                try:
-                    self._merge_case_values(graph)
-                except (OSError, ValueError) as merge_error:
-                    evidence.put(
-                        "value_aggregation_failure",
-                        {
-                            "error_type": type(merge_error).__name__,
-                            "error": str(merge_error),
-                        },
-                    )
+            result.update(
+                reason=f"{type(exc).__name__}: {exc}",
+                resumable=bool(workflow and workflow.has_checkpoint),
+            )
         write_json_atomic(
             root / "progress.json",
             {
                 "source_id": record["source_id"],
                 "case_status": result["case_status"],
+                "checkpoint_path": str(root / "checkpoints.sqlite"),
+                "thread_id": workflow.thread_id if workflow else None,
                 "bundle_path": result.get("bundle_path"),
-                "checkpoint_path": str(root / "checkpoint.json"),
-            },
-        )
-        logger.log(
-            source_id=record["source_id"],
-            case_index=index,
-            step="case_complete",
-            summary={
-                "correct": result["correct"],
-                "case_status": result["case_status"],
+                "completion_reason": result.get("completion_reason"),
             },
         )
         return result

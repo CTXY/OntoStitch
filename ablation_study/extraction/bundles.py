@@ -12,7 +12,7 @@ from cortex.capabilities.sql_training.core.enums import NodeType
 from cortex.capabilities.sql_training.graph.adapter import NodeGraphAdapter
 from cortex.capabilities.sql_training.graph.case import project_case_edges
 from cortex.capabilities.sql_training.graph.relationships import compile_all_relationships
-from cortex.capabilities.sql_training.training.repair.contracts import ontology_fingerprint
+from cortex.capabilities.sql_training.graph.fingerprints import ontology_fingerprint
 from cortex.schema import load_root_schema, validate_graph_state
 
 from .io import fingerprint, read_json, write_json, write_jsonl

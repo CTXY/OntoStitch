@@ -374,7 +374,7 @@ def test_sync_train_parallel_cases_close_owned_resources_before_return(
     from pathlib import Path
     from threading import Barrier, Lock, get_ident
 
-    from test_agent_controller import Validator
+    from test_case_workflow import Validator
     from test_agent_runtime import finish
 
     from cortex.capabilities.sql_training.engine import SqlTrainingCapability

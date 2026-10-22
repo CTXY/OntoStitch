@@ -28,7 +28,6 @@ def prepare_config(spec: dict, workspace: Path):
         max_rounds=1,
         max_iterations=1,
         case_max_workers=worker_limit,
-        extraction_max_workers=1,
         trace_level="info",
     )
     database = payload["database"]

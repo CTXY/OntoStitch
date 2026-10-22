@@ -2,10 +2,11 @@ import json
 from pathlib import Path
 
 from conftest import make_rule
-from test_agent_controller import Validator
 from test_agent_runtime import ScriptModel, call, finish, message
+from test_case_workflow import Validator
 
-from cortex.application.sql_training import QASqlTrainingRecord
+from cortex.application.sql_training import QASqlTrainingRecord, SqlTrainingService
+from cortex.bootstrap.graph_merge import build_graph_merge_operator
 from cortex.capabilities.sql_training.engine import SqlTrainingCapability
 from cortex.capabilities.sql_training.runtime_config import (
     RuntimeDatabaseConfig,
@@ -14,10 +15,10 @@ from cortex.capabilities.sql_training.runtime_config import (
 )
 from cortex.config import CortexConfig
 from cortex.config.models import SQLiteDatabaseConfig
-from cortex.schema import GraphSpace, load_root_schema
+from cortex.schema import GraphSpace, GraphState, load_root_schema
 
 
-def test_default_capability_uses_unified_agent_and_exports_valid_incoming(case_graph):
+def test_default_application_runs_case_graph_and_merges_valid_incoming(case_graph):
     _store, database, workspace = case_graph
 
     def create(messages):
@@ -61,7 +62,21 @@ def test_default_capability_uses_unified_agent_and_exports_valid_incoming(case_g
         validation_client=validator,
         database=database,
     )
-    state, report = capability.train(
+
+    class Repository:
+        def load(self):
+            return GraphState(graph=GraphSpace(), node_conflicts=())
+
+        def save(self, state):
+            self.saved = state
+
+    repository = Repository()
+    service = SqlTrainingService(
+        capability,
+        graph_merge=build_graph_merge_operator(config, live_semantics=False),
+        state_repository=repository,
+    )
+    trained = service.run(
         (
             QASqlTrainingRecord(
                 source_id="case",
@@ -70,8 +85,9 @@ def test_default_capability_uses_unified_agent_and_exports_valid_incoming(case_g
             ),
         ),
         load_root_schema(),
-        GraphSpace(),
     )
+    state, report = trained.state, trained.evaluation_report
+    assert repository.saved == state
     assert report.success, report.model_dump()
     assert report.passed == 1
     assert validator.generate_calls == 3
@@ -81,7 +97,7 @@ def test_default_capability_uses_unified_agent_and_exports_valid_incoming(case_g
         "column",
         "generation_rule",
     }
-    assert any(n.id == "table.unused" for n in state.graph.nodes)
+    assert any(n.node_type == "table" and n.name == "unused" for n in state.graph.nodes)
     bundle = Path(report.cases[0].bundle_path)
     raw = json.loads((bundle / "case_result.json").read_text())
     assert raw["asset_outcome"] == "ready"
@@ -91,7 +107,7 @@ def test_default_capability_uses_unified_agent_and_exports_valid_incoming(case_g
         (bundle.parent / "snapshots" / f"{raw['final_revision']}.json").read_text()
     )
     assert "column.unused.code" in {a["id"] for a in snapshot["assets"]}
-    assert (bundle.parent / "checkpoint.json").exists()
+    assert (bundle.parent / "checkpoints.sqlite").exists()
 
 
 def test_resource_shutdown_failure_does_not_erase_retained_assets_or_publish_passed_bundle(

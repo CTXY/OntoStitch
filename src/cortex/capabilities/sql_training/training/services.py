@@ -95,6 +95,7 @@ class CaseServices:
                 "data": self._data_stamp,
                 "gate_policy": "stable-v1",
                 "asset_contract": ONTOLOGY_ASSET_DEFINITION_VERSION,
+                "graph_schema": graph.schema_version,
                 "learning_prompts": {
                     name: prompt_fingerprint(name)
                     for name in (
@@ -201,6 +202,13 @@ class CaseServices:
             if replay.status.value != "unavailable":
                 break
         return evidence_id
+
+    def reset_unavailable_validation(self) -> None:
+        self._index = {
+            key: value for key, value in self._index.items()
+            if self.replay(value["evidence_ref"]).status.value != "unavailable"
+        }
+        write_json_atomic(self._index_path, self._index)
 
     def replay(self, evidence_id: str) -> StableReplayResult:
         payload = self.evidence.read(evidence_id)["payload"]

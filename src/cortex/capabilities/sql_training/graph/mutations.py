@@ -22,7 +22,7 @@ from cortex.capabilities.sql_training.graph.snapshots import (
 from cortex.capabilities.sql_training.graph.values import merge_verified_values
 from cortex.capabilities.sql_training.models import NodeAsset, Source
 from cortex.capabilities.sql_training.models.base import NodeModel
-from cortex.capabilities.sql_training.training.initial.semantic_values import (
+from cortex.capabilities.sql_training.pipeline.grounding.semantic_values import (
     materialize_semantic_mapping_dimension_values,
 )
 from cortex.infrastructure.database import DatabaseConnector

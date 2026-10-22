@@ -9,6 +9,7 @@ from langchain_core.tools import tool
 
 from cortex.capabilities.sql_training.graph.mutations import GraphEdit, apply_edit
 from cortex.capabilities.sql_training.graph.snapshots import (
+    fingerprint,
     semantic_diff,
 )
 from cortex.capabilities.sql_training.learning.database import (
@@ -195,6 +196,9 @@ def build_tools(session: LearningSession):
         acceptance is decided independently after handoff and validation.
         """
         edit = GraphEdit.model_validate(edit)
+        edit = edit.model_copy(
+            update={"edit_id": fingerprint([session.attempt_id, edit.edit_id])}
+        )
         targets = {str(t["target_id"]) for t in session.targets}
         if session.mode == "repair" and any(
             set(g.target_ids) - targets for g in edit.proposed_groups

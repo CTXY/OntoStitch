@@ -233,8 +233,6 @@ class SqlTrainingConfig(_ConfigModel):
     max_iterations: int = Field(default=3, ge=1)
     sql_timeout: float = Field(default=30.0, gt=0)
     required_consecutive_correct_replays: int = Field(default=3, ge=1)
-    max_trial_attempts: int = Field(default=3, ge=1)
-    extraction_max_workers: int = Field(default=3, ge=1)
     case_max_workers: int | None = Field(default=None, ge=1)
     agent_max_steps: int = Field(default=10, ge=1)
     agent_read_concurrency: int = Field(default=4, ge=1, le=4)

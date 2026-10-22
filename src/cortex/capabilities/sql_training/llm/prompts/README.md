@@ -15,8 +15,8 @@ editing prompts; a run uses a frozen cached prompt version.
 | learning_repair | learning/repair.md | Fixed targets, autonomous investigation and coherent graph edits |
 | learning_assessment | learning/assessment.md | Independent evidence-based group verdicts and dependencies |
 
-The Learning system prompt composes the existing initial domain rules while
-excluding the old one-shot response envelope. Tool descriptions specify arguments
+The Learning system prompt composes `shared_learning_rules.md`, which contains
+shared domain rules without a one-shot extraction envelope. Tool descriptions specify arguments
 and effects. `inspect_graph(mode="guide", node_type=...)` returns the exact compact
 Pydantic property schema plus a reference to the complete contract. Detailed rules
 and Rule taxonomy remain available on demand.
@@ -36,10 +36,9 @@ compact per-attempt evidence, without Learning's private conversation.
 5. Record the changed prompt hashes in the resulting run artifacts. Resume rejects
    checkpoints whose source/data/config/prompt context no longer matches.
 
-Legacy `metric`, `semantic_mapping`, `generation_rule` and owner repair prompts
-remain for standalone historical interfaces; they are not the default Learning
-Agent's pre-extraction or repair stages. Diagnosis continues to reuse its existing
-repair/ablation prompts, with suggested owner information treated as advisory.
+Diagnosis reuses its repair/ablation prompts; owner suggestions are advisory.
+There is one joint Learning Agent. The retired per-type extractors, optimizers and
+their prompt registrations are removed.
 
 Formatting references: [OpenAI prompt engineering](https://developers.openai.com/api/docs/guides/prompt-engineering),
 [LangChain tools](https://docs.langchain.com/oss/python/langchain/tools).

@@ -23,7 +23,7 @@ from cortex.capabilities.sql_training.graph.snapshots import (
     fingerprint,
 )
 from cortex.capabilities.sql_training.training.services import CaseServices
-from cortex.capabilities.sql_training.training.state import CaseState
+from cortex.capabilities.sql_training.training.workflow.state import CaseState
 
 
 def case_result(
@@ -135,20 +135,43 @@ def case_result(
             "diagnosis_rounds": state.round_number,
         },
         "bundle_path": str(root / "bundle"),
-        "checkpoint_path": str(root / "checkpoint.json"),
+        "checkpoint_path": str(root / "checkpoints.sqlite"),
+        "thread_id": "case-" + fingerprint(record["source_id"]),
+        "context_id": state.context_id,
+        "workflow_version": state.workflow_version,
         "transaction_rolled_back": False,
     }
+
+
+def bundle_signature(result: dict[str, Any]) -> str:
+    return fingerprint(
+        {
+            key: result.get(key)
+            for key in (
+                "source_id",
+                "context_id",
+                "workflow_version",
+                "final_revision",
+                "final_graph_fingerprint",
+                "validation_ref",
+                "acceptance_evidence_refs",
+                "case_status",
+                "asset_outcome",
+                "completion_reason",
+                "correct",
+                "direct_completed",
+                "directly_retained_asset_ids",
+                "failed_closed",
+            )
+        }
+    )
 
 
 def seal_case(root: Path, result: dict[str, Any], graph: GraphStore) -> dict[str, Any]:
     target = root / "bundle"
     if target.exists():
         previous = read_json(target / "case_result.json")
-        if (
-            previous
-            and previous.get("final_graph_fingerprint")
-            == result["final_graph_fingerprint"]
-        ):
+        if previous and bundle_signature(previous) == bundle_signature(result):
             return previous
         raise ValueError("existing case bundle belongs to different graph content")
     root.mkdir(parents=True, exist_ok=True)
@@ -175,7 +198,10 @@ def seal_case(root: Path, result: dict[str, Any], graph: GraphStore) -> dict[str
                 "merge_eligible": result["asset_outcome"] == "ready",
                 "snapshot_revision": graph.accepted_revision,
                 "content_fingerprint": result["final_graph_fingerprint"],
-                "checkpoint_path": "../checkpoint.json",
+                "checkpoint_path": "../checkpoints.sqlite",
+                "thread_id": result["thread_id"],
+                "context_id": result["context_id"],
+                "workflow_version": result["workflow_version"],
                 "snapshots_path": "../snapshots",
                 "evidence_path": "../evidence",
                 "draft_nodes_path": "draft_nodes.json",

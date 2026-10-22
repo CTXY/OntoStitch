@@ -15,66 +15,8 @@ from cortex.capabilities.sql_training.contracts.semantic_mapping import (
 from cortex.capabilities.sql_training.core.enums import NodeType
 from cortex.capabilities.sql_training.core.ids import make_node_id
 from cortex.capabilities.sql_training.models import NodeAsset
-from cortex.capabilities.sql_training.training.repair.plan import CandidateAsset
 
 _SCHEMA_COLUMN_LINE = re.compile(r"(?m)^\s*-\s*([^\n:]+?)\s*:")
-
-
-def validate_candidate_references(
-    candidate: CandidateAsset,
-    *,
-    working_assets: Iterable[NodeAsset],
-    table_schema: Any,
-) -> None:
-    """Validate one Candidate against Working and its own frozen composition.
-
-    Candidate-local validation deliberately cannot see sibling Candidates. This prevents an
-    unaccepted parallel proposal from satisfying another proposal's reference closure.
-    """
-
-    working = {asset.id: asset for asset in working_assets}
-    members = [candidate.asset, *candidate.dependency_assets]
-    member_ids = {asset.id for asset in members}
-    if len(member_ids) != len(members):
-        raise ValueError("candidate composition contains duplicate logical asset IDs")
-    collisions = sorted(member_ids.intersection(working) - {candidate.asset.id})
-    if collisions:
-        raise ValueError(
-            "candidate dependency_assets must be newly created; Working collisions: "
-            f"{collisions}"
-        )
-
-    physical_ids = physical_reference_catalog(table_schema)
-    if not physical_ids and not table_schema:
-        # Some deterministic unit/legacy call sites do not carry a schema snapshot. Preserve
-        # shape validation there; real training always supplies the physical catalog.
-        physical_ids.update(
-            reference
-            for asset in members
-            for reference in _asset_reference_values(asset)
-            if reference.startswith(("table.", "column.", "dimension_value."))
-        )
-    visible_ids = set(working) | member_ids | physical_ids
-    for asset in members:
-        _validate_asset_references(
-            asset,
-            visible_ids=visible_ids,
-            physical_ids=physical_ids,
-            table_schema=table_schema,
-        )
-
-    metrics = [asset for asset in members if asset.node_type == NodeType.METRIC]
-    diagnostics = metric_dependency_diagnostics(
-        [asset for asset in working.values() if asset.node_type == NodeType.METRIC],
-        metrics,
-    )
-    if diagnostics:
-        diagnostic = diagnostics[0]
-        raise ValueError(
-            f"{diagnostic.code}: source={diagnostic.source_metric_id}; "
-            f"targets={list(diagnostic.target_metric_ids)}; "
-            f"cycle={list(diagnostic.cycle_path)}"
-        )
 
 
 def validate_asset_batch_references(
@@ -124,18 +66,6 @@ def validate_asset_batch_references(
             f"targets={list(diagnostic.target_metric_ids)}; "
             f"cycle={list(diagnostic.cycle_path)}"
         )
-
-
-def validate_cross_candidate_collisions(candidates: Iterable[CandidateAsset]) -> None:
-    owners: dict[str, str] = {}
-    for candidate in candidates:
-        for asset in [candidate.asset, *candidate.dependency_assets]:
-            previous = owners.setdefault(asset.id, candidate.candidate_id)
-            if previous != candidate.candidate_id:
-                raise ValueError(
-                    "duplicate logical asset ID across candidates: "
-                    f"{asset.id} ({previous}, {candidate.candidate_id})"
-                )
 
 
 def _validate_asset_references(

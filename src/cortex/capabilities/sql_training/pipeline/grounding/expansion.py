@@ -15,7 +15,11 @@ from cortex.capabilities.sql_training.extractors.sql_normalizer import (
     build_column_table_map,
     normalize_sql_aliases,
 )
-from cortex.capabilities.sql_training.models import ColumnProperties, NodeAsset, TableProperties
+from cortex.capabilities.sql_training.models import (
+    ColumnProperties,
+    NodeAsset,
+    TableProperties,
+)
 from cortex.infrastructure.database import DatabaseConnector
 
 _STRING_TYPE_MARKERS = ("char", "clob", "string", "text")

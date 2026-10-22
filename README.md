@@ -100,8 +100,8 @@ means the training result needs review.
 
 Extraction now uses one Learning Agent (`LangChain create_agent`) for initial
 learning and repair, with six domain tools and short working notes. Independent
-Diagnosis and Assessment provide feedback; a Python controller owns validation,
-acceptance, recovery and output. All configured Tables/Columns are initialized;
+Diagnosis and Assessment provide feedback; one case-level LangGraph owns validation,
+acceptance, recovery and output with a persistent SQLite checkpointer. All configured Tables/Columns are initialized;
 Values are included conditionally after database verification.
 
 Training and Graph Merge expose synchronous Python APIs: call
@@ -111,6 +111,9 @@ Case workers and parallel read-only agent tools retain their existing concurrenc
 Online retrieval/context APIs remain asynchronous; training adapts RetrieveDB at
 its dedicated retrieval boundary. An asynchronous host should dispatch the
 synchronous training service to a worker thread.
+
+Ontology revisions and detailed evidence remain independently stored. The former
+manual controller and per-type extraction/optimization runtimes are removed.
 
 Each execution gate requires three consecutive correct SQL regenerations by
 default and stops at the first failure. Working changes dynamically; accepted

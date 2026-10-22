@@ -20,7 +20,7 @@ from cortex.capabilities.sql_training.graph.join_edges import (
     pure_routing_paths,
 )
 from cortex.capabilities.sql_training.llm.prompts import load_prompt
-from cortex.capabilities.sql_training.training.initial.bootstrap import (
+from cortex.capabilities.sql_training.pipeline.grounding.bootstrap import (
     TrainingDimensionValueBootstrap,
 )
 from cortex.capabilities.sql_training.training.trace import (

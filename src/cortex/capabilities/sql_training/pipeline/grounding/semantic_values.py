@@ -9,7 +9,9 @@ import sqlglot
 from sqlglot import expressions
 
 from cortex.capabilities.sql_training.builders import build_dimension_value_assets
-from cortex.capabilities.sql_training.contracts.references import physical_reference_catalog
+from cortex.capabilities.sql_training.contracts.references import (
+    physical_reference_catalog,
+)
 from cortex.capabilities.sql_training.contracts.semantic_mapping import (
     coerce_sqlite_dqs_literals,
     column_allows_numeric_dimension_values,

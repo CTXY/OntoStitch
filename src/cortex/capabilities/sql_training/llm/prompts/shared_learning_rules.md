@@ -142,8 +142,3 @@ Use two distinct formats:
 
 Correct: `expression.refs.amount = "column.sales.amount"` and plan text
 `Sum <sales.amount> from <sales>.` Never write `<column.sales.amount>` or `<table.sales>` in a plan.
-
-## Output
-
-Return exactly `<reasoning>...</reasoning>` followed by `<result>...</result>`. Put the schema JSON
-object directly inside `<result>`, with no Markdown fence and no extra JSON wrapper.

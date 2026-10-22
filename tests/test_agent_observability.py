@@ -49,3 +49,41 @@ def test_remote_spans_are_hierarchical_and_never_receive_raw_payloads(
     roots = [payload for kind, payload in client.payloads if kind == "create"]
     assert any(payload.get("parent_run_id") for payload in roots)
     assert all(payload.get("inputs") == {} for payload in roots)
+
+
+def test_direct_case_workflow_never_enables_native_state_payload_tracing(
+    case_graph, monkeypatch
+):
+    from conftest import make_rule
+    from test_case_workflow import EditingAgent, make_workflow
+
+    class NotesAgent(EditingAgent):
+        def run(self, session):
+            session.notes.current_plan = "PRIVATE_WORKFLOW_NOTES_SENTINEL"
+            return super().run(session)
+
+    workflow, _services, _validator = make_workflow(
+        case_graph, NotesAgent([[make_rule()]])
+    )
+    client = RecordingClient()
+    from cortex.capabilities.sql_training.training.workflow import graph as graph_module
+
+    monkeypatch.setattr(
+        graph_module, "SummaryTracer", lambda: SummaryTracer(client=client)
+    )
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    # Intentionally call the public workflow directly, outside TrainPipeline's
+    # SummaryTracer wrapper. Native graph instrumentation would upload State.
+    with tracing_context(enabled=True, client=client):
+        state = workflow.run()
+    client.flush()
+    assert state.notes.current_plan == "PRIVATE_WORKFLOW_NOTES_SENTINEL"
+    assert (
+        workflow.inspect().values["notes"]["current_plan"] == state.notes.current_plan
+    )
+    payloads = json.dumps(client.payloads, default=str)
+    assert client.payloads
+    assert "PRIVATE_" not in payloads
+    created = [payload for kind, payload in client.payloads if kind == "create"]
+    assert all(payload.get("inputs") == {} for payload in created)
+    assert all(payload["name"].startswith("extract.") for payload in created)

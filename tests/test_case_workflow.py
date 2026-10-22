@@ -17,10 +17,10 @@ from cortex.capabilities.sql_training.runtime_config import (
     RuntimeValidationConfig,
     SqlTrainingRuntimeConfig,
 )
-from cortex.capabilities.sql_training.training.controller import CaseController
 from cortex.capabilities.sql_training.training.evidence import EvidenceStore
 from cortex.capabilities.sql_training.training.feedback import AssessmentFeedback
 from cortex.capabilities.sql_training.training.services import CaseServices
+from cortex.capabilities.sql_training.training.workflow import CaseWorkflow
 from cortex.capabilities.sql_training.validation.models import (
     GenerationResponse,
     GenerationResult,
@@ -99,7 +99,7 @@ class EditingAgent:
         )
 
 
-def make_controller(
+def make_workflow(
     case_graph, agent, validator=None, assessor=None, rounds=1, iterations=2
 ):
     store, database, workspace = case_graph
@@ -131,7 +131,7 @@ def make_controller(
 
     services.diagnose = diagnose
     kwargs = {"assessor": assessor} if assessor else {}
-    ctrl = CaseController(
+    ctrl = CaseWorkflow(
         root=store.root.parent,
         graph=store,
         evidence=evidence,
@@ -165,16 +165,16 @@ def assessment(groups, accept):
 
 
 def test_direct_success_one_gate_and_semantic_only_bundle(case_graph):
-    ctrl, services, validator = make_controller(
-        case_graph, EditingAgent([[make_rule()]])
-    )
+    ctrl, services, validator = make_workflow(case_graph, EditingAgent([[make_rule()]]))
     state = ctrl.run()
     assert state.completion_reason == "stable_correct"
     assert validator.generate_calls == 3  # no extra final gate
     result = seal_case(
         ctrl.root,
-        case_result(ctrl.record, state, ctrl.graph, services, ctrl.root),
-        ctrl.graph,
+        case_result(
+            ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root
+        ),
+        ctrl.runtime.graph,
     )
     assert result["correct"] and result["asset_outcome"] == "ready"
     assert result["draft_node_ids"] == [make_rule().id]
@@ -213,17 +213,21 @@ def test_partial_acceptance_revalidates_retained_m2_not_trial_m3(
             [make_rule("m", "m3"), make_rule("c", "c2")],
         ]
     )
-    ctrl, services, validator = make_controller(
+    ctrl, services, validator = make_workflow(
         case_graph, agent, Validator(sql_for), assessor
     )
     state = ctrl.run()
-    actions = {a.id: a.properties.action for a in ctrl.graph.accepted.semantic_assets}
+    actions = {
+        a.id: a.properties.action for a in ctrl.runtime.graph.accepted.semantic_assets
+    }
     assert actions == {"generation_rule.m": "m2", "generation_rule.c": "c2"}
     assert state.round_number == 1 and state.iteration == 2
     assert state.completion_reason == (
         "stable_correct" if final_correct else "round_limit_reached"
     )
-    result = case_result(ctrl.record, state, ctrl.graph, services, ctrl.root)
+    result = case_result(
+        ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root
+    )
     assert result["correct"] is final_correct
     assert result["asset_outcome"] == ("ready" if final_correct else "partial")
     assert validator.generate_calls == (8 if final_correct else 6)
@@ -231,13 +235,13 @@ def test_partial_acceptance_revalidates_retained_m2_not_trial_m3(
 
 
 def test_no_changes_ends_inner_without_free_repeated_episode(case_graph):
-    ctrl, _services, validator = make_controller(
+    ctrl, _services, validator = make_workflow(
         case_graph,
         EditingAgent([[make_rule()], []]),
         Validator(lambda graph: "SELECT 0"),
     )
     state = ctrl.run()
-    assert ctrl.agent.calls == 2
+    assert ctrl.runtime.agent.calls == 2
     assert state.iteration == 0
     assert state.completion_reason == "no_progress"
     assert validator.generate_calls == 1  # cached failed gate at finalization
@@ -245,27 +249,27 @@ def test_no_changes_ends_inner_without_free_repeated_episode(case_graph):
 
 def test_safe_checkpoint_resume_keeps_acceptance_and_reuses_gate(case_graph):
     agent = EditingAgent([[make_rule()]])
-    ctrl, _services, validator = make_controller(case_graph, agent)
-    ctrl.step()  # completed Direct checkpoint
-    accepted = ctrl.graph.accepted_revision
-    ctrl.step()  # initial stable gate checkpoint, next S7
-    resumed, services2, _ = make_controller(case_graph, EditingAgent([]), validator)
+    ctrl, _services, validator = make_workflow(case_graph, agent)
+    ctrl.run(interrupt_after=["direct"])  # persisted Direct boundary
+    accepted = ctrl.runtime.graph.accepted_revision
+    ctrl.run(resume=True, interrupt_after=["validate_initial"])
+    resumed, services2, _ = make_workflow(case_graph, EditingAgent([]), validator)
     state = resumed.run(resume=True)
     assert state.accepted_revision == accepted
     assert services2.replay(state.validation_ref).correct
     assert validator.generate_calls == 3
-    assert resumed.agent.calls == 0
+    assert resumed.runtime.agent.calls == 0
 
 
 def test_evidence_mismatch_cannot_export_success(case_graph):
-    ctrl, services, _ = make_controller(case_graph, EditingAgent([[make_rule()]]))
+    ctrl, services, _ = make_workflow(case_graph, EditingAgent([[make_rule()]]))
     state = ctrl.run()
     from cortex.capabilities.sql_training.graph.mutations import GraphEdit, apply_edit
 
     request = GraphEdit.model_validate(
         {
             "edit_id": "later",
-            "expected_revision": ctrl.graph.working_revision,
+            "expected_revision": ctrl.runtime.graph.working_revision,
             "operations": [
                 {
                     "operation": "create",
@@ -275,9 +279,13 @@ def test_evidence_mismatch_cannot_export_success(case_graph):
             ],
         }
     )
-    apply_edit(ctrl.graph, request, database=ctrl.database, source_id="case")
-    ctrl.graph.retain_direct()
-    result = case_result(ctrl.record, state, ctrl.graph, services, ctrl.root)
+    apply_edit(
+        ctrl.runtime.graph, request, database=ctrl.runtime.database, source_id="case"
+    )
+    ctrl.runtime.graph.retain_direct()
+    result = case_result(
+        ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root
+    )
     assert not result["correct"]
     assert result["validation_status"] == "unavailable"
     assert result["asset_outcome"] == "partial"
@@ -287,19 +295,20 @@ def test_assessment_failure_preserves_initial_accepted_assets(case_graph):
     def broken(*args, **kwargs):
         raise ValueError("invalid assessment")
 
-    ctrl, services, _ = make_controller(
+    ctrl, services, _ = make_workflow(
         case_graph,
         EditingAgent([[make_rule(action="m1")], [make_rule(action="m2")]]),
         Validator(lambda graph: "SELECT 0"),
         broken,
     )
-    state = ctrl.run()
-    assert state.operational_failure
-    assert ctrl.graph.accepted.semantic_assets[0].properties.action == "m1"
+    with pytest.raises(ValueError, match="invalid assessment"):
+        ctrl.run()
+    state = ctrl.state.model_copy(update={"operational_failure": True})
+    assert ctrl.runtime.graph.accepted.semantic_assets[0].properties.action == "m1"
     assert (
-        case_result(ctrl.record, state, ctrl.graph, services, ctrl.root)[
-            "asset_outcome"
-        ]
+        case_result(
+            ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root
+        )["asset_outcome"]
         == "partial"
     )
 
@@ -319,7 +328,7 @@ def test_infrastructure_retries_are_bounded_and_do_not_resample_semantic_failure
             return super().retrieve(**kwargs)
 
     validator = Transient()
-    ctrl, _services, _ = make_controller(
+    ctrl, _services, _ = make_workflow(
         case_graph, EditingAgent([[make_rule()]]), validator
     )
     assert ctrl.run().completion_reason == "stable_correct"
@@ -328,7 +337,7 @@ def test_infrastructure_retries_are_bounded_and_do_not_resample_semantic_failure
 
 
 def test_inconclusive_diagnosis_has_distinct_stop_reason(case_graph):
-    ctrl, services, _ = make_controller(
+    ctrl, services, _ = make_workflow(
         case_graph, EditingAgent([[make_rule()]]), Validator(lambda graph: "SELECT 0")
     )
     services.diagnose = lambda *args: (
@@ -349,11 +358,9 @@ def test_public_resume_api_reconstructs_graph_and_finishes_without_repeating_dir
     from cortex.capabilities.sql_training.artifacts.jsonl import write_json_atomic
     from cortex.capabilities.sql_training.pipeline.train import TrainPipeline
 
-    ctrl, services, validator = make_controller(
-        case_graph, EditingAgent([[make_rule()]])
-    )
-    ctrl.step()
-    write_json_atomic(ctrl.root / "source.json", ctrl.record)
+    ctrl, services, validator = make_workflow(case_graph, EditingAgent([[make_rule()]]))
+    ctrl.run(interrupt_after=["direct"])
+    write_json_atomic(ctrl.root / "source.json", ctrl.runtime.record)
     write_json_atomic(
         ctrl.root / "run_context.json", {"run_id": "resumed", "case_index": 1}
     )
@@ -361,7 +368,7 @@ def test_public_resume_api_reconstructs_graph_and_finishes_without_repeating_dir
     pipeline = TrainPipeline(
         services.config,
         model=model,
-        database=ctrl.database,
+        database=ctrl.runtime.database,
         validation_client=validator,
     )
     result = pipeline.resume_case(ctrl.root)
@@ -376,15 +383,13 @@ def test_resume_context_mismatch_refuses_without_mutating_checkpoint(case_graph)
     from cortex.capabilities.sql_training.artifacts.jsonl import write_json_atomic
     from cortex.capabilities.sql_training.pipeline.train import TrainPipeline
 
-    ctrl, services, validator = make_controller(
-        case_graph, EditingAgent([[make_rule()]])
-    )
-    ctrl.step()
-    write_json_atomic(ctrl.root / "source.json", ctrl.record)
+    ctrl, services, validator = make_workflow(case_graph, EditingAgent([[make_rule()]]))
+    ctrl.run(interrupt_after=["direct"])
+    write_json_atomic(ctrl.root / "source.json", ctrl.runtime.record)
     write_json_atomic(
         ctrl.root / "run_context.json", {"run_id": "refused", "case_index": 1}
     )
-    original = ctrl.checkpoint_path.read_bytes()
+    original = ctrl.inspect().values
     changed = services.config.model_copy(
         update={
             "train": services.config.train.model_copy(update={"agent_max_steps": 11})
@@ -393,12 +398,12 @@ def test_resume_context_mismatch_refuses_without_mutating_checkpoint(case_graph)
     pipeline = TrainPipeline(
         changed,
         model=ScriptModel([]),
-        database=ctrl.database,
+        database=ctrl.runtime.database,
         validation_client=validator,
     )
     with pytest.raises(ValueError, match="changed source/data/config/prompt"):
         pipeline.resume_case(ctrl.root)
-    assert ctrl.checkpoint_path.read_bytes() == original
+    assert ctrl.inspect().values == original
     assert not (ctrl.root / "progress.json").exists()
 
 
@@ -419,7 +424,7 @@ def test_second_round_starts_from_latest_accepted_graph_and_matching_failure(
         seen.append(payload["baseline"].semantic_assets[0].properties.action)
         return assessment(payload["groups"], [make_rule().id])
 
-    ctrl, services, validator = make_controller(
+    ctrl, services, validator = make_workflow(
         case_graph,
         EditingAgent(
             [
@@ -462,12 +467,72 @@ def test_incomplete_direct_does_not_promote_legal_partial_semantics(case_graph):
                 update={"direct_completed": False, "outcome": "resource_limit"}
             )
 
-    ctrl, services, _ = make_controller(case_graph, Incomplete([[make_rule()]]))
+    ctrl, services, _ = make_workflow(case_graph, Incomplete([[make_rule()]]))
     state = ctrl.run()
-    result = case_result(ctrl.record, state, ctrl.graph, services, ctrl.root)
+    result = case_result(
+        ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root
+    )
     assert not result["direct_completed"]
     assert result["draft_nodes"] == []
     assert result["asset_outcome"] == "empty"
     assert result[
         "correct"
     ]  # base physical graph independently passes; partial semantic content is not exported
+
+
+@pytest.mark.parametrize("empty_at_trial", [False, True])
+def test_empty_generated_sql_finishes_without_assessment_or_infrastructure_resume(
+    case_graph, empty_at_trial
+):
+    def sql_for(graph):
+        actions = [
+            n.properties["action"]
+            for n in graph.nodes
+            if n.node_type == "generation_rule"
+        ]
+        if empty_at_trial and actions == ["m1"]:
+            return "SELECT 0"
+        return ""
+
+    def must_not_assess(*args, **kwargs):
+        raise AssertionError("cannot assess an empty generated query")
+
+    actions = [[make_rule(action="m1")]]
+    if empty_at_trial:
+        actions.append([make_rule(action="m2")])
+    workflow, _services, validator = make_workflow(
+        case_graph, EditingAgent(actions), Validator(sql_for), must_not_assess
+    )
+    state = workflow.run()
+    assert state.completion_reason == "candidate_generation_failed"
+    assert not state.operational_failure
+    assert not state.acceptance_refs
+    assert workflow.runtime.graph.accepted.semantic_assets[0].properties.action == "m1"
+    assert not workflow.inspect().next
+    resumed, _, _ = make_workflow(case_graph, EditingAgent([]), validator)
+    assert resumed.run(resume=True).bundle_ref == state.bundle_ref
+
+
+def test_skip_direct_policy_uses_same_graph_and_repairs_from_physical_base(case_graph):
+    def sql_for(graph):
+        return (
+            "SELECT COUNT(*) FROM orders"
+            if any(n.node_type == "generation_rule" for n in graph.nodes)
+            else "SELECT 0"
+        )
+
+    workflow, _, _ = make_workflow(
+        case_graph,
+        EditingAgent([[make_rule()]]),
+        Validator(sql_for),
+        lambda model, **payload: assessment(payload["groups"], [make_rule().id]),
+        rounds=1,
+        iterations=1,
+    )
+    workflow.skip_direct = True
+    state = workflow.run()
+    assert state.completion_reason == "stable_correct"
+    assert state.round_number == 1 and state.iteration == 1
+    assert state.directly_retained_ids == []
+    assert len(state.acceptance_refs) == 1
+    assert workflow.runtime.agent.calls == 1
