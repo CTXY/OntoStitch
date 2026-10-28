@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from datetime import datetime
@@ -45,9 +44,6 @@ class InProcessOntologySqlGenerator:
         self.config = config
 
     def generate(self, request: GenerationRequest) -> GenerationResponse:
-        return asyncio.run(self.agenerate(request))
-
-    async def agenerate(self, request: GenerationRequest) -> GenerationResponse:
         started = perf_counter()
         accepted_query = ""
         error: str | None = None
@@ -63,7 +59,7 @@ class InProcessOntologySqlGenerator:
             query = ""
             generation_started = perf_counter()
             try:
-                response = await self._llm.ainvoke(
+                response = self._llm.invoke(
                     _generation_messages(
                         request,
                         wrong_query=wrong_query,
@@ -100,7 +96,7 @@ class InProcessOntologySqlGenerator:
                 break
             try:
                 execution_started = perf_counter()
-                rows = await asyncio.to_thread(self._database.run_validation_query, query)
+                rows = self._database.run_validation_query(query)
                 execution_time[f"query_execution_{attempt + 1}"] = _elapsed(execution_started)
                 result_json = {"rows": rows}
                 attempt_record["executed"] = True

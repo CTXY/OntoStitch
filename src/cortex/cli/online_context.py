@@ -30,7 +30,14 @@ def online_context_cli() -> None:
     type=click.Path(exists=True, readable=True, path_type=Path),
     help="SQL Training run directory or graph_state.json file.",
 )
-@click.option("--initial-sql", default=None, help="Optional caller-supplied candidate SQL.")
+@click.option(
+    "--initial-sql", default=None, help="Optional caller-supplied candidate SQL."
+)
+@click.option(
+    "--run-id",
+    default=None,
+    help="Stable alphanumeric session ID for retrying failed runs.",
+)
 @click.option(
     "--question-budget",
     type=click.IntRange(min=0),
@@ -71,6 +78,7 @@ def online_context_run_cli(
     question: str,
     graph_state_source: Path,
     initial_sql: str | None,
+    run_id: str | None,
     question_budget: int | None,
     column_context_dir: Path | None,
     output_path: Path | None,
@@ -105,15 +113,17 @@ def online_context_run_cli(
                 initial_sql=initial_sql,
                 column_context=column_context,
                 question_budget=question_budget,
+                run_id=run_id,
             )
         )
-        payload = _public_payload(result.model_dump(mode="json"))
+        payload = _public_payload(result.public_payload())
         _write_optional(trace_output_path, {"traces": traces})
         _publish(payload, output_path)
     except click.ClickException:
         raise
     except Exception as exc:
-        raise click.ClickException(str(exc)) from exc
+        notes = getattr(exc, "__notes__", ())
+        raise click.ClickException("\n".join((str(exc), *notes))) from exc
 
 
 @online_context_cli.command("resume")
@@ -172,11 +182,12 @@ def online_context_resume_cli(
                 answers=answers,
             )
         )
-        _publish(_public_payload(result.model_dump(mode="json")), output_path)
+        _publish(_public_payload(result.public_payload()), output_path)
     except click.ClickException:
         raise
     except Exception as exc:
-        raise click.ClickException(str(exc)) from exc
+        notes = getattr(exc, "__notes__", ())
+        raise click.ClickException("\n".join((str(exc), *notes))) from exc
 
 
 def _dialect_from_config(config) -> str:
@@ -190,8 +201,16 @@ def _public_payload(result: dict[str, Any]) -> dict[str, Any]:
             "status": "needs_user_input",
             "interaction_questions": result.get("interaction_questions", []),
             "pending": result["pending"],
+            "run_id": result.get("run_id"),
+            "relevant_graph": result.get("relevant_graph"),
         }
-    payload = {"status": result["status"]}
+    payload = {
+        "status": result["status"],
+        "run_id": result.get("run_id"),
+        "relevant_graph": result.get("relevant_graph"),
+        "unresolved_choice_point_ids": result.get("unresolved_choice_point_ids", []),
+        "projection_trace": result.get("projection_trace", []),
+    }
     guidance = result.get("downstream_guidance")
     if guidance is not None:
         public_guidance = {"guidance_content": guidance.get("guidance_content", "")}
@@ -206,7 +225,9 @@ def _load_pending(path: Path) -> OnlineContextPending:
     if isinstance(payload, dict) and "pending" in payload:
         payload = payload["pending"]
     if payload is None:
-        raise ValueError(f"online context result does not contain pending state: {path}")
+        raise ValueError(
+            f"online context result does not contain pending state: {path}"
+        )
     return OnlineContextPending.model_validate(payload)
 
 
@@ -215,7 +236,7 @@ def _load_answers(path: Path) -> tuple[InteractionAnswer, ...]:
     if isinstance(payload, dict):
         payload = payload.get("answers")
     if not isinstance(payload, list):
-        raise ValueError("online context answers must be a JSON array")
+        raise TypeError("online context answers must be a JSON array")
     return tuple(InteractionAnswer.model_validate(item) for item in payload)
 
 

@@ -3,21 +3,18 @@ from __future__ import annotations
 from typing import Any
 
 __all__ = [
-    "CompilePipeline",
     "DimensionValuePipeline",
-    "ScanCatalogPipeline",
     "PrepareQASQLPipeline",
+    "ScanCatalogPipeline",
     "TrainPipeline",
 ]
 
 
 def __getattr__(name: str) -> Any:
-    if name == "CompilePipeline":
-        from cortex.capabilities.sql_training.pipeline.compile import CompilePipeline
-
-        return CompilePipeline
     if name == "DimensionValuePipeline":
-        from cortex.capabilities.sql_training.pipeline.values import DimensionValuePipeline
+        from cortex.capabilities.sql_training.pipeline.values import (
+            DimensionValuePipeline,
+        )
 
         return DimensionValuePipeline
     if name == "ScanCatalogPipeline":
@@ -25,7 +22,9 @@ def __getattr__(name: str) -> Any:
 
         return ScanCatalogPipeline
     if name == "PrepareQASQLPipeline":
-        from cortex.capabilities.sql_training.pipeline.prepare import PrepareQASQLPipeline
+        from cortex.capabilities.sql_training.pipeline.prepare import (
+            PrepareQASQLPipeline,
+        )
 
         return PrepareQASQLPipeline
     if name == "TrainPipeline":

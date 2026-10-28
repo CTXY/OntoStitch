@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import hashlib
 import json
 import os
@@ -11,25 +10,30 @@ from typing import Any
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
 from cortex.bootstrap.knowledge import build_sql_training_evaluation_physical_graph
 from cortex.capabilities.graph_merge.edges import remap_property_node_ids
+from cortex.capabilities.sql_training.artifacts.cases import load_case_assets
+from cortex.capabilities.sql_training.graph.case import project_case_graph
 from cortex.capabilities.sql_training.graph.join_edges import merge_join_edges
+from cortex.capabilities.sql_training.graph.nodes import build_graph
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,
     SqlTrainingGraphMergeEvidenceResolver,
 )
 from cortex.config import CortexConfig
-from cortex.infrastructure.artifacts import FileSystemGraphMergeTraceSink, render_graph_html
+from cortex.infrastructure.artifacts import (
+    FileSystemGraphMergeTraceSink,
+    render_graph_html,
+)
 from cortex.schema import (
     GraphEdge,
     GraphNode,
     GraphSpace,
     GraphState,
-    SourceReference,
     load_root_schema,
     validate_graph_state,
 )
 
 
-async def evaluate_merge_bundle(
+def evaluate_merge_bundle(
     workspace: str | Path,
     *,
     output_dir: str | Path | None = None,
@@ -37,18 +41,21 @@ async def evaluate_merge_bundle(
     case_ids: tuple[str, ...] | None = None,
     existing_state_path: str | Path | None = None,
     physical_state_path: str | Path | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run Graph Merge once over a bundle against the configured database catalog."""
 
     root = Path(workspace).resolve()
-    cases = _load_cases(root, case_ids=case_ids)
     schema = load_root_schema()
     artifact_dir = Path(output_dir or root / "merge_live_review").resolve()
     artifact_dir.mkdir(parents=True, exist_ok=True)
     trace_path = artifact_dir / "llm_traces.jsonl"
-    trace_path.unlink(missing_ok=True)
+    if run_id is None:
+        trace_path.unlink(missing_ok=True)
     if existing_state_path is not None and physical_state_path is not None:
-        raise ValueError("existing_state_path and physical_state_path are mutually exclusive")
+        raise ValueError(
+            "existing_state_path and physical_state_path are mutually exclusive"
+        )
     baseline = (
         _load_existing_state(Path(existing_state_path).resolve())
         if existing_state_path is not None
@@ -80,10 +87,12 @@ async def evaluate_merge_bundle(
         physical_graph = reused_physical
         physical_manifest = _reused_physical_manifest(physical_graph)
     elif baseline is None:
-        physical_graph, physical_manifest = build_sql_training_evaluation_physical_graph(
-            config_path,
-            projection_workspace=artifact_dir / "physical_projection",
-            sql_records=list(evidence_records.values()),
+        physical_graph, physical_manifest = (
+            build_sql_training_evaluation_physical_graph(
+                config_path,
+                projection_workspace=artifact_dir / "physical_projection",
+                sql_records=list(evidence_records.values()),
+            )
         )
     else:
         physical_graph = _physical_subgraph(baseline.graph)
@@ -94,6 +103,7 @@ async def evaluate_merge_bundle(
         **physical_manifest,
         "bundle_catalog_edges": len(catalog_edges),
     }
+    cases = _load_cases(root, case_ids=case_ids, physical_graph=physical_graph)
     required_physical_graph = _with_referenced_dimension_values(physical_graph, cases)
     existing = (
         _augment_existing_physical_graph(
@@ -101,13 +111,13 @@ async def evaluate_merge_bundle(
             required_physical_graph,
         )
         if baseline is not None
-        else GraphState(graph=required_physical_graph, node_conflicts=())
+        else GraphState(graph=required_physical_graph)
     )
     incoming = _combined_incoming_state(cases, existing)
     input_nodes = len(incoming.graph.nodes)
     input_edges = len(incoming.graph.edges)
     input_source_ids = {case_id for case_id, _ in cases}
-    result = await operator.merge(existing, incoming, schema)
+    result = operator.merge(existing, incoming, schema, run_id=run_id)
     state = result.state
     diagnostic_details = [item.model_dump(mode="json") for item in result.diagnostics]
     validate_graph_state(state, schema)
@@ -120,15 +130,14 @@ async def evaluate_merge_bundle(
     }
     report = {
         "evaluation_mode": "live_llm",
+        "merge_run_id": result.run_id,
         "acceptance_scope": "regression",
         "semantic_pipeline": {
             "identity": type(operator.identity_grouper.resolver).__name__,
-            "reconcile": type(operator.node_reconciler.reconciler).__name__,
-            "fact_fuse": type(operator.node_reconciler.fact_fuser_registry.default).__name__,
-            "generalize": type(operator.node_reconciler.generalizer).__name__,
-            "coverage_verifier": type(operator.node_reconciler.generalization_verifier).__name__,
-            "branch": type(operator.node_reconciler.branch_selector).__name__,
-            "concept_mine": type(operator.graph_miner).__name__,
+            "consolidate": type(operator.node_reconciler.group_consolidator).__name__,
+            "assess": type(operator.node_reconciler.consolidation_checker).__name__,
+            "workflow": "langgraph",
+            "checkpoint": "sqlite",
         },
         "cases": len(cases),
         "incremental_existing_graph": existing_state_path is not None,
@@ -141,12 +150,13 @@ async def evaluate_merge_bundle(
         "input_edges": input_edges,
         "canonical_nodes": len(state.graph.nodes),
         "canonical_edges": len(state.graph.edges),
-        "conflicts": len(state.node_conflicts),
+        "conflicts": len(state.conflict_nodes),
         "diagnostics": len(diagnostic_details),
         "diagnostic_details": diagnostic_details,
-        "source_preservation": len(input_source_ids & output_source_ids) / len(input_source_ids),
+        "source_preservation": len(input_source_ids & output_source_ids)
+        / len(input_source_ids),
         "invalid_final_state": 0,
-        "state": state.model_dump(mode="json"),
+        "state": state.graph.model_dump(mode="json"),
     }
     _publish_artifacts(root, artifact_dir, trace_path, state, report, schema)
     return report
@@ -169,7 +179,6 @@ def _publish_artifacts(root, artifact_dir, trace_path, state, report, schema) ->
             state.graph,
             schema,
             title="Graph Merge · Live LLM",
-            node_conflicts=state.node_conflicts,
         ),
         encoding="utf-8",
     )
@@ -187,9 +196,26 @@ def _publish_artifacts(root, artifact_dir, trace_path, state, report, schema) ->
 
 
 def _load_cases(
-    root: Path, *, case_ids: tuple[str, ...] | None = None
+    root: Path,
+    *,
+    case_ids: tuple[str, ...] | None = None,
+    physical_graph: GraphSpace | None = None,
 ) -> tuple[tuple[str, GraphSpace], ...]:
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    from cortex.capabilities.sql_training.artifacts import Workspace
+    from cortex.capabilities.sql_training.core.enums import NodeType
+
+    if physical_graph is None:
+        physical = Workspace(Path(manifest["physical_workspace"]))
+        physical_graph = build_graph(
+            [
+                a
+                for kind in (NodeType.TABLE, NodeType.COLUMN, NodeType.DIMENSION_VALUE)
+                for a in physical.read_draft_assets(kind)
+            ],
+            physical.read_catalog_edges(),
+            load_root_schema(),
+        )
     selected = set(case_ids or ())
     cases = []
     for entry in manifest["cases"]:
@@ -197,14 +223,20 @@ def _load_cases(
         if selected and case_id not in selected:
             continue
         case_root = root / _case_path(entry)
-        node_rows = json.loads((case_root / "draft_nodes.json").read_text(encoding="utf-8"))
-        edge_rows = _read_jsonl(case_root / "draft_edges.jsonl")
+        result = json.loads(
+            (case_root / "result" / "result.json").read_text(encoding="utf-8")
+        )
+        if result["source_id"] != case_id:
+            raise ValueError(f"case result source does not match collection: {case_id}")
+        assets = load_case_assets(result, case_root=case_root)
+        fragment = project_case_graph(assets, physical_graph=physical_graph)
+        nodes, edges = fragment.nodes, fragment.edges
         cases.append(
             (
                 case_id,
                 GraphSpace(
-                    nodes=tuple(_node(item, case_id) for item in node_rows),
-                    edges=tuple(_edge(item, case_id) for item in edge_rows),
+                    nodes=tuple(_tag_case(node, case_id) for node in nodes),
+                    edges=tuple(_tag_case(edge, case_id) for edge in edges),
                 ),
             )
         )
@@ -222,7 +254,7 @@ def _load_catalog_edges(root: Path) -> tuple[GraphEdge, ...]:
         return ()
     rows = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(rows, list):
-        raise ValueError(f"bundle catalog edges must be a list: {path}")
+        raise TypeError(f"collection catalog edges must be a list: {path}")
     return tuple(GraphEdge.model_validate(row) for row in rows)
 
 
@@ -252,8 +284,8 @@ def _load_evidence(
     selected = set(case_ids or ())
     return {
         entry["source_id"]: json.loads(
-            (root / _case_path(entry) / "source.json").read_text(encoding="utf-8")
-        )
+            (root / _case_path(entry) / "case.json").read_text(encoding="utf-8")
+        )["source"]
         for entry in manifest["cases"]
         if not selected or entry["source_id"] in selected
     }
@@ -266,39 +298,14 @@ def _case_path(entry: dict[str, Any]) -> str:
     return case_path
 
 
-def _node(payload: dict[str, Any], case_id: str) -> GraphNode:
-    properties = {
-        key: value for key, value in payload.get("properties", {}).items() if value is not None
-    }
-    # Consolidated extraction bundles created before the current Metric contract may still
-    # contain this derived cache. Physical dependencies are reconstructed from canonical
-    # references and edges, so the legacy field must not cross the bundle-loading boundary.
-    if payload.get("node_type") == "metric":
-        properties.pop("physical_dependencies", None)
-    if properties.get("aggregation_policy") == "custom_sql":
-        properties["aggregation_policy"] = "POST_AGGREGATE_CALC"
-    return GraphNode(
-        **{
-            **payload,
-            "properties": properties,
-            "sources": _sources(payload.get("sources", ()), case_id),
+def _tag_case(item: GraphNode | GraphEdge, case_id: str):
+    return item.model_copy(
+        update={
+            "sources": tuple(
+                source.model_copy(update={"case_id": case_id})
+                for source in item.sources
+            )
         }
-    )
-
-
-def _edge(payload: dict[str, Any], case_id: str) -> GraphEdge:
-    return GraphEdge(**{**payload, "sources": _sources(payload.get("sources", ()), case_id)})
-
-
-def _sources(rows, case_id: str) -> tuple[SourceReference, ...]:
-    return tuple(
-        SourceReference(
-            source_id=item["source_id"],
-            chunk_id=item.get("chunk_id"),
-            locator=item.get("locator") or item.get("source_type"),
-            case_id=case_id,
-        )
-        for item in rows
     )
 
 
@@ -353,7 +360,7 @@ def _with_referenced_dimension_values(
 def _load_existing_state(path: Path) -> GraphState:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if "graph" not in payload:
-        payload = {"graph": payload, "node_conflicts": []}
+        payload = {"graph": payload}
     return GraphState.model_validate(payload)
 
 
@@ -382,7 +389,6 @@ def _augment_existing_physical_graph(
     )
     return GraphState(
         graph=GraphSpace(nodes=nodes, edges=edges),
-        node_conflicts=existing.node_conflicts,
     )
 
 
@@ -412,14 +418,14 @@ def _reused_physical_manifest(graph: GraphSpace) -> dict[str, object]:
     }
 
 
-def _physical_references(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return {value} if value.startswith(("table.", "column.", "dimension_value.")) else set()
-    if isinstance(value, dict):
-        return {item for child in value.values() for item in _physical_references(child)}
-    if isinstance(value, list | tuple):
-        return {item for child in value for item in _physical_references(child)}
-    return set()
+def _physical_references(properties: dict) -> set[str]:
+    from cortex.schema.references import property_reference_ids
+
+    return {
+        ref
+        for ref in property_reference_ids(properties)
+        if ref.startswith(("table.", "column.", "dimension_value."))
+    }
 
 
 def _audit_final_physical_graph(
@@ -433,10 +439,14 @@ def _audit_final_physical_graph(
         for edge in graph.edges
         if edge.from_node_id not in node_ids or edge.to_node_id not in node_ids
     )
-    value_nodes = {node.id for node in graph.nodes if node.node_type == "dimension_value"}
+    value_nodes = {
+        node.id for node in graph.nodes if node.node_type == "dimension_value"
+    }
     owners: dict[str, list[str]] = {node_id: [] for node_id in value_nodes}
     for edge in graph.edges:
-        if edge.edge_type == "value_of" and edge.from_node_id in owners:
+        if edge.from_node_id in owners and (
+            edge.edge_type == "value_of" or edge.reference_origin is not None
+        ):
             owners[edge.from_node_id].append(edge.to_node_id)
     invalid_value_owners = sorted(
         node_id
@@ -465,7 +475,9 @@ def _audit_final_physical_graph(
     }
 
 
-def _collision_safe_state(case_id: str, graph: GraphSpace, existing: GraphState) -> GraphState:
+def _collision_safe_state(
+    case_id: str, graph: GraphSpace, existing: GraphState
+) -> GraphState:
     occupied_nodes = {node.id for node in existing.graph.nodes}
     node_mapping = {}
     for node in graph.nodes:
@@ -495,12 +507,19 @@ def _collision_safe_state(case_id: str, graph: GraphSpace, existing: GraphState)
             edge.model_copy(
                 update={
                     "id": edge_id,
-                    "from_node_id": node_mapping.get(edge.from_node_id, edge.from_node_id),
+                    "from_node_id": node_mapping.get(
+                        edge.from_node_id, edge.from_node_id
+                    ),
                     "to_node_id": node_mapping.get(edge.to_node_id, edge.to_node_id),
+                    "properties": remap_property_node_ids(
+                        edge.properties, node_mapping
+                    ),
                 }
             )
         )
-    return GraphState(graph=GraphSpace(nodes=nodes, edges=tuple(edges)), node_conflicts=())
+    return GraphState(
+        graph=GraphSpace(nodes=nodes, edges=tuple(edges))
+    )
 
 
 def _available_incoming_id(seed: str, *, prefix: str, occupied: set[str]) -> str:
@@ -531,9 +550,10 @@ def _combined_incoming_state(
                 nodes=(*occupied.graph.nodes, *case_state.graph.nodes),
                 edges=(*occupied.graph.edges, *case_state.graph.edges),
             ),
-            node_conflicts=(),
         )
-    return GraphState(graph=GraphSpace(nodes=tuple(nodes), edges=tuple(edges)), node_conflicts=())
+    return GraphState(
+        graph=GraphSpace(nodes=tuple(nodes), edges=tuple(edges))
+    )
 
 
 def _tree_hash(root: Path) -> str:
@@ -546,12 +566,10 @@ def _tree_hash(root: Path) -> str:
     return digest.hexdigest()
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run live Graph Merge over an extraction bundle")
+    parser = argparse.ArgumentParser(
+        description="Run live Graph Merge over an extraction bundle"
+    )
     parser.add_argument("workspace", type=Path)
     parser.add_argument("--artifact-dir", type=Path)
     parser.add_argument(
@@ -565,21 +583,23 @@ def main() -> None:
         help="Reuse only the physical catalog from a prior GraphState without ontology nodes",
     )
     parser.add_argument("--config", type=Path, default=Path("configs/cortex.yaml"))
+    parser.add_argument("--run-id", help="Resume the same checkpointed merge run")
     parser.add_argument(
         "--cases",
         help="Comma-separated case IDs for a focused single-invocation regression run",
     )
     args = parser.parse_args()
-    case_ids = tuple(item.strip() for item in (args.cases or "").split(",") if item.strip())
-    report = asyncio.run(
-        evaluate_merge_bundle(
-            args.workspace,
-            output_dir=args.artifact_dir,
-            config_path=args.config,
-            case_ids=case_ids or None,
-            existing_state_path=args.existing_state,
-            physical_state_path=args.physical_state,
-        )
+    case_ids = tuple(
+        item.strip() for item in (args.cases or "").split(",") if item.strip()
+    )
+    report = evaluate_merge_bundle(
+        args.workspace,
+        output_dir=args.artifact_dir,
+        config_path=args.config,
+        case_ids=case_ids or None,
+        existing_state_path=args.existing_state,
+        physical_state_path=args.physical_state,
+        run_id=args.run_id,
     )
     print(
         json.dumps(

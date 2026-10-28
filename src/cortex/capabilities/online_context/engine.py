@@ -1,13 +1,12 @@
+"""Interaction and guidance over the single retrieve-db retrieval snapshot."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Protocol
-
-import sqlglot
-from sqlglot import expressions
+from pathlib import Path
 
 from cortex.application.online_context import (
-    ColumnSemanticContext,
+    ChoicePoint,
     InteractionAnswer,
     InteractionQuestion,
     OnlineContextDiagnostics,
@@ -15,238 +14,227 @@ from cortex.application.online_context import (
     OnlineContextResult,
     QueryExample,
 )
-from cortex.capabilities.online_context.discovery.models import ChoiceOrganizer
+from cortex.application.retrieve_db import RetrieveDbService
 from cortex.capabilities.online_context.discovery.prioritization import (
     rank_choice_points,
     select_questions,
 )
-from cortex.capabilities.online_context.graph.context import (
-    build_retrieved_graph_state,
-    expand_context,
-    without_untrusted_dimension_values,
-)
-from cortex.capabilities.online_context.output.guidance import GuidanceSynthesizer
+from cortex.capabilities.online_context.llm.prompts import prompt_version
+from cortex.capabilities.online_context.output.guidance import GuidanceAgentOutput
 from cortex.capabilities.online_context.output.projection import (
     build_downstream_guidance,
-    project_graph,
+    project_graph_state,
 )
-from cortex.capabilities.online_context.output.query_examples import select_query_examples
-from cortex.capabilities.online_context.retrieval.index import RepresentationIndex
-from cortex.capabilities.online_context.retrieval.recall import TypedRecall
-from cortex.capabilities.online_context.retrieval.selection import RelevanceSelector
-from cortex.schema import GraphSpace, GraphState
-
-
-class InitialSqlGenerator(Protocol):
-    async def generate(self, *, question: str, schema_context: str, dialect: str) -> str: ...
-
-
-class PhysicalSchemaRenderer(Protocol):
-    def render(self, graph: GraphSpace) -> str: ...
+from cortex.capabilities.online_context.output.query_examples import (
+    select_query_examples,
+)
+from cortex.capabilities.online_context.workflow.runtime import OnlineWorkflow
+from cortex.capabilities.retrieve_db.graph.context import build_retrieved_graph_state
+from cortex.schema import GraphState, calculate_schema_hash, load_root_schema
 
 
 class OnlineContextCapability:
     def __init__(
         self,
         *,
-        relevance_selector: RelevanceSelector,
-        choice_organizer: ChoiceOrganizer,
-        guidance_synthesizer: GuidanceSynthesizer,
-        initial_sql_generator: InitialSqlGenerator | None = None,
-        schema_renderer: PhysicalSchemaRenderer | None = None,
-        recall_limit: int = 80,
-        typed_recall: TypedRecall | None = None,
-        question_budget: int | None = None,
+        retrieval_service: RetrieveDbService,
+        choice_organizer,
+        guidance_synthesizer,
+        question_budget=None,
+        questions_per_round=1,
+        checkpoint_path="workspace/checkpoints/online_context.sqlite",
+        context_settings=None,
         query_example_index: Mapping[str, QueryExample] | None = None,
-        query_example_top_k: int = 3,
-    ) -> None:
-        self._relevance_selector = relevance_selector
+        query_example_top_k=3,
+        ontology_schema=None,
+        on_retrieved=None,
+    ):
+        self._retrieval = retrieval_service
+        self._on_retrieved = on_retrieved
+        self._ontology_schema = ontology_schema or load_root_schema()
         self._choice_organizer = choice_organizer
         self._guidance_synthesizer = guidance_synthesizer
-        self._initial_sql_generator = initial_sql_generator
-        self._schema_renderer = schema_renderer
-        self._recall_limit = recall_limit
-        self._typed_recall = typed_recall
-        # Validate configuration even if this request retrieves no conflict points.
         select_questions((), question_budget)
+        if (
+            isinstance(questions_per_round, bool)
+            or not isinstance(questions_per_round, int)
+            or questions_per_round < 1
+        ):
+            raise ValueError("questions_per_round must be a positive integer")
         self._question_budget = question_budget
+        self._questions_per_round = questions_per_round
         self._query_example_index = dict(query_example_index or {})
         self._query_example_top_k = query_example_top_k
+        self._workflow = OnlineWorkflow(
+            self,
+            Path(checkpoint_path),
+            {
+                "prompts": prompt_version(),
+                "schemas": {
+                    "choice": ChoicePoint.model_json_schema(),
+                    "answer": InteractionAnswer.model_json_schema(),
+                    "guidance": GuidanceAgentOutput.model_json_schema(),
+                },
+                "schema": calculate_schema_hash(self._ontology_schema),
+                "questions_per_round": questions_per_round,
+                "settings": context_settings or {},
+                "query_examples": {
+                    k: v.model_dump(mode="json")
+                    for k, v in self._query_example_index.items()
+                },
+                "query_example_top_k": query_example_top_k,
+                "retrieval_context": getattr(
+                    retrieval_service, "context_fingerprint", None
+                ),
+            },
+        )
 
     async def build(
         self,
         *,
-        question: str,
-        graph_state: GraphState,
-        graph_state_fingerprint: str,
-        dialect: str,
-        initial_sql: str | None,
-        column_context: tuple[ColumnSemanticContext, ...],
-        question_budget: int | None = None,
-    ) -> OnlineContextResult:
+        question,
+        graph_state,
+        graph_state_fingerprint,
+        dialect,
+        initial_sql,
+        column_context,
+        question_budget=None,
+        run_id=None,
+    ):
         budget = self._question_budget if question_budget is None else question_budget
         select_questions((), budget)
-        graph_state = without_untrusted_dimension_values(graph_state)
-        resolved_sql = _read_only_sql_or_none(initial_sql, dialect)
-        if resolved_sql is None and self._initial_sql_generator is not None:
-            if self._schema_renderer is None:
-                raise ValueError("initial SQL generation requires a physical schema renderer")
-            generated_sql = (
-                await self._initial_sql_generator.generate(
-                    question=question,
-                    schema_context=self._schema_renderer.render(graph_state.graph),
-                    dialect=dialect,
-                )
-            ).strip() or None
-            resolved_sql = _read_only_sql_or_none(generated_sql, dialect)
-        index = RepresentationIndex.build(graph_state, column_context=column_context)
-        representations = (
-            await self._typed_recall.recall(index, question, resolved_sql)
-            if self._typed_recall
-            else index.recall(
-                question=question,
-                initial_sql=resolved_sql,
-                limit=self._recall_limit,
-            )
-        )
-        if not representations:
-            return OnlineContextResult(
-                status="no_match",
-                question=question,
-                initial_sql=resolved_sql,
-                graph_state_fingerprint=graph_state_fingerprint,
-            )
-        relevance = await self._relevance_selector.select(
-            question=question,
-            initial_sql=resolved_sql,
-            representations=representations,
-        )
-        by_document = {item.document.document_id: item for item in representations}
-        selected_node_ids = {
-            by_document[item.document_id].document.canonical_node_id
-            for item in relevance
-            if item.status in {"relevant", "uncertain"} or _protected(by_document[item.document_id])
-        }
-        relevant_semantic_node_ids = {
-            by_document[item.document_id].document.canonical_node_id
-            for item in relevance
-            if item.status == "relevant"
-            and by_document[item.document_id].document.node_type
-            in {"concept", "metric", "generation_rule"}
-        }
-        relevant_grounding_node_ids = {
-            by_document[item.document_id].document.canonical_node_id
-            for item in relevance
-            if item.status == "relevant"
-            and by_document[item.document_id].document.node_type == "dimension_value"
-        }
-        if not selected_node_ids:
-            return OnlineContextResult(
-                status="no_match",
-                question=question,
-                initial_sql=resolved_sql,
-                graph_state_fingerprint=graph_state_fingerprint,
-                representations=representations,
-                relevance=relevance,
-                diagnostics=_diagnostics(representations, relevance, ()),
-            )
-        context_node_ids = expand_context(graph_state, selected_node_ids)
-        retrieved_state = build_retrieved_graph_state(graph_state, context_node_ids)
-        organization = await self._choice_organizer.organize(
-            question=question,
-            initial_sql=resolved_sql,
-            retrieved_graph_state=retrieved_state,
-        )
-        uncertain = tuple(
-            item for item in organization.intra_node_assessments if item.status == "uncertain"
-        )
-        diagnostic_notes = tuple(item.reason for item in uncertain)
-        choice_points = rank_choice_points(organization.choice_points)
-        presented_points = select_questions(choice_points, budget)
-        if presented_points:
-            questions = _questions(presented_points)
-            pending = OnlineContextPending(
-                remaining_budget=None if budget is None else budget - len(questions),
-                question=question,
-                dialect=dialect,
-                initial_sql=resolved_sql,
-                graph_state_fingerprint=graph_state_fingerprint,
-                selected_node_ids=tuple(sorted(context_node_ids)),
-                relevant_semantic_node_ids=tuple(sorted(relevant_semantic_node_ids)),
-                relevant_grounding_node_ids=tuple(sorted(relevant_grounding_node_ids)),
-                choice_points=choice_points,
-                questions=questions,
-            )
-            return OnlineContextResult(
-                status=None,
-                question=question,
-                initial_sql=resolved_sql,
-                graph_state_fingerprint=graph_state_fingerprint,
-                retrieved_node_ids=tuple(sorted(context_node_ids)),
-                retrieved_conflict_node_ids=_conflict_ids(retrieved_state),
-                selected_node_ids=tuple(sorted(selected_node_ids)),
-                representations=representations,
-                relevance=relevance,
-                choice_points=choice_points,
-                interaction_questions=questions,
-                pending=pending,
-                diagnostics=_diagnostics(
-                    representations,
-                    relevance,
-                    choice_points,
-                    notes=diagnostic_notes,
-                    presented_questions=len(questions),
-                ),
-            )
-        return await self._terminal_from_selections(
-            question=question,
-            dialect=dialect,
-            initial_sql=resolved_sql,
-            fingerprint=graph_state_fingerprint,
-            state=graph_state,
-            selected_node_ids=context_node_ids,
-            relevant_semantic_node_ids=relevant_semantic_node_ids,
-            relevant_grounding_node_ids=relevant_grounding_node_ids,
-            answers=(),
-            choice_points=choice_points,
-            selected_by_point={},
-            explanations={},
-            resolved_join_paths=(),
-            representations=representations,
-            relevance=relevance,
-            diagnostic_notes=diagnostic_notes,
+        return await self._workflow.start(
+            {
+                "question": question,
+                "graph_state": graph_state.model_dump(mode="json"),
+                "graph_state_fingerprint": graph_state_fingerprint,
+                "dialect": dialect,
+                "initial_sql": initial_sql,
+                "column_context": [c.model_dump(mode="json") for c in column_context],
+                "question_budget": budget,
+            },
+            run_id=run_id,
         )
 
-    async def resume(
+    async def resume(self, *, graph_state, pending, answers):
+        return await self._workflow.resume(graph_state, pending, answers)
+
+    async def _retrieve(self, request, run_id):
+        from cortex.application.retrieval import ColumnSemanticContext
+
+        result = await self._retrieval.run(
+            question=request["question"],
+            graph_state=GraphState.model_validate(request["graph_state"]),
+            dialect=request["dialect"],
+            initial_sql=request["initial_sql"],
+            column_context=tuple(
+                ColumnSemanticContext.model_validate(c)
+                for c in request["column_context"]
+            ),
+            run_id="online-retrieval-" + run_id,
+        )
+
+        if self._on_retrieved is not None:
+            self._on_retrieved(result)
+        return result
+
+    async def _discover(self, request, retrieval):
+        organization = await self._choice_organizer.organize(
+            question=request["question"],
+            initial_sql=retrieval.initial_sql,
+            retrieved_graph_state=retrieval.retrieved_graph_state,
+        )
+        points = rank_choice_points(organization.choice_points)
+        notes = tuple(
+            a.reason
+            for a in organization.intra_node_assessments
+            if a.status == "uncertain"
+        )
+        return points, notes
+
+    def _pending_result(
         self,
-        *,
-        graph_state: GraphState,
-        pending: OnlineContextPending,
-        answers: tuple[InteractionAnswer, ...],
-    ) -> OnlineContextResult:
-        graph_state = without_untrusted_dimension_values(graph_state)
-        all_answers = (*pending.prior_answers, *answers)
-        if pending.stage != "clarification":
-            raise ValueError(
-                "legacy staged JOIN pending state must be rebuilt with unified discovery"
+        request,
+        retrieval,
+        points,
+        questions,
+        answers,
+        remaining_budget,
+        run_id,
+        identity,
+        notes,
+    ):
+        state = retrieval.retrieved_graph_state
+        pending = OnlineContextPending(
+            run_id=run_id,
+            workflow_fingerprint=identity,
+            question=request["question"],
+            dialect=request["dialect"],
+            initial_sql=retrieval.initial_sql,
+            graph_state_fingerprint=request["graph_state_fingerprint"],
+            remaining_budget=remaining_budget,
+            selected_node_ids=tuple(n.id for n in state.graph.nodes),
+            relevant_semantic_node_ids=retrieval.relevant_semantic_node_ids,
+            relevant_grounding_node_ids=retrieval.relevant_grounding_node_ids,
+            prior_answers=answers,
+            choice_points=points,
+            questions=questions,
+        )
+        return OnlineContextResult(
+            status=None,
+            run_id=run_id,
+            question=request["question"],
+            initial_sql=retrieval.initial_sql,
+            graph_state_fingerprint=request["graph_state_fingerprint"],
+            retrieved_node_ids=tuple(n.id for n in state.graph.nodes),
+            retrieved_conflict_node_ids=_conflict_ids(state),
+            selected_node_ids=retrieval.selected_node_ids,
+            relevant_semantic_node_ids=retrieval.relevant_semantic_node_ids,
+            relevant_grounding_node_ids=retrieval.relevant_grounding_node_ids,
+            representations=retrieval.representations,
+            relevance=retrieval.relevance,
+            retrieved_graph_state=state,
+            choice_points=points,
+            interaction_questions=questions,
+            pending=pending,
+            diagnostics=_diagnostics(
+                retrieval.representations,
+                retrieval.relevance,
+                points,
+                notes=notes,
+                presented_questions=len(answers) + len(questions),
+            ),
+        )
+
+    async def _finish(self, request, retrieval, points, answers, notes):
+        if retrieval.retrieved_graph_state is None:
+            return OnlineContextResult(
+                status="no_match",
+                question=request["question"],
+                initial_sql=retrieval.initial_sql,
+                graph_state_fingerprint=request["graph_state_fingerprint"],
+                representations=retrieval.representations,
+                relevance=retrieval.relevance,
             )
-        selected_by_point, explanations = _selection_maps(pending.choice_points, all_answers)
+        selected, explanations = _selection_maps(points, answers)
+        state = retrieval.retrieved_graph_state
         return await self._terminal_from_selections(
-            question=pending.question,
-            dialect=pending.dialect,
-            initial_sql=pending.initial_sql,
-            fingerprint=pending.graph_state_fingerprint,
-            state=graph_state,
-            selected_node_ids=set(pending.selected_node_ids),
-            relevant_semantic_node_ids=set(pending.relevant_semantic_node_ids),
-            relevant_grounding_node_ids=set(pending.relevant_grounding_node_ids),
-            resolved_join_paths=pending.resolved_join_paths,
-            choice_points=pending.choice_points,
-            selected_by_point=selected_by_point,
+            question=request["question"],
+            dialect=request["dialect"],
+            initial_sql=retrieval.initial_sql,
+            fingerprint=request["graph_state_fingerprint"],
+            state=state,
+            selected_node_ids={n.id for n in state.graph.nodes},
+            relevant_semantic_node_ids=set(retrieval.relevant_semantic_node_ids),
+            relevant_grounding_node_ids=set(retrieval.relevant_grounding_node_ids),
+            resolved_join_paths=(),
+            choice_points=points,
+            selected_by_point=selected,
             explanations=explanations,
-            answers=all_answers,
-            representations=(),
-            relevance=(),
+            answers=answers,
+            representations=retrieval.representations,
+            relevance=retrieval.relevance,
+            diagnostic_notes=notes,
         )
 
     async def _terminal_from_selections(
@@ -274,35 +262,49 @@ class OnlineContextCapability:
             question=question,
             dialect=dialect,
             choice_points=tuple(
-                point for point in choice_points if point.choice_point_id in selected_by_point
+                point
+                for point in choice_points
+                if point.choice_point_id in selected_by_point
             ),
             answers=answers,
         )
-        graph, trace = project_graph(
+        projected, trace = project_graph_state(
+            schema=self._ontology_schema,
             state=state,
             selected_node_ids=selected_node_ids,
             choice_points=choice_points,
             selected_by_point=selected_by_point,
             explanations=explanations,
         )
+        graph = projected.graph
         query_example_selection = select_query_examples(
             graph=state.graph,
             relevant_asset_ids=set(relevant_semantic_node_ids),
             example_index=self._query_example_index,
             top_k=self._query_example_top_k,
         )
+        from cortex.capabilities.online_context.output.projection import (
+            guidance_selection_refs,
+        )
+
+        confirmed_refs, unselected_refs = guidance_selection_refs(
+            choice_points, selected_by_point
+        )
         downstream_guidance = build_downstream_guidance(
             question=question,
             initial_sql=initial_sql,
             graph=graph,
+            confirmed_graph_refs=confirmed_refs,
+            unselected_graph_refs=unselected_refs,
             relevant_semantic_node_ids=relevant_semantic_node_ids,
             relevant_grounding_node_ids=relevant_grounding_node_ids,
-            excluded_alternative_ids={ref for item in trace for ref in item.removed_graph_refs},
+            excluded_alternative_ids={
+                ref for item in trace for ref in item.removed_graph_refs
+            },
             interaction_guidance=synthesis.interaction_guidance,
             resolved_guidance_content=synthesis.guidance_content,
             resolved_join_paths=tuple(resolved_join_paths),
             query_examples=query_example_selection.examples,
-            conflicts=state.node_conflicts,
         )
         query_example_notes = (
             (
@@ -313,8 +315,15 @@ class OnlineContextCapability:
             else ()
         )
         custom = bool(explanations)
+        unresolved = tuple(
+            p.choice_point_id
+            for p in choice_points
+            if p.choice_point_id not in selected_by_point
+        )
         return OnlineContextResult(
-            status="completed_with_custom_guidance" if custom else "completed",
+            status="completed_with_unresolved"
+            if unresolved
+            else ("completed_with_custom_guidance" if custom else "completed"),
             question=question,
             initial_sql=initial_sql,
             graph_state_fingerprint=fingerprint,
@@ -328,7 +337,9 @@ class OnlineContextCapability:
             representations=representations,
             relevance=relevance,
             choice_points=choice_points,
-            processed_retrieved_subgraph=graph,
+            processed_graph_state=projected,
+            retrieved_graph_state=state,
+            unresolved_choice_point_ids=unresolved,
             interaction_guidance=synthesis.interaction_guidance,
             downstream_guidance=downstream_guidance,
             projection_trace=trace,
@@ -363,22 +374,6 @@ def _questions(points) -> tuple[InteractionQuestion, ...]:
     )
 
 
-def _read_only_sql_or_none(sql: str | None, dialect: str) -> str | None:
-    text = (sql or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = sqlglot.parse(text, read=dialect or None)
-    except (sqlglot.errors.ParseError, ValueError):
-        return None
-    if len(parsed) != 1:
-        return None
-    tree = parsed[0]
-    if not isinstance(tree, (expressions.Select, expressions.Union)):
-        return None
-    return text
-
-
 def _selection_maps(choice_points, answers):
     by_question = {answer.question_id: answer for answer in answers}
     selected_by_point = {}
@@ -393,15 +388,13 @@ def _selection_maps(choice_points, answers):
     return selected_by_point, explanations
 
 
-def _protected(item) -> bool:
-    return bool({"question_exact", "initial_sql_exact"} & set(item.channels))
-
-
 def _conflict_ids(state: GraphState) -> tuple[str, ...]:
-    return tuple(sorted(item.node_id for item in state.node_conflicts))
+    return tuple(sorted(item.id for item in state.conflict_nodes))
 
 
-def _diagnostics(representations, relevance, points, *, notes=(), presented_questions=0):
+def _diagnostics(
+    representations, relevance, points, *, notes=(), presented_questions=0
+):
     return OnlineContextDiagnostics(
         recalled_documents=len(representations),
         relevant_documents=sum(item.status == "relevant" for item in relevance),

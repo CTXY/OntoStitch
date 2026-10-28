@@ -5,88 +5,37 @@ ontology_sql_query:
 
     # About Rule
     Adhere to the following rules:
-    - Use evidence in this order: the task identifies requested meanings and runtime values;
-      applicable ontology assets define how covered meanings must be implemented; Schema Nodes
-      provide physical structure; independent reasoning handles only requirements not covered by
-      an asset. Once an asset matches the task, do not reject, weaken, reverse, or reinterpret it
-      because another reading of the task seems more natural.
-    - Before writing SQL, build an internal checklist of every applicable Concept, Metric, and
-      Generation Rule. A supporting Table, Column, Dimension Value, or dependency Node does not by
-      itself create a query requirement. Return SQL only; do not output the checklist.
+    - Use evidence in this order: the task identifies requested meanings and runtime values; applicable ontology assets define how covered meanings must be implemented; Schema Nodes provide physical structure; independent reasoning handles only requirements not covered by an asset. Once an asset matches the task, do not reject, weaken, reverse, or reinterpret it because another reading of the task seems more natural.
+    - Before writing SQL, build an internal checklist of every applicable Concept, Metric, and Generation Rule. A supporting Table, Column, Dimension Value, or dependency Node does not by itself create a query requirement. Return SQL only; do not output the checklist.
     - Strictly follow the syntax and function conventions of {dialect}, including identifier quoting, date/time functions, type casts, and pagination. Do not mix syntax from other SQL dialects.
     - If examples or ontology expressions use a different dialect, preserve their business meaning but rewrite them as valid {dialect} SQL.
     - Use one SQL query to complete the task.
     - Use only tables and fields represented by table and column Nodes in graph_nodes.
-    - Distinguish ontology Node IDs from physical SQL identifiers. A Node `id` such as
-      `table.orders` is a graph identifier; emit the physical relation named by that Table Node's
-      properties (for example `table_name`) and the supplied schema. Never copy the ontology
-      namespace prefix `table.` or `column.` into SQL unless the database schema explicitly contains
-      that qualifier.
+    - Distinguish ontology Node IDs from physical SQL identifiers. A Node `id` such as `table.orders` is a graph identifier; emit the physical relation named by that Table Node's properties (for example `table_name`) and the supplied schema. Never copy the ontology namespace prefix `table.` or `column.` into SQL unless the database schema explicitly contains that qualifier.
     - Use graph_nodes and graph_relationships together to resolve business concepts, metrics, dimensions, Concept mappings, generation rules, and joins. Treat each supplied join_paths entry as one complete connection candidate: choose a path using the task and any applicable Generation Rule, use every ON condition of that path, and do not combine edges from competing paths or apply every retrieved join edge.
-    - Use the task to decide which supplied semantic assets apply. Once selected, its contract is
-      mandatory for the meaning it covers, together with every dependency needed to execute it.
-    - For a direct Concept mapping, first select one complete target that matches the requested
-      meaning. Alternative targets are alternatives: never combine predicates from different
-      targets to construct one binding.
-    - Target selection and source placement are different decisions. Apply a selected target only
-      in the source scope named by its physical expression. Never copy that predicate into a
-      different source merely because it has a similarly named field, is joined on the same key,
-      or contributes to the same Metric. A task may require separately applicable targets in
-      their respective source subqueries; this does not make their predicates one combined target.
-    - Treat a Concept target's sql_expression as its complete binding contract. Use maps_to_value or maps_to_column to select the target; owner Columns accompanying a maps_to_value endpoint are physical support, not extra alternatives.
-    - When a selected Concept matches a requested business term, its target is authoritative for
-      that term. Do not replace a stored target with a similarly named Column or recompute it from
-      other data. Apply later filtering, MIN/MAX, or ranking to the bound target.
-      A same literal on a different source is not equivalent: if the selected target is
-      `trans.k_symbol = 'SIPO'`, do not use `"order".k_symbol = 'SIPO'`; join the selected
-      source to the requested entity instead.
-    - Resolve Dimension Values and Concept bindings through maps_to_value, maps_to_column, and value_of relationships in the supplied subgraph.
+    - Use the task to decide which supplied semantic assets apply. Once selected, its contract is mandatory for the meaning it covers, together with every dependency needed to execute it.
+    - For a direct Concept mapping, first select one complete target that matches the requested meaning. Alternative targets are alternatives: never combine predicates from different targets to construct one binding.
+    - Target selection and source placement are different decisions. Apply a selected target only in the source scope named by its physical expression. Never copy that predicate into a different source merely because it has a similarly named field, is joined on the same key, or contributes to the same Metric. A task may require separately applicable targets in their respective source subqueries; this does not make their predicates one combined target.
+    - Treat a Concept target's sql_expression as its complete implementation. All references are physical dependencies connected by grounded_on edges with the same target_id. Preserve the complete target; do not combine different targets or infer logical alternatives from reference types.
+    - When a selected Concept matches a requested business term, its target is authoritative for that term. Do not replace a stored target with a similarly named Column or recompute it from other data. Apply later filtering, MIN/MAX, or ranking to the bound target. A same literal on a different source is not equivalent: if the selected target is `trans.k_symbol = 'SIPO'`, do not use `"order".k_symbol = 'SIPO'`; join the selected source to the requested entity instead.
+    - Resolve Concept physical dependencies through grounded_on with target_id, and Dimension Value ownership through value_of in the supplied subgraph.
     - Use Metric depends_on and grounded_on edges only to retrieve its semantic and physical closure. Read the Metric expression and matched plan for formula, intrinsic filter, operation order, and source-local implementation; do not infer those roles from an edge type.
-    - Apply relevant Metric definitions, required intrinsic filters, joins, and Concept mappings
-      from the supplied subgraph exactly; they are not optional hints.
-    - Resolve each measure explicitly requested by the task to the best matching Metric using its
-      name, aliases, description, pattern, and grounded physical field meaning. Do not substitute a
-      different measure merely because it is reachable through a retrieved rule or dependency.
+    - Apply relevant Metric definitions, required intrinsic filters, joins, and Concept mappings from the supplied subgraph exactly; they are not optional hints.
+    - Resolve each measure explicitly requested by the task to the best matching Metric using its name, aliases, description, pattern, and grounded physical field meaning. Do not substitute a different measure merely because it is reachable through a retrieved rule or dependency.
     - When using a metric, inspect its sql_generation_plans and select the plan whose application matches the task.
-    - When the task explicitly defines a requested result as a composition of named operands,
-      first resolve each named operand through its own applicable Concept or Metric contract, then
-      compose those resolved values exactly as requested. A similarly named derived Metric is not
-      applicable when its expression omits, replaces, or changes any explicitly named operand's
-      authoritative definition. Do not let the shorter derived label override the task's more
-      specific operand composition.
-    - Treat the selected Metric expression as the authoritative formula. Preserve every operation,
-      reference, constant, and NULL policy. Do not substitute a different aggregation or derived
-      operation, and do not omit an operation because its reference is a raw Column.
-    - A selected Concept predicate restricts the rows of the source where that target is applied.
-      Apply it before aggregates, rankings, or limits over that source population when the task
-      requires the Concept there. A CASE, FILTER, or intrinsic predicate inside one Metric only
-      scopes that Metric's inputs; it never satisfies or replaces a separately applicable Concept
-      predicate in that same source. Do not extrapolate either predicate to another source.
+    - When the task explicitly defines a requested result as a composition of named operands, first resolve each named operand through its own applicable Concept or Metric contract, then compose those resolved values exactly as requested. A similarly named derived Metric is not applicable when its expression omits, replaces, or changes any explicitly named operand's authoritative definition. Do not let the shorter derived label override the task's more specific operand composition.
+    - Treat the selected Metric expression as the authoritative formula. Preserve every operation, reference, constant, and NULL policy. Do not substitute a different aggregation or derived operation, and do not omit an operation because its reference is a raw Column.
+    - A selected Concept predicate restricts the rows of the source where that target is applied. Apply it before aggregates, rankings, or limits over that source population when the task requires the Concept there. A CASE, FILTER, or intrinsic predicate inside one Metric only scopes that Metric's inputs; it never satisfies or replaces a separately applicable Concept predicate in that same source. Do not extrapolate either predicate to another source.
     - Treat the matched plan's applicable steps as mandatory guidance, and do not omit or contradict them.
     - If no application matches, do not force a plan; follow the metric definition and other relevant ontology constraints.
-    - Keep generation rule triggers, condition, action, and reason distinct. A
-      retrieved Generation Rule is applicable only when the task actually satisfies its triggers
-      and condition; retrieval presence alone is not applicability evidence. A rule must not
-      introduce or replace a measure that the task did not request. Once its condition matches,
-      execute its complete action. Do not omit, replace, reorder, or partially apply required
-      behavior. Treat `Required behavior` as mandatory and `Avoid behavior` as prohibited SQL
-      behavior, not as explanatory text. Use reason only to understand the observable difference.
+    - Keep generation rule triggers, condition, action, and reason distinct. A retrieved Generation Rule is applicable only when the task actually satisfies its triggers and condition; retrieval presence alone is not applicability evidence. A rule must not introduce or replace a measure that the task did not request. Once its condition matches, execute its complete action. Do not omit, replace, reorder, or partially apply required behavior. Treat `Required behavior` as mandatory and `Avoid behavior` as prohibited SQL behavior, not as explanatory text. Use reason only to understand the observable difference.
     - If example Nodes are present, use them only as references. Do not copy fields, filters, or joins unavailable in the subgraph.
-    - If error is provided, correct the SQL while preserving every applicable ontology contract.
-      Error feedback and an alternative reading of the task cannot override an applicable asset.
+    - If error is provided, correct the SQL while preserving every applicable ontology contract. Error feedback and an alternative reading of the task cannot override an applicable asset.
     - Pay attention to field data types, time ranges, aggregation grain, and join conditions.
-    - Project every dimension the task explicitly requests as a breakdown or grouping, even when
-      that dimension is also filtered to one value. A filter alone does not require projection.
-    - Build the final projection by matching each requested output term to its selected Concept or
-      Metric. Project that exact binding; do not replace an identifier with a name or label by
-      convention. Do not add Columns used only to filter, join, group, order, or identify an
-      intermediate row.
+    - Project every dimension the task explicitly requests as a breakdown or grouping, even when that dimension is also filtered to one value. A filter alone does not require projection.
+    - Build the final projection by matching each requested output term to its selected Concept or Metric. Project that exact binding; do not replace an identifier with a name or label by convention. Do not add Columns used only to filter, join, group, order, or identify an intermediate row.
     - Do not invent business definitions, tables, columns, joins, or rules absent from the supplied subgraph.
-    - Before returning SQL, check every applicable semantic asset against the internal checklist:
-      use every Concept's matching complete target in its own source scope; preserve every Metric
-      expression operation and applicable plan step; execute every matching Generation Rule's
-      Required behavior; and remove every matching Rule's Avoid behavior. If any contract is
-      missing or contradicted, revise the SQL before returning it.
+    - Before returning SQL, check every applicable semantic asset against the internal checklist: use every Concept's matching complete target in its own source scope; preserve every Metric expression operation and applicable plan step; execute every matching Generation Rule's Required behavior; and remove every matching Rule's Avoid behavior. If any contract is missing or contradicted, revise the SQL before returning it.
 
     # About Input
     The user will provide you with {input_keys}, which you can use for writing or correcting the SQL.
@@ -98,3 +47,10 @@ ontology_sql_query:
     {information_str}
 
     [no prose][output result Only]
+
+# Graph relation contract: references are authoring anchors only. The supplied
+# graph edges are the authoritative connections. Custom edge_type names require
+# no schema registration. Edges with reference_origin=default or explicit are
+# definition dependencies even when the label differs from grounded_on/depends_on.
+# Use each relation's properties and description; custom names alone do not imply
+# executable JOIN behavior. target_id scopes a Concept relation to its target.

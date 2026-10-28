@@ -15,7 +15,6 @@ from cortex.schema import (
     GraphState,
     NodeMergeConflict,
     SchemaDefinition,
-    validate_graph_space,
     validate_graph_state,
 )
 
@@ -32,41 +31,41 @@ def render_graph_html(
 ) -> str:
     """Render one validated GraphSpace as a self-contained interactive HTML page."""
 
-    validated_graph = GraphSpace.model_validate(graph.model_dump(mode="python"))
-    validated_conflicts = tuple(
-        NodeMergeConflict.model_validate(item.model_dump(mode="python"))
-        for item in node_conflicts
-    )
+    # Legacy argument is imported once; rendering uses the same inline nodes.
+    payload = {"graph": graph.model_dump(mode="python")}
+    if node_conflicts:
+        payload["node_conflicts"] = [
+            c.model_dump(mode="python") for c in node_conflicts
+        ]
+    state = GraphState.model_validate(payload)
+    validated_graph = state.graph
     validated_schema = SchemaDefinition.model_validate(schema.model_dump(mode="python"))
-    if validated_conflicts:
-        validate_graph_state(
-            GraphState(graph=validated_graph, node_conflicts=validated_conflicts),
-            validated_schema,
-        )
-    else:
-        validate_graph_space(validated_graph, validated_schema)
+    validate_graph_state(state, validated_schema)
     payload = {
         "meta": {
             "nodes": len(validated_graph.nodes),
             "edges": len(validated_graph.edges),
-            "conflicts": len(validated_conflicts),
+            "conflicts": len(state.conflict_nodes),
             "core_node_limit": _CORE_NODE_LIMIT,
             "node_type_labels": {
-                node_type.id: node_type.name for node_type in validated_schema.node_types
+                node_type.id: node_type.name
+                for node_type in validated_schema.node_types
             },
             "edge_type_labels": {
-                edge_type.id: edge_type.name for edge_type in validated_schema.edge_types
+                edge_type.id: edge_type.name
+                for edge_type in validated_schema.edge_types
             },
         },
         "graph": validated_graph.model_dump(mode="json"),
-        "node_conflicts": [item.model_dump(mode="json") for item in validated_conflicts],
     }
     embedded_data = _safe_script_json(payload)
     replacements = {
         "TITLE": html.escape(title, quote=True),
         "DATA": embedded_data,
     }
-    return _PLACEHOLDER_RE.sub(lambda match: replacements[match.group(1)], _HTML_TEMPLATE)
+    return _PLACEHOLDER_RE.sub(
+        lambda match: replacements[match.group(1)], _HTML_TEMPLATE
+    )
 
 
 def write_graph_html_from_json(
@@ -85,19 +84,17 @@ def write_graph_html_from_json(
         raise ValueError(f"{source_path}: invalid JSON: {exc}") from exc
     except OSError as exc:
         raise ValueError(f"unable to read graph JSON {source_path}: {exc}") from exc
-    node_conflicts = ()
-    if isinstance(payload, dict) and "graph" in payload:
-        node_conflicts = tuple(payload.get("node_conflicts") or ())
-        payload = payload["graph"]
+    if isinstance(payload, dict) and payload.get("relevant_graph") is not None:
+        payload = payload["relevant_graph"]
+    elif isinstance(payload, dict) and "graph" in payload:
+        payload = {
+            key: payload[key] for key in ("graph", "node_conflicts") if key in payload
+        }
     try:
-        graph = GraphSpace.model_validate(payload)
+        state = GraphState.model_validate(payload)
     except ValidationError as exc:
-        raise ValueError(f"{source_path}: invalid GraphSpace: {exc}") from exc
-    try:
-        conflicts = tuple(NodeMergeConflict.model_validate(item) for item in node_conflicts)
-    except ValidationError as exc:
-        raise ValueError(f"{source_path}: invalid node conflicts: {exc}") from exc
-    content = render_graph_html(graph, schema, title=title, node_conflicts=conflicts)
+        raise ValueError(f"{source_path}: invalid graph: {exc}") from exc
+    content = render_graph_html(state.graph, schema, title=title)
     return _atomic_write_text(Path(target), content)
 
 
@@ -137,7 +134,6 @@ def _atomic_write_text(target: Path, content: str) -> Path:
 
 
 # Interactive Canvas graph presentation adapted from the earlier Wiki projection.
-# ruff: noqa: E501
 _HTML_TEMPLATE = r"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -163,7 +159,7 @@ h1{margin:0;color:#f3f4f6;font-size:16px;line-height:1.35}h2{margin:16px 0 8px;c
 </div>
 <script>
 const DATA=__CORTEX_DATA__;
-const graph=DATA.graph,nodeConflicts=DATA.node_conflicts||[],conflictById=new Map(nodeConflicts.map(item=>[item.node_id,item])),nodeLabels=DATA.meta.node_type_labels||{},edgeLabels=DATA.meta.edge_type_labels||{},coreLimit=DATA.meta.core_node_limit||460;
+const graph=DATA.graph,nodeConflicts=graph.nodes.filter(node=>node.merge_status==='conflict'),conflictById=new Map(nodeConflicts.map(item=>[item.id,item])),nodeLabels=DATA.meta.node_type_labels||{},edgeLabels=DATA.meta.edge_type_labels||{},coreLimit=DATA.meta.core_node_limit||460;
 const fixedPalette={table:'#5f8fc4',column:'#8797aa',dimension_value:'#58aebe',metric:'#c58d45',generation_rule:'#c77888',example:'#8d78c5',knowledge_unit:'#8797aa',concept:'#58aebe',entity:'#5598bd',event:'#c77888',process:'#8d78c5',rule:'#c58d45',theme:'#7d8fd1',domain:'#5fa8a0'};
 function stableHash(value){let h=2166136261;for(const c of String(value)){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return h>>>0}
 function colorForType(value){if(fixedPalette[value])return fixedPalette[value];return`hsl(${stableHash(value)%360} 38% 56%)`}
@@ -193,8 +189,8 @@ function drawArrow(a,b,active){const dx=b.x-a.x,dy=b.y-a.y,distance=Math.hypot(d
 function draw(){const particleById=new Map(particles.map(node=>[node.id,node])),small=particles.length<=40;ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);ctx.save();ctx.translate(transform.x,transform.y);ctx.scale(transform.k,transform.k);for(const edge of visibleEdges){const a=particleById.get(edge.source),b=particleById.get(edge.target);if(!a||!b)continue;const active=selected&&(edge.source===selected||edge.target===selected);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle=active?'rgba(199,210,254,.95)':small?'rgba(167,139,250,.62)':'rgba(148,163,184,.28)';ctx.lineWidth=(active?2:small?1.25:.8)/transform.k;ctx.stroke();drawArrow(a,b,active);if(active||small){ctx.font=`600 ${9/Math.sqrt(transform.k)}px -apple-system,"PingFang SC",sans-serif`;ctx.textAlign='center';ctx.lineWidth=3/transform.k;ctx.strokeStyle='#090a0f';ctx.fillStyle='#c4b5fd';const x=(a.x+b.x)/2,y=(a.y+b.y)/2,label=short(edgeLabel(edge.edge_type),12);ctx.strokeText(label,x,y);ctx.fillText(label,x,y)}}for(const node of particles){const active=node.id===selected,over=node.id===hover;ctx.beginPath();ctx.arc(node.x,node.y,active?node.r+2:over?node.r+1:node.r,0,Math.PI*2);ctx.fillStyle=colorForType(node.node_type);ctx.globalAlpha=active?1:.9;ctx.fill();ctx.globalAlpha=1;ctx.strokeStyle=node.mergeStatus==='conflict'?'#ff6f91':active?'#fff':'rgba(255,255,255,.28)';ctx.lineWidth=(node.mergeStatus==='conflict'?2.6:active?1.5:.7)/transform.k;ctx.stroke()}const labelLimit=small?Infinity:focused?80:24,labelIds=Number.isFinite(labelLimit)?new Set([...particles].sort(rank).slice(0,labelLimit).map(node=>node.id)):null;for(const node of particles){const active=node.id===selected,over=node.id===hover;if(!active&&!over&&labelIds&&!labelIds.has(node.id))continue;const size=active?13:over?11:10;ctx.font=`${active?650:560} ${size/Math.sqrt(transform.k)}px -apple-system,"PingFang SC",sans-serif`;ctx.textAlign='center';ctx.lineWidth=3/transform.k;ctx.strokeStyle='#090a0f';ctx.fillStyle=node.mergeStatus==='conflict'?'#ff9aae':active?'#fff':'#d5d9e3';const label=short(node.name,active?34:24),y=node.y+node.r+11/transform.k;ctx.strokeText(label,node.x,y);ctx.fillText(label,node.x,y)}ctx.restore()}
 function renderResults(){const rows=allNodes.filter(matches).sort((a,b)=>query?searchScore(b)-searchScore(a):rank(a,b)).slice(0,12);document.getElementById('results').innerHTML=rows.map(node=>`<button class="row ${node.id===selected?'active':''}" data-id="${esc(node.id)}"><strong>${esc(node.name)}</strong><span>${esc(typeLabel(node.node_type))} · ${node.degree} relations · ${node.mergeStatus.toUpperCase()}</span></button>`).join('')||'<div class="empty">没有匹配节点</div>';document.querySelectorAll('.row').forEach(element=>element.onclick=()=>selectNode(element.dataset.id))}
 function propertyCard(title,value){if(value==null||(Array.isArray(value)&&!value.length)||(typeof value==='object'&&!Array.isArray(value)&&!Object.keys(value).length))return'';return`<h2>${esc(title)}</h2><div class="card"><pre>${esc(pretty(value))}</pre></div>`}
-function conflictPoints(conflict){if(!conflict)return'';const points=(conflict.conflict_points||[]).map(point=>{const choices=(point.choices||[]).map((choice,index)=>`<div class="card"><b>Choice ${index+1}</b><p>${esc(choice.statement)}</p><small>Alternatives: ${esc((choice.alternative_ids||[]).join(', '))}</small>${(choice.source_case_ids||[]).length?`<small>Cases: ${esc(choice.source_case_ids.join(', '))}</small>`:''}</div>`).join('');return`<div class="card conflict-record"><b>${esc(point.point_id)} · ${esc(point.aspect)}</b><p>${esc(point.description||point.impact||'')}</p>${choices}</div>`}).join('');return`<h2>Difference Points · ${(conflict.conflict_points||[]).length}</h2>${points||'<div class="empty">暂无可用 Difference Point</div>'}`}
-function conflictAudit(node,conflict){if(!conflict)return'';const canonical=`<details class="card"><summary>Canonical Conflict Node · ${esc(node.id)}</summary><pre>${esc(pretty(node))}</pre></details>`,alternatives=conflict.alternatives.map((item,index)=>`<details class="card"><summary>Alternative ${index+1} · ${esc(item.content.name||item.alternative_id)}</summary><small>${esc(item.alternative_id)}</small><pre>${esc(pretty({content:item.content,sources:item.sources}))}</pre></details>`).join('');return`<h2>完整 Nodes · ${conflict.alternatives.length+1}</h2>${canonical}${alternatives}`}
+function conflictPoints(conflict){if(!conflict)return'';const points=(conflict.conflict_points||[]).map(point=>{const choices=(point.choices||[]).map((choice,index)=>`<div class="card"><b>Choice ${index+1}</b><p>${esc(choice.statement)}</p><small>Alternatives: ${esc((choice.alternative_ids||[]).join(', '))}</small></div>`).join('');return`<div class="card conflict-record"><b>${esc(point.point_id)} · ${esc(point.aspect)}</b><p>${esc(point.description||'')}</p>${choices}</div>`}).join('');return`<h2>Difference Points · ${(conflict.conflict_points||[]).length}</h2>${points||'<div class="empty">暂无可用 Difference Point</div>'}`}
+function conflictAudit(node,conflict){if(!conflict)return'';const canonical=`<details class="card"><summary>Common Node Content · ${esc(node.id)}</summary><pre>${esc(pretty(node))}</pre></details>`,alternatives=conflict.alternatives.map((item,index)=>`<details class="card"><summary>Alternative ${index+1} · ${esc(item.overrides.name||item.alternative_id)}</summary><small>${esc(item.alternative_id)}</small><pre>${esc(pretty({overrides:item.overrides,sources:item.sources}))}</pre></details>`).join('');return`<h2>公共内容与候选差异 · ${conflict.alternatives.length}</h2>${canonical}${alternatives}`}
 function renderDetail(){const node=byId.get(selected),element=document.getElementById('detail');if(!node){element.innerHTML='<div class="empty">选择一个节点查看内容</div>';return}const conflict=conflictById.get(node.id),relations=[...(adj.get(node.id)||[])].sort((a,b)=>edgeLabel(a.edge.edge_type).localeCompare(edgeLabel(b.edge.edge_type))||String(a.id).localeCompare(String(b.id))),relationCards=relations.map(row=>{const other=byId.get(row.id),edge=row.edge,direction=row.out?'→ ':'← ',details={id:edge.id,...edge.properties,...((edge.sources||[]).length?{sources:edge.sources}:{})};return`<button class="card relation" data-id="${esc(other.id)}"><b>${esc(direction+other.name)}</b><p>${esc(edgeLabel(edge.edge_type))} · ${esc(edge.edge_type)}</p><small>${esc(short(pretty(details),260))}</small></button>`}).join(''),ordinaryDetails=conflict?'':`${node.description?`<h2>描述</h2><p class="summary">${esc(node.description)}</p>`:''}${propertyCard('Aliases',node.aliases)}${propertyCard('Tags',node.tags)}${propertyCard('Properties',node.properties)}${propertyCard('Sources',node.sources)}`;element.innerHTML=`<div class="node-head"><i style="background:${colorForType(node.node_type)}"></i><strong>${esc(node.name)}</strong></div><div class="tags"><span class="tag">${esc(typeLabel(node.node_type))}</span><span class="tag ${node.mergeStatus}">${node.mergeStatus.toUpperCase()}</span><span class="tag">${node.degree} 条关系</span><span class="tag">${esc(node.id)}</span>${conflict?`<span class="tag">${conflict.alternatives.length} Alternatives</span>`:''}</div>${conflictPoints(conflict)}${ordinaryDetails}<h2>关系</h2>${relationCards||'<div class="empty">暂无关系</div>'}${conflictAudit(node,conflict)}`;element.querySelectorAll('.relation').forEach(button=>button.onclick=()=>selectNode(button.dataset.id))}
 function updateControls(){document.getElementById('overview').classList.toggle('active',!focused&&!showAll);document.getElementById('all').classList.toggle('active',!focused&&showAll);document.getElementById('focus').classList.toggle('active',focused)}
 function selectNode(id){if(!byId.has(id))return;selected=id;focused=true;resetTransform();compute()}

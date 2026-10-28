@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from cortex.schema import GraphSpace
+from cortex.schema import GraphSpace, GraphState
 
 
 class RetrieveGraphSourceError(ValueError):
@@ -16,13 +16,16 @@ class FileSystemGraphSpaceLoader:
     """Load GraphSpace from a SQL Training run directory or JSON file."""
 
     def load(self, source: str | Path) -> GraphSpace:
+        """Compatibility loader for callers that explicitly request a plain GraphSpace."""
+        return self.load_state(source).graph
+
+    def load_state(self, source: str | Path) -> GraphState:
         source_path = Path(source).expanduser().resolve()
         if source_path.is_dir():
-            graph_path = source_path / "graph.json"
+            # Prefer the complete snapshot when both artifact forms exist.
+            graph_path = source_path / "graph_state.json"
             if not graph_path.is_file():
-                # Merge artifacts publish GraphState as graph_state.json. The
-                # retrieval boundary only needs its public GraphSpace.
-                graph_path = source_path / "graph_state.json"
+                graph_path = source_path / "graph.json"
         else:
             graph_path = source_path
         if not graph_path.is_file():
@@ -36,10 +39,8 @@ class FileSystemGraphSpaceLoader:
             raise RetrieveGraphSourceError(
                 f"unable to read retrieve DB graph source {graph_path}: {exc}"
             ) from exc
-        if isinstance(payload, dict) and "graph" in payload:
-            payload = payload["graph"]
         try:
-            return GraphSpace.model_validate(payload)
+            return GraphState.model_validate(payload)
         except ValidationError as exc:
             raise RetrieveGraphSourceError(
                 f"retrieve DB graph source is not a valid GraphSpace: {graph_path}: {exc}"

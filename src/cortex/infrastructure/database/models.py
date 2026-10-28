@@ -16,6 +16,7 @@ class TableProfile(BaseModel):
     display_name: str | None = None
     description: str | None = None
     primary_keys: list[str] = Field(default_factory=list)
+    unique_keys: list[list[str]] = Field(default_factory=list)
     foreign_keys: list[str] = Field(default_factory=list)
 
     @property

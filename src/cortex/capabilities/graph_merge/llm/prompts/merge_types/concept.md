@@ -1,11 +1,7 @@
 # Concept requirements for integration
 
-A Concept denotes one atomic business object, category, state, qualifier or directly stored meaning,
-including a stored numeric value. Calculating a named quantity belongs to Metric; applying a SQL
-operation belongs to GenerationRule. Shared parent categories do not make sofas and chairs identical.
+A Concept denotes one atomic business object, category, state, qualifier or directly stored meaning, including a stored numeric value. Calculating a named quantity belongs to Metric; applying a SQL operation belongs to GenerationRule. Shared parent categories do not make sofas and chairs identical.
 
-Preserve the same meaning and complete executable grounding. Equivalent bindings may deduplicate;
-compatible source-local realizations stay as complete targets. Contradictory mappings require separate
-positions or unresolved preservation. Each target must independently realize the Concept, not merely
-provide an operand of another quantity. Keep SQL bindings qualified and their physical references
-complete. Do not add invented predicates or make query grouping/selection part of Concept meaning.
+Preserve the same meaning and complete executable grounding. A target is one complete physical expression and may reference several tables; preserve required correlation/join conditions within its sql_expression and all physical references. Do not split one multi-table implementation into separate incomplete targets. Each target must independently realize the Concept, not merely provide an operand of another quantity. Keep SQL bindings qualified. Do not add invented predicates or make query grouping/selection part of Concept meaning.
+
+Multiple targets do not automatically mean equivalence, conjunction or disjunction. Deduplicate identical bindings conservatively; combine different complete bindings only when source evidence supports their compatibility. The current target structure has no external-context selector. If choosing a target depends on request context or data version that cannot be preserved in existing content unambiguously, keep complete originals unresolved rather than publishing a flat target union. Confirmed competing interpretations require separate complete positions and explicit conflict points. Unknown compatibility is unresolved, not proven semantic conflict. Conditions written only in analysis do not preserve their behavior in the published definition. Never add Concept/target fields to express these distinctions.

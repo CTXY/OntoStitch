@@ -25,9 +25,17 @@ def validate_existing_physical_graph(graph: GraphSpace) -> None:
     belongs_by_column: dict[str, list[str]] = {}
     value_of_by_value: dict[str, list[str]] = {}
     for edge in graph.edges:
-        if edge.edge_type == "belongs_to":
+        if edge.edge_type == "belongs_to" or (
+            edge.reference_origin is not None
+            and edge.from_node_id in columns
+            and edge.to_node_id in tables
+        ):
             belongs_by_column.setdefault(edge.from_node_id, []).append(edge.to_node_id)
-        elif edge.edge_type == "value_of":
+        elif edge.edge_type == "value_of" or (
+            edge.reference_origin is not None
+            and edge.from_node_id not in columns
+            and edge.to_node_id in columns
+        ):
             value_of_by_value.setdefault(edge.from_node_id, []).append(edge.to_node_id)
     for column_id, column in columns.items():
         table_ref = column.properties.get("table_ref")
@@ -58,7 +66,20 @@ def select_run_assets(
 ) -> tuple[NodeAsset, ...]:
     """Initialize all physical assets once, then emit only new values and semantic assets."""
 
-    values = tuple(assets)
+    # Training examples remain provenance, not NL2SQL graph nodes.
+    values = tuple(
+        asset
+        for asset in assets
+        if asset.node_type
+        in {
+            NodeType.TABLE,
+            NodeType.COLUMN,
+            NodeType.DIMENSION_VALUE,
+            NodeType.CONCEPT,
+            NodeType.METRIC,
+            NodeType.GENERATION_RULE,
+        }
+    )
     if not existing_graph.nodes and not existing_graph.edges:
         return values
     validate_existing_physical_graph(existing_graph)
@@ -66,6 +87,8 @@ def select_run_assets(
     return tuple(
         asset
         for asset in values
-        if asset.node_type not in {NodeType.TABLE, NodeType.COLUMN, NodeType.JOIN_PATH}
-        and not (asset.node_type == NodeType.DIMENSION_VALUE and asset.id in existing_ids)
+        if asset.node_type not in {NodeType.TABLE, NodeType.COLUMN}
+        and not (
+            asset.node_type == NodeType.DIMENSION_VALUE and asset.id in existing_ids
+        )
     )

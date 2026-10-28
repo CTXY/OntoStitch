@@ -127,9 +127,7 @@ def extract_error_analysis_llm_payloads(
     output_model: type[BaseModel]
     if prompt_name == "error_analysis_minimal_repair_action":
         output_model = ErrorAnalysisMinimalRepairActionOutput
-    elif prompt_name == "error_analysis_minimal_repair_ablation":
-        output_model = ErrorAnalysisMinimalRepairAblationOutput
-    elif prompt_name == "error_analysis_minimal_repair_joint_ablation":
+    elif prompt_name == "error_analysis_minimal_repair_ablation" or prompt_name == "error_analysis_minimal_repair_joint_ablation":
         output_model = ErrorAnalysisMinimalRepairAblationOutput
     elif prompt_name == "error_analysis_minimal_repair_review":
         output_model = ErrorAnalysisMinimalRepairReviewOutput

@@ -79,7 +79,9 @@ def _merge_evidence_assessments(
         return second
     if second is None:
         return first
-    explanations = tuple(dict.fromkeys((first.explanation.strip(), second.explanation.strip())))
+    explanations = tuple(
+        dict.fromkeys((first.explanation.strip(), second.explanation.strip()))
+    )
     return CandidateEvidenceAssessment(
         source_types=_union((first.source_types, second.source_types)),
         applicability=(

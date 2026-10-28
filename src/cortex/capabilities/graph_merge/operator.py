@@ -1,34 +1,78 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from contextlib import nullcontext
+from functools import lru_cache
+from importlib.resources import files
+
 from cortex.application.merge_graph import (
     CanonicalIdMapping,
     DiagnosticCode,
     GraphMergeResult,
     MergeDiagnostic,
 )
+from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.edges import (
     normalize_edges,
-    prune_stale_reference_edges,
     remap_property_node_ids,
 )
 from cortex.capabilities.graph_merge.identity import IdentityGrouper
-from cortex.capabilities.graph_merge.mining import BaseGraphMiner
-from cortex.capabilities.graph_merge.models import FinalNodeGroup, IdentityGroupingResult
+from cortex.capabilities.graph_merge.models import (
+    FinalNodeGroup,
+    IdentityGroupingResult,
+    NodeRepresentation,
+    RepresentationRef,
+)
 from cortex.capabilities.graph_merge.normalization import (
-    EdgePropertyMappingKey,
     NodeGroupNormalizerRegistry,
 )
 from cortex.capabilities.graph_merge.reconciliation import NodeGroupReconciler
-from cortex.capabilities.graph_merge.rewrite import GraphRewriteApplier
 from cortex.schema import (
-    GraphNode,
     GraphSpace,
     GraphState,
     InvalidGraphState,
     SchemaDefinition,
-    validate_graph_state,
-    validate_incoming_graph_state,
 )
+from cortex.schema.relationships import is_dependency_edge
+
+PHYSICAL_TYPES = frozenset({"table", "column", "dimension_value"})
+
+
+@lru_cache(maxsize=1)
+def _implementation_fingerprint():
+    root = files("cortex")
+    paths = (
+        "application/ontology_graph.py",
+        "schema/relationships.py",
+        "schema/references.py",
+        "schema/semantic_validation.py",
+        *(
+            f"capabilities/graph_merge/{name}"
+            for name in (
+                "operator.py",
+                "transactions.py",
+                "identity.py",
+                "normalization.py",
+                "edges.py",
+                "models.py",
+                "workflow/run.py",
+                "workflow/group.py",
+                "workflow/context.py",
+                "reconciliation/service.py",
+                "reconciliation/models.py",
+                "reconciliation/materialization.py",
+                "reconciliation/validation.py",
+                "llm/agents.py",
+                "llm/tools.py",
+            )
+        ),
+    )
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.encode())
+        digest.update(root.joinpath(path).read_bytes())
+    return digest.hexdigest()
 
 
 class FinalGraphStateInvalid(InvalidGraphState):
@@ -41,219 +85,515 @@ class GraphMergeOperator:
         *,
         identity_grouper: IdentityGrouper,
         node_reconciler: NodeGroupReconciler,
-        graph_miner: BaseGraphMiner | None = None,
-        rewrite_applier: GraphRewriteApplier | None = None,
+        checkpoint_factory=None,
+        workflow_version: str = "merge-v2-transactions",
         normalizer_registry: NodeGroupNormalizerRegistry | None = None,
     ) -> None:
         self.identity_grouper = identity_grouper
         self.node_reconciler = node_reconciler
-        self.graph_miner = graph_miner
-        self.rewrite_applier = rewrite_applier or GraphRewriteApplier()
+        self.checkpoint_factory = checkpoint_factory
+        self.workflow_version = f"{workflow_version}:{_implementation_fingerprint()}"
         self.normalizer_registry = normalizer_registry or NodeGroupNormalizerRegistry()
 
-    async def merge(
+    def merge(
         self,
         existing: GraphState,
         incoming: GraphState,
         schema: SchemaDefinition,
+        *,
+        run_id: str | None = None,
     ) -> GraphMergeResult:
-        validate_graph_state(existing, schema)
+        from cortex.capabilities.graph_merge.workflow.run import run_merge
+        from cortex.infrastructure.workflow.tracing import merge_tracing
+
+        manager = GraphManager(schema)
+        manager.validate_state(existing)
         _validate_disjoint_ids(existing, incoming)
-        validate_incoming_graph_state(incoming, schema, existing=existing.graph)
+        incoming = manager.prepare_fragment(incoming, existing=existing)
         if not incoming.graph.nodes and not incoming.graph.edges:
             return GraphMergeResult(
-                state=existing,
-                node_mappings=(),
-                edge_mappings=(),
-                diagnostics=(),
+                state=existing, node_mappings=(), edge_mappings=(), diagnostics=()
             )
+        factory = self.checkpoint_factory or (lambda: nullcontext(None))
+        with factory() as saver, merge_tracing():
+            result = run_merge(
+                self, existing, incoming, schema, saver=saver, run_id=run_id
+            )
+        # Completed checkpoint results bypass _merge; validate on every return.
+        manager.validate_state(result.state)
+        return result
 
-        grouping = await self.identity_grouper.group(
-            existing.graph.nodes,
-            incoming.graph.nodes,
-            schema.node_type_index(),
-            {
-                node_type.id: frozenset(schema.effective_node_fields(node_type.id))
-                for node_type in schema.node_types
-            },
+    def group_nodes(self, existing, incoming, schema):
+        from cortex.schema.references import remap_references
+
+        fields = {
+            t.id: frozenset(schema.effective_node_fields(t.id))
+            for t in schema.node_types
+        }
+        physical_groups, mappings = [], {}
+        for node_type in ("table", "column", "dimension_value"):
+            old_nodes = tuple(
+                n for n in existing.graph.nodes if n.node_type == node_type
+            )
+            new_nodes = tuple(
+                n.model_copy(
+                    update={"properties": remap_references(n.properties, mappings)}
+                )
+                for n in incoming.graph.nodes
+                if n.node_type == node_type
+            )
+            grouped = IdentityGrouper(None).group(
+                old_nodes, new_nodes, schema.node_type_index(), fields
+            )
+            physical_groups.extend(grouped.groups)
+            for group in grouped.groups:
+                canonical = self.node_reconciler.canonical_id_for_group(group)
+                mappings.update({m.ref.ref_id: canonical for m in group.members})
+        old_nodes = tuple(
+            n for n in existing.graph.nodes if n.node_type not in PHYSICAL_TYPES
         )
-        grouping = _coalesce_canonical_id_collisions(grouping, self.node_reconciler)
-        historical = {item.node_id: item for item in existing.node_conflicts}
-        nodes = []
-        conflicts = []
-        node_mapping_values = {}
-        canonical_by_ref = {}
-        edge_property_mappings: dict[EdgePropertyMappingKey, object] = {}
-        diagnostics = [_diagnostic(code, "node") for code in grouping.diagnostic_codes]
-        available_nodes = {node.id: node for node in (*existing.graph.nodes, *incoming.graph.nodes)}
+        new_nodes = tuple(
+            n.model_copy(
+                update={"properties": remap_references(n.properties, mappings)}
+            )
+            for n in incoming.graph.nodes
+            if n.node_type not in PHYSICAL_TYPES
+        )
+        old_by_id = {n.id: n for n in old_nodes}
+        alternatives = {
+            c.id: tuple(
+                NodeRepresentation(
+                    ref=RepresentationRef(
+                        origin="existing_alternative", ref_id=a.alternative_id
+                    ),
+                    node_type=old_by_id[c.id].node_type,
+                    content=GraphManager.resolve_alternative(old_by_id[c.id], a),
+                    sources=a.sources,
+                )
+                for a in c.alternatives
+            )
+            for c in existing.conflict_nodes
+        }
+        semantic = self.identity_grouper.group(
+            old_nodes,
+            new_nodes,
+            schema.node_type_index(),
+            fields,
+            existing_alternatives=alternatives,
+        )
+        if semantic.cross_type_replacements:
+            raise FinalGraphStateInvalid(
+                "Cross-type replacement requires separate reviewed type correction"
+            )
+        return _coalesce_canonical_id_collisions(
+            semantic.model_copy(
+                update={"groups": (*physical_groups, *semantic.groups)}
+            ),
+            self.node_reconciler,
+        )
+
+    def begin_merge(self, existing, incoming, schema, grouping):
+        from cortex.capabilities.graph_merge.transactions import apply_merge_state
+
+        mappings = {
+            member.ref.ref_id: self.node_reconciler.canonical_id_for_group(group)
+            for group in grouping.groups
+            for member in group.members
+        }
+        nodes = {n.id: n for n in existing.graph.nodes}
         for group in grouping.groups:
-            normalized = self.normalizer_registry.normalize(group, schema)
-            group = normalized.group
-            edge_property_mappings.update(normalized.edge_property_mappings)
-            dependencies = _dependency_nodes_for_group(
-                group,
-                available_nodes,
-                historical.get(group.existing_node_id),
-                known_conflicts=existing.node_conflicts,
-            )
-            dependency_ids = {node.id for node in dependencies}
-            dependency_conflicts = tuple(
-                item for item in existing.node_conflicts if item.node_id in dependency_ids
-            )
-            extra_context = (
-                {"dependency_conflicts": dependency_conflicts} if dependency_conflicts else {}
-            )
-            reconciled = await self.node_reconciler.reconcile_group(
-                group,
-                schema=schema,
-                dependency_nodes=dependencies,
-                **extra_context,
-                historical_conflict=(
-                    historical.get(group.existing_node_id)
-                    if group.existing_node_id is not None
-                    else None
-                ),
-            )
-            nodes.append(reconciled.node)
-            if reconciled.conflict is not None:
-                conflicts.append(reconciled.conflict)
-            diagnostics.extend(
-                _diagnostic(code, "node", reconciled.node.id)
-                for code in reconciled.diagnostic_codes
-            )
-            for member in group.members:
-                canonical_by_ref[member.ref] = reconciled.node.id
-                if member.ref.origin == "incoming_node":
-                    node_mapping_values[member.ref.ref_id] = reconciled.node.id
-        existing_replacements = {}
-        for loser, winner in grouping.cross_type_replacements:
-            canonical_id = canonical_by_ref.get(winner)
-            if canonical_id is None:
-                raise FinalGraphStateInvalid("cross-type replacement target was not reconciled")
-            canonical_by_ref[loser] = canonical_id
-            if loser.origin == "incoming_node":
-                node_mapping_values[loser.ref_id] = canonical_id
-            else:
-                existing_replacements[loser.ref_id] = canonical_id
-        if set(node_mapping_values) != {node.id for node in incoming.graph.nodes}:
-            raise FinalGraphStateInvalid("node mappings do not cover every incoming node")
-        all_node_mappings = {**existing_replacements, **node_mapping_values}
-        nodes = [
-            node.model_copy(
+            if group.node_type not in PHYSICAL_TYPES:
+                continue
+            if all(m.ref.origin == "existing_node" for m in group.members):
+                continue
+            result = self.node_reconciler.reconcile_group(group, schema=schema)
+            node = result.node.model_copy(
                 update={
                     "properties": remap_property_node_ids(
-                        node.properties,
-                        all_node_mappings,
+                        result.node.properties, mappings
                     )
                 }
             )
-            for node in nodes
-        ]
-
-        edge_result = normalize_edges(
+            nodes[node.id] = node
+        physical_edges = tuple(
+            edge
+            for edge in incoming.graph.edges
+            if mappings.get(edge.from_node_id, edge.from_node_id) in nodes
+            and mappings.get(edge.to_node_id, edge.to_node_id) in nodes
+            and nodes[mappings.get(edge.from_node_id, edge.from_node_id)].node_type
+            in PHYSICAL_TYPES
+            and nodes[mappings.get(edge.to_node_id, edge.to_node_id)].node_type
+            in PHYSICAL_TYPES
+        )
+        normalized = normalize_edges(
             existing=existing.graph.edges,
-            incoming=incoming.graph.edges,
-            nodes=tuple(nodes),
-            node_mappings=all_node_mappings,
-            property_value_mappings=edge_property_mappings,
+            incoming=physical_edges,
+            nodes=tuple(nodes.values()),
+            node_mappings=mappings,
             schema=schema,
         )
-        diagnostics.extend(
-            MergeDiagnostic(
-                code=DiagnosticCode.EDGE_CONTENT_VARIANT,
-                element_kind="edge",
-                element_id=edge_id,
-                message="same edge identity has a distinct content variant",
-            )
-            for edge_id in edge_result.variant_edge_ids
+        candidate = GraphState(
+            graph=GraphSpace(nodes=tuple(nodes.values()), edges=normalized.edges),
         )
-        diagnostics.extend(
-            MergeDiagnostic(
-                code=DiagnosticCode.INVALIDATED_RELATIONSHIP_DROPPED,
-                element_kind="edge",
-                element_id=edge_id,
-                message="relationship is incompatible with the corrected asset type",
-            )
-            for edge_id in edge_result.invalidated_edge_ids
+        manager = GraphManager(schema, existing)
+        working = apply_merge_state(manager, candidate, request_id="merge:physical")
+        return {
+            "working": working.model_dump(mode="json"),
+            "remaining": [
+                g.model_dump(mode="json")
+                for g in grouping.groups
+                if g.node_type not in PHYSICAL_TYPES
+            ],
+            "mappings": mappings,
+            "changed_dependencies": [],
+            "diagnostics": [
+                _diagnostic(c, "node").model_dump(mode="json")
+                for c in grouping.diagnostic_codes
+            ],
+            "edge_mappings": [list(pair) for pair in normalized.mappings],
+            "completed": [],
+            "target_mappings": [],
+        }
+
+    def advance_merge(
+        self,
+        assembly,
+        existing,
+        incoming,
+        schema,
+        *,
+        evidence_items=(),
+        checkpointer=None,
+        run_id=None,
+    ):
+        from cortex.capabilities.graph_merge.transactions import (
+            apply_merge_state,
+            preview_group,
         )
-        conflicts = [
-            conflict.model_copy(
-                update={
-                    "alternatives": tuple(
-                        alternative.model_copy(
-                            update={
-                                "content": remap_property_node_ids(
-                                    alternative.content, all_node_mappings
-                                )
-                            }
-                        )
-                        for alternative in conflict.alternatives
+        from cortex.capabilities.graph_merge.workflow.context import GroupContext
+        from cortex.schema.references import remap_references
+
+        working = GraphState.model_validate(assembly["working"])
+        remaining = [FinalNodeGroup.model_validate(g) for g in assembly["remaining"]]
+        mappings = assembly["mappings"]
+        pending_ids = {
+            self.node_reconciler.canonical_id_for_group(g) for g in remaining
+        }
+        group = next(
+            (
+                g
+                for g in remaining
+                if not _group_dependency_ids(g, working, incoming, mappings)
+                & pending_ids
+            ),
+            None,
+        )
+        if group is None:
+            raise FinalGraphStateInvalid(
+                "Unresolved or cyclic incoming dependency groups; no partial graph published"
+            )
+        original_group = group
+        normalized = self.normalizer_registry.normalize(group, schema)
+        group = normalized.group.model_copy(
+            update={
+                "members": tuple(
+                    m.model_copy(
+                        update={
+                            "content": m.content.model_copy(
+                                update={
+                                    "properties": remap_references(
+                                        m.content.properties, mappings
+                                    )
+                                }
+                            )
+                        }
                     )
+                    for m in normalized.group.members
+                )
+            }
+        )
+        canonical = self.node_reconciler.canonical_id_for_group(group)
+        by_id = {n.id: n for n in working.graph.nodes}
+        dependencies = _group_dependency_ids(group, working, incoming, mappings)
+        changed = set(assembly["changed_dependencies"])
+        conflict_ids = {c.id for c in working.conflict_nodes}
+        force = bool(dependencies & (changed | conflict_ids))
+        untouched = all(m.ref.origin == "existing_node" for m in group.members)
+        input_edges = tuple(
+            edge.model_copy(
+                update={
+                    "properties": {
+                        key: normalized.edge_property_mappings.get(
+                            (
+                                edge.from_node_id,
+                                key,
+                                json.dumps(
+                                    value,
+                                    sort_keys=True,
+                                    ensure_ascii=False,
+                                    separators=(",", ":"),
+                                ),
+                            ),
+                            value,
+                        )
+                        for key, value in edge.properties.items()
+                    }
                 }
             )
-            for conflict in conflicts
-        ]
-        synchronized_edges, dropped_reference_edge_ids = prune_stale_reference_edges(
-            edge_result.edges,
-            tuple(nodes),
-            tuple(conflicts),
+            for edge in incoming.graph.edges
         )
-        diagnostics.extend(
-            MergeDiagnostic(
-                code=DiagnosticCode.STALE_REFERENCE_EDGE_DROPPED,
-                element_kind="edge",
-                element_id=edge_id,
-                message="compiled dependency edge is absent from the canonical reference closure",
-            )
-            for edge_id in dropped_reference_edge_ids
+        manager = GraphManager(schema, working)
+        revision = manager.revision
+        historical = next(
+            (c for c in working.conflict_nodes if c.id == canonical), None
         )
-        state = GraphState(
-            graph=GraphSpace(
-                nodes=tuple(sorted(nodes, key=lambda item: (item.node_type, item.id))),
-                edges=synchronized_edges,
+        reconciled = self.node_reconciler.reconcile_group(
+            group,
+            schema=schema,
+            historical_conflict=historical,
+            dependency_nodes=tuple(
+                n for n in working.graph.nodes if n.id in dependencies
             ),
-            node_conflicts=tuple(sorted(conflicts, key=lambda item: item.node_id)),
+            available_nodes=working.graph.nodes,
+            outgoing_edges=working.graph.edges,
+            evidence_items=evidence_items,
+            checkpointer=checkpointer,
+            run_id=run_id,
+            unchanged_relations=_same_outgoing_relations(
+                original_group, existing, incoming
+            ),
+            force_reconcile=force,
+            existing_state=working,
+            node_mappings=mappings,
+            input_nodes=(*existing.graph.nodes, *incoming.graph.nodes),
+            input_relations=input_edges,
         )
-        if self.graph_miner is not None:
-            mining = await self.graph_miner.propose(state, schema)
-            diagnostics.extend(
-                MergeDiagnostic(
-                    code=DiagnosticCode(item.code),
-                    element_kind="merge",
-                    message=(
-                        item.message
-                        if item.component_id is None
-                        else f"{item.component_id}: {item.message}"
-                    ),
+        if reconciled.consolidation.get("identity_mismatch"):
+            split = []
+            mappings = dict(mappings)
+            for member in original_group.members:
+                singleton = FinalNodeGroup(
+                    group_id=f"{original_group.group_id}:separate:{member.ref.ref_id}",
+                    node_type=original_group.node_type,
+                    existing_node_id=original_group.existing_node_id
+                    if member.ref.origin == "existing_node"
+                    else None,
+                    members=(member,),
                 )
-                for item in mining.diagnostics
+                mappings[member.ref.ref_id] = (
+                    self.node_reconciler.canonical_id_for_group(singleton)
+                )
+                split.append(singleton)
+            return {
+                **assembly,
+                "mappings": mappings,
+                "remaining": [
+                    g.model_dump(mode="json")
+                    for g in (
+                        *split,
+                        *(g for g in remaining if g.group_id != group.group_id),
+                    )
+                ],
+                "diagnostics": [
+                    *assembly["diagnostics"],
+                    MergeDiagnostic(
+                        code=DiagnosticCode.INVALID_SELECTION,
+                        element_kind="node",
+                        element_id=canonical,
+                        message=f"Identity group separated after Assessment: {reconciled.consolidation['identity_mismatch']}",
+                    ).model_dump(mode="json"),
+                ],
+            }
+        context = GroupContext(
+            group=group,
+            schema_definition=schema,
+            existing_state=working,
+            nodes=working.graph.nodes,
+            relations=working.graph.edges,
+            input_relations=input_edges,
+            node_mappings=mappings,
+        )
+        if untouched and not force:
+            updated = working
+        else:
+            candidate = preview_group(context, reconciled)
+            updated = apply_merge_state(
+                manager, candidate, request_id=f"merge:{group.group_id}:{revision}"
             )
-            rewritten = self.rewrite_applier.apply(state, mining.proposals, schema)
-            state = rewritten.state
-            diagnostics.extend(_diagnostic(code, "merge") for code in rewritten.diagnostic_codes)
-        try:
-            validate_graph_state(state, schema)
-        except InvalidGraphState as exc:
-            raise FinalGraphStateInvalid(str(exc)) from exc
-        node_mappings = tuple(
-            CanonicalIdMapping(input_id=input_id, canonical_id=canonical_id)
-            for input_id, canonical_id in sorted(node_mapping_values.items())
+        previous = by_id.get(canonical)
+        current = next(n for n in updated.graph.nodes if n.id == canonical)
+        current_conflict = next(
+            (c for c in updated.conflict_nodes if c.id == canonical), None
         )
-        dropped_reference_edges = {
-            *dropped_reference_edge_ids,
-            *edge_result.invalidated_edge_ids,
+        if previous != current or historical != current_conflict:
+            changed.add(canonical)
+        diagnostics = list(assembly["diagnostics"])
+        diagnostics.extend(
+            _diagnostic(code, "node", canonical).model_dump(mode="json")
+            for code in reconciled.diagnostic_codes
+        )
+        return {
+            **assembly,
+            "working": updated.model_dump(mode="json"),
+            "remaining": [
+                g.model_dump(mode="json")
+                for g in remaining
+                if g.group_id != group.group_id
+            ],
+            "changed_dependencies": sorted(changed),
+            "diagnostics": diagnostics,
+            "target_mappings": [
+                *assembly["target_mappings"],
+                *[
+                    [list(key), value]
+                    for key, value in normalized.edge_property_mappings.items()
+                ],
+            ],
+            "completed": [
+                *assembly["completed"],
+                {
+                    "group_id": group.group_id,
+                    "node_id": canonical,
+                    "base_revision": revision,
+                    "revision": GraphManager(schema, updated).revision,
+                    "conflict": current_conflict is not None,
+                },
+            ],
         }
-        edge_mappings = tuple(
-            CanonicalIdMapping(input_id=input_id, canonical_id=canonical_id)
-            for input_id, canonical_id in sorted(edge_result.mappings)
-            if canonical_id not in dropped_reference_edges
+
+    def finish_merge(self, assembly, incoming, schema):
+        from cortex.capabilities.graph_merge.transactions import apply_merge_state
+
+        working = GraphState.model_validate(assembly["working"])
+        mappings = assembly["mappings"]
+        if not {n.id for n in incoming.graph.nodes} <= mappings.keys():
+            raise FinalGraphStateInvalid(
+                "node mappings do not cover every incoming node"
+            )
+        normalized = normalize_edges(
+            existing=working.graph.edges,
+            incoming=tuple(
+                e for e in incoming.graph.edges if e.reference_origin is None
+            ),
+            nodes=working.graph.nodes,
+            node_mappings=mappings,
+            property_value_mappings={
+                tuple(key): value for key, value in assembly["target_mappings"]
+            },
+            schema=schema,
         )
+        candidate = working.model_copy(
+            update={
+                "graph": working.graph.model_copy(update={"edges": normalized.edges})
+            }
+        )
+        manager = GraphManager(schema, working)
+        state = apply_merge_state(
+            manager, candidate, request_id="merge:final-relations"
+        )
+        state = state.model_copy(
+            update={
+                "graph": GraphSpace(
+                    nodes=tuple(
+                        sorted(state.graph.nodes, key=lambda n: (n.node_type, n.id))
+                    ),
+                    edges=state.graph.edges,
+                ),
+            }
+        )
+        manager.validate_state(state)
+        diagnostics = [
+            MergeDiagnostic.model_validate(d) for d in assembly["diagnostics"]
+        ]
+        diagnostics.extend(
+            _diagnostic("EDGE_CONTENT_VARIANT", "edge", edge_id)
+            for edge_id in normalized.variant_edge_ids
+        )
+        edge_by_anchor = {}
+        for edge in state.graph.edges:
+            anchor = (
+                edge.edge_type,
+                edge.from_node_id,
+                edge.to_node_id,
+                edge.properties.get("target_id"),
+            )
+            edge_by_anchor.setdefault(anchor, []).append(edge.id)
+        edge_mappings = dict(assembly["edge_mappings"])
+        edge_mappings.update(normalized.mappings)
+        target_mappings = {
+            tuple(key): value for key, value in assembly["target_mappings"]
+        }
+        for edge in incoming.graph.edges:
+            if edge_mappings.get(edge.id) in {item.id for item in state.graph.edges}:
+                continue
+            target_id = target_mappings.get(
+                (
+                    edge.from_node_id,
+                    "target_id",
+                    json.dumps(
+                        edge.properties.get("target_id"),
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                ),
+                edge.properties.get("target_id"),
+            )
+            key = (
+                edge.edge_type,
+                mappings.get(edge.from_node_id, edge.from_node_id),
+                mappings.get(edge.to_node_id, edge.to_node_id),
+                target_id,
+            )
+            if len(edge_by_anchor.get(key, ())) == 1:
+                edge_mappings[edge.id] = edge_by_anchor[key][0]
+            elif len(edge_by_anchor.get(key, ())) > 1:
+                diagnostics.append(
+                    MergeDiagnostic(
+                        code=DiagnosticCode.EDGE_CONTENT_VARIANT,
+                        element_kind="edge",
+                        element_id=edge.id,
+                        message="Multiple final edge variants; no ambiguous canonical mapping reported",
+                    )
+                )
+        final_ids = {e.id for e in state.graph.edges}
         return GraphMergeResult(
             state=state,
-            node_mappings=node_mappings,
-            edge_mappings=edge_mappings,
+            node_mappings=tuple(
+                CanonicalIdMapping(input_id=n.id, canonical_id=mappings[n.id])
+                for n in sorted(incoming.graph.nodes, key=lambda n: n.id)
+            ),
+            edge_mappings=tuple(
+                CanonicalIdMapping(input_id=key, canonical_id=value)
+                for key, value in sorted(edge_mappings.items())
+                if value in final_ids
+            ),
             diagnostics=tuple(diagnostics),
         )
+
+    def _merge(
+        self,
+        existing,
+        incoming,
+        schema,
+        *,
+        grouping,
+        evidence_items=(),
+        checkpointer=None,
+        run_id=None,
+    ):
+        assembly = self.begin_merge(existing, incoming, schema, grouping)
+        while assembly["remaining"]:
+            assembly = self.advance_merge(
+                assembly,
+                existing,
+                incoming,
+                schema,
+                evidence_items=evidence_items,
+                checkpointer=checkpointer,
+                run_id=run_id,
+            )
+        return self.finish_merge(assembly, incoming, schema)
 
 
 def _validate_disjoint_ids(existing: GraphState, incoming: GraphState) -> None:
@@ -267,48 +607,38 @@ def _validate_disjoint_ids(existing: GraphState, incoming: GraphState) -> None:
         raise InvalidGraphState("existing and incoming element ids must be disjoint")
 
 
-def _dependency_nodes_for_group(
-    group: FinalNodeGroup,
-    available_nodes: dict[str, GraphNode],
-    historical_conflict=None,
-    *,
-    known_conflicts=(),
-) -> tuple[GraphNode, ...]:
-    """Return the bounded transitive node closure referenced by this identity group."""
+def _group_dependency_ids(group, working, incoming, mappings):
+    from cortex.schema.references import content_reference_ids
 
-    member_ids = {member.ref.ref_id for member in group.members}
-    pending = [
-        ref
-        for member in group.members
-        for ref in member.content.properties.get("references", ())
-        if isinstance(ref, str)
-    ]
-    if historical_conflict is not None:
-        pending.extend(
-            ref
-            for alternative in historical_conflict.alternatives
-            for ref in alternative.content.get("properties", {}).get("references", ())
-            if isinstance(ref, str)
-        )
-    dependencies: dict[str, GraphNode] = {}
-    conflicts_by_id = {item.node_id: item for item in known_conflicts}
-    while pending:
-        reference = pending.pop()
-        if reference in member_ids or reference in dependencies:
-            continue
-        node = available_nodes.get(reference)
-        if node is None:
-            continue
-        dependencies[reference] = node
-        if reference in conflicts_by_id:
-            pending.extend(
-                ref
-                for alternative in conflicts_by_id[reference].alternatives
-                for ref in alternative.content.get("properties", {}).get("references", ())
-                if isinstance(ref, str)
+    outgoing = {}
+    for edge in (*working.graph.edges, *incoming.graph.edges):
+        if is_dependency_edge(edge):
+            owner = mappings.get(edge.from_node_id, edge.from_node_id)
+            outgoing.setdefault(owner, set()).add(
+                mappings.get(edge.to_node_id, edge.to_node_id)
             )
-        pending.extend(ref for ref in node.properties.get("references", ()) if isinstance(ref, str))
-    return tuple(dependencies[node_id] for node_id in sorted(dependencies))
+    for node in (*working.graph.nodes, *incoming.graph.nodes):
+        owner = mappings.get(node.id, node.id)
+        outgoing.setdefault(owner, set()).update(
+            mappings.get(ref, ref) for ref in content_reference_ids(node.properties)
+        )
+    owners = {mappings.get(m.ref.ref_id, m.ref.ref_id) for m in group.members}
+    if group.existing_node_id:
+        owners.add(group.existing_node_id)
+    pending = [ref for owner in owners for ref in outgoing.get(owner, ())]
+    pending.extend(
+        mappings.get(ref, ref)
+        for m in group.members
+        for ref in content_reference_ids(m.content.properties)
+    )
+    dependencies = set()
+    while pending:
+        ref = pending.pop()
+        if ref in owners or ref in dependencies:
+            continue
+        dependencies.add(ref)
+        pending.extend(outgoing.get(ref, ()))
+    return dependencies
 
 
 def _coalesce_canonical_id_collisions(
@@ -319,25 +649,33 @@ def _coalesce_canonical_id_collisions(
 
     by_canonical_id: dict[str, list[FinalNodeGroup]] = {}
     for group in grouping.groups:
-        by_canonical_id.setdefault(reconciler.canonical_id_for_group(group), []).append(group)
+        by_canonical_id.setdefault(reconciler.canonical_id_for_group(group), []).append(
+            group
+        )
     groups: list[FinalNodeGroup] = []
     for canonical_id, colliding in by_canonical_id.items():
         if len(colliding) == 1:
             groups.append(colliding[0])
             continue
-        existing = [group for group in colliding if group.existing_node_id == canonical_id]
+        existing = [
+            group for group in colliding if group.existing_node_id == canonical_id
+        ]
         if len(existing) != 1:
             raise FinalGraphStateInvalid(
                 f"canonical node id collision cannot be anchored: {canonical_id}"
             )
-        members = {member.ref: member for group in colliding for member in group.members}
+        members = {
+            member.ref: member for group in colliding for member in group.members
+        }
         anchor = existing[0]
         groups.append(
             anchor.model_copy(
                 update={
                     "members": tuple(
                         members[ref]
-                        for ref in sorted(members, key=lambda item: (item.origin, item.ref_id))
+                        for ref in sorted(
+                            members, key=lambda item: (item.origin, item.ref_id)
+                        )
                     )
                 }
             )
@@ -354,3 +692,21 @@ def _diagnostic(code: str, kind: str, element_id: str | None = None) -> MergeDia
         element_id=element_id,
         message=code.replace("_", " ").lower(),
     )
+
+
+def _same_outgoing_relations(group, existing, incoming):
+    member_ids = {m.ref.ref_id for m in group.members}
+    signatures = []
+    for member in group.members:
+        signatures.append(
+            frozenset(
+                (
+                    e.edge_type,
+                    "self" if e.to_node_id in member_ids else e.to_node_id,
+                    json.dumps(e.properties, sort_keys=True, ensure_ascii=False),
+                )
+                for e in (*existing.graph.edges, *incoming.graph.edges)
+                if e.from_node_id == member.ref.ref_id
+            )
+        )
+    return all(value == signatures[0] for value in signatures)

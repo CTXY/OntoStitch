@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from cortex.capabilities.sql_training.artifacts import Workspace, write_jsonl
-from cortex.capabilities.sql_training.prepare import load_qa_sql_records, standardize_qa_sql_records
+from cortex.capabilities.sql_training.prepare import (
+    load_qa_sql_records,
+    standardize_qa_sql_records,
+)
 from cortex.capabilities.sql_training.runtime_config import SqlTrainingRuntimeConfig
 
 

@@ -7,7 +7,7 @@ from typing import Any
 from cortex.capabilities.sql_training.artifacts.jsonl import (
     read_json,
     read_jsonl,
-    write_json,
+    write_json_atomic,
     write_jsonl,
 )
 from cortex.capabilities.sql_training.core.enums import NodeType
@@ -17,7 +17,6 @@ from cortex.schema import GraphEdge
 ASSET_GROUP_FILES: dict[NodeType, str] = {
     NodeType.TABLE: "tables.json",
     NodeType.COLUMN: "columns.json",
-    NodeType.JOIN_PATH: "join_paths.json",
     NodeType.DIMENSION_VALUE: "dimension_values.json",
     NodeType.METRIC: "metrics.json",
     NodeType.CONCEPT: "concepts.json",
@@ -33,8 +32,8 @@ CANDIDATE_GROUP_FILES: dict[NodeType, str] = {
     NodeType.DIMENSION_VALUE: "dimension_values.candidates.jsonl",
     NodeType.TABLE: "tables.candidates.jsonl",
     NodeType.COLUMN: "columns.candidates.jsonl",
-    NodeType.JOIN_PATH: "join_paths.candidates.jsonl",
 }
+
 
 class Workspace:
     def __init__(self, root: str | Path):
@@ -68,16 +67,20 @@ class Workspace:
         ]:
             path.mkdir(parents=True, exist_ok=True)
 
-    def write_draft_assets(self, asset_type: NodeType, assets: Iterable[NodeAsset]) -> Path:
+    def write_draft_assets(
+        self, asset_type: NodeType, assets: Iterable[NodeAsset]
+    ) -> Path:
         self.init()
         path = self.draft_dir / ASSET_GROUP_FILES[asset_type]
-        return write_json(path, [_serialize_asset_row(asset) for asset in assets])
+        return write_json_atomic(
+            path, [_serialize_asset_row(asset) for asset in assets]
+        )
 
     def write_catalog_edges(self, edges: Iterable[GraphEdge]) -> Path:
         """Persist physical relationships as edges, never as node assets."""
 
         self.init()
-        return write_json(
+        return write_json_atomic(
             self.draft_dir / "catalog_edges.json",
             [edge.model_dump(mode="json") for edge in edges],
         )
@@ -95,19 +98,27 @@ class Workspace:
         path = self.draft_dir / ASSET_GROUP_FILES[asset_type]
         path.unlink(missing_ok=True)
 
-    def append_candidates(self, asset_type: NodeType, assets: Iterable[NodeAsset]) -> Path:
+    def append_candidates(
+        self, asset_type: NodeType, assets: Iterable[NodeAsset]
+    ) -> Path:
         self.init()
         path = self.candidates_dir / CANDIDATE_GROUP_FILES[asset_type]
-        return write_jsonl(path, [_serialize_asset_row(asset) for asset in assets], append=True)
+        return write_jsonl(
+            path, [_serialize_asset_row(asset) for asset in assets], append=True
+        )
 
-    def write_candidates(self, asset_type: NodeType, assets: Iterable[NodeAsset]) -> Path:
+    def write_candidates(
+        self, asset_type: NodeType, assets: Iterable[NodeAsset]
+    ) -> Path:
         self.init()
         path = self.candidates_dir / CANDIDATE_GROUP_FILES[asset_type]
         return write_jsonl(path, [_serialize_asset_row(asset) for asset in assets])
 
     def read_candidates(self, asset_type: NodeType) -> list[NodeAsset]:
         path = self.candidates_dir / CANDIDATE_GROUP_FILES[asset_type]
-        return [_parse_asset_row(row, expected_type=asset_type) for row in read_jsonl(path)]
+        return [
+            _parse_asset_row(row, expected_type=asset_type) for row in read_jsonl(path)
+        ]
 
     def write_source_evidence(self, rows: Iterable[dict[str, Any]]) -> Path:
         self.init()
@@ -136,7 +147,7 @@ class Workspace:
         """Read the canonical assets visible in the permanent training workspace.
 
         Case-local semantic outputs and candidate files are intentionally outside this API.
-        Stable case outputs enter Graph Merge through ``NodeGraphAdapter`` after Train returns;
+        Stable case outputs enter Graph Merge through graph generation and GraphManager after Train returns;
         this method contains only permanent workspace assets.
         """
         return self.read_all_draft_assets()

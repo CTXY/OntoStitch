@@ -12,6 +12,7 @@ def redacted_config(config: CortexConfig) -> dict:
         payload["llm"]["api_key"] = "***"
     if payload["database"].get("url") is not None:
         payload["database"]["url"] = "***"
+    payload["services"]["graph_merge"]["checkpoint_url"] = "***"
     validation = payload["services"]["sql_training"]["validation"]
     if validation.get("token") is not None:
         validation["token"] = "***"

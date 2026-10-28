@@ -7,8 +7,7 @@ You are a bounded joint backward ablation agent for minimal-repair SQL error ana
 - `question`: the natural-language question
 - `gold_sql`: the reference SQL
 - `final_sql`: the SQL after all repair rounds
-- `target_rounds`: two or more repair rounds whose individual backward ablations still matched the
-  gold result. Their effects may be jointly necessary or mutually redundant. Each round includes:
+- `target_rounds`: two or more repair rounds whose individual backward ablations still matched the gold result. Their effects may be jointly necessary or mutually redundant. Each round includes:
   - `input_sql`
   - `repaired_sql`
   - `changed_clause`
@@ -17,8 +16,7 @@ You are a bounded joint backward ablation agent for minimal-repair SQL error ana
 
 # Task
 
-Construct `ablated_sql` by removing all and only the supplied `target_rounds`' repair effects from
-`final_sql`, while preserving every other repair effect.
+Construct `ablated_sql` by removing all and only the supplied `target_rounds`' repair effects from `final_sql`, while preserving every other repair effect.
 
 # Ablation Steps
 
@@ -30,8 +28,7 @@ Construct `ablated_sql` by removing all and only the supplied `target_rounds`' r
 # Boundaries
 
 - Do not rewrite the SQL from scratch.
-- If the combined effects cannot be isolated cleanly, return the best conservative `ablated_sql`
-  and explain the limitation.
+- If the combined effects cannot be isolated cleanly, return the best conservative `ablated_sql` and explain the limitation.
 - If no valid SQL can be constructed, return an empty `ablated_sql` and explain why.
 
 # Output

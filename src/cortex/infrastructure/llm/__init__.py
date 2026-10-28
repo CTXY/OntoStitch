@@ -3,6 +3,7 @@ from cortex.infrastructure.llm.parsing import (
     build_prompt_messages,
     response_text,
     run_llm_extraction,
+    run_llm_extraction_sync,
 )
 from cortex.infrastructure.llm.providers import (
     LLMConfigurationError,
@@ -26,6 +27,7 @@ __all__ = [
     "create_embedding_model",
     "response_text",
     "run_llm_extraction",
+    "run_llm_extraction_sync",
 ]
 from cortex.infrastructure.llm.embedding_cache import (
     DocumentVectorCache,

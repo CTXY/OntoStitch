@@ -1,5 +1,8 @@
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
-from cortex.bootstrap.knowledge import build_sql_training_service
+from cortex.bootstrap.knowledge import (
+    build_sql_extraction,
+    build_sql_training_service,
+)
 from cortex.bootstrap.online_context import (
     OnlineContextEvaluationPool,
     OnlineContextEvaluationWorker,
@@ -23,5 +26,6 @@ __all__ = [
     "build_retrieve_db_cli_runtime",
     "build_retrieve_db_service",
     "build_simulated_user_agent",
+    "build_sql_extraction",
     "build_sql_training_service",
 ]

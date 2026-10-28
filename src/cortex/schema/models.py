@@ -29,7 +29,9 @@ class SchemaFamily(StrEnum):
 
 def validate_identifier(value: str, *, label: str) -> str:
     if not _IDENTIFIER_RE.fullmatch(value):
-        raise ValueError(f"{label} must use lowercase letters, numbers, and underscores: {value!r}")
+        raise ValueError(
+            f"{label} must use lowercase letters, numbers, and underscores: {value!r}"
+        )
     return value
 
 
@@ -80,7 +82,9 @@ class IdentityPolicy(_SchemaModel):
             if path in {"name", "description", "aliases", "tags"}:
                 continue
             if path.startswith("properties.") and path.count(".") == 1:
-                validate_identifier(path.removeprefix("properties."), label="identity field")
+                validate_identifier(
+                    path.removeprefix("properties."), label="identity field"
+                )
                 continue
             raise ValueError(f"unsupported identity field path: {path!r}")
         return value
@@ -110,7 +114,9 @@ class NodeType(_SchemaModel):
 
     @field_validator("fields")
     @classmethod
-    def validate_fields(cls, value: dict[str, FieldDefinition]) -> dict[str, FieldDefinition]:
+    def validate_fields(
+        cls, value: dict[str, FieldDefinition]
+    ) -> dict[str, FieldDefinition]:
         for field_id in value:
             validate_identifier(field_id, label="NodeType field")
         return value
@@ -147,7 +153,9 @@ class EdgeType(_SchemaModel):
 
     @field_validator("fields")
     @classmethod
-    def validate_fields(cls, value: dict[str, FieldDefinition]) -> dict[str, FieldDefinition]:
+    def validate_fields(
+        cls, value: dict[str, FieldDefinition]
+    ) -> dict[str, FieldDefinition]:
         for field_id in value:
             validate_identifier(field_id, label="EdgeType field")
         return value
@@ -188,10 +196,7 @@ class SchemaDefinition(_SchemaModel):
                     raise ValueError(
                         f"EdgeType {edge_type.id!r} identity references unknown field {field_id!r}"
                     )
-                if not field.required:
-                    raise ValueError(
-                        f"EdgeType {edge_type.id!r} identity field {field_id!r} must be required"
-                    )
+                # Optional identity qualifiers use an absent value for unqualified edges.
         return self
 
     def node_type_index(self) -> dict[str, NodeType]:
@@ -206,7 +211,9 @@ class SchemaDefinition(_SchemaModel):
             raise ValueError("duplicate EdgeType id")
         return result
 
-    def is_node_type_compatible(self, actual_type_id: str, expected_type_id: str) -> bool:
+    def is_node_type_compatible(
+        self, actual_type_id: str, expected_type_id: str
+    ) -> bool:
         node_types = self.node_type_index()
         current = node_types[actual_type_id]
         while True:
@@ -243,15 +250,20 @@ class SchemaDefinition(_SchemaModel):
                         f"NodeType {current.id!r} extends unknown NodeType {current.extends!r}"
                     )
                 if current.id in seen:
-                    raise ValueError(f"NodeType inheritance cycle includes {current.id!r}")
+                    raise ValueError(
+                        f"NodeType inheritance cycle includes {current.id!r}"
+                    )
                 seen.add(current.id)
                 parent = node_types[current.extends]
                 if parent.family != current.family:
-                    raise ValueError("NodeType inheritance cannot cross schema families")
+                    raise ValueError(
+                        "NodeType inheritance cannot cross schema families"
+                    )
                 for field_id, field in current.fields.items():
                     inherited = parent.fields.get(field_id)
                     if inherited and (
-                        inherited.type != field.type or (inherited.required and not field.required)
+                        inherited.type != field.type
+                        or (inherited.required and not field.required)
                     ):
                         raise ValueError(
                             f"NodeType {current.id!r} incompatibly overrides field {field_id!r}"

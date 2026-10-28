@@ -13,12 +13,12 @@ def _normalize_strings(value: Any, *, lowercase: bool = False) -> list[str]:
     if value is None:
         return []
     if not isinstance(value, list):
-        raise ValueError("value must be a list of strings")
+        raise ValueError("value must be a list of strings")  # noqa: TRY004 - Pydantic field feedback.
     normalized: list[str] = []
     seen: set[str] = set()
     for item in value:
         if not isinstance(item, str):
-            raise ValueError("value must be a list of strings")
+            raise ValueError("value must be a list of strings")  # noqa: TRY004 - Pydantic field feedback.
         text = re.sub(r"\s+", " ", item.strip())
         if lowercase:
             text = text.lower()
@@ -67,9 +67,13 @@ class SqlTrigger(NodeModel):
     @classmethod
     def _normalize_columns(cls, value: list[str]) -> list[str]:
         columns = list(dict.fromkeys(normalize_refs(value)))
-        invalid = [reference for reference in columns if not reference.startswith("column.")]
+        invalid = [
+            reference for reference in columns if not reference.startswith("column.")
+        ]
         if invalid:
-            raise ValueError(f"SQL trigger columns must be canonical Column IDs: {invalid}")
+            raise ValueError(
+                f"SQL trigger columns must be canonical Column IDs: {invalid}"
+            )
         return columns
 
     @field_validator("operations", mode="before")
@@ -156,31 +160,6 @@ class GenerationRuleProperties(NodeModel):
         if not isinstance(value, str) or not value.strip():
             raise ValueError("condition, action, and reason must be non-empty strings")
         return value.strip()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_relations(cls, value: Any) -> Any:
-        """Read legacy relation declarations while keeping references as the only write shape."""
-
-        if not isinstance(value, dict) or "relations" not in value:
-            return value
-        normalized = dict(value)
-        relations = normalized.pop("relations") or []
-        references = list(normalized.get("references") or [])
-        if not isinstance(relations, list):
-            raise ValueError("legacy Generation Rule relations must be a list")
-        for relation in relations:
-            if not isinstance(relation, dict) or relation.get("relation") not in {
-                "applies_to",
-                "grounded_on",
-            }:
-                raise ValueError("legacy Generation Rule relation is invalid")
-            node_id = relation.get("node_id")
-            if not isinstance(node_id, str):
-                raise ValueError("legacy Generation Rule relation requires node_id")
-            references.append(node_id)
-        normalized["references"] = references
-        return normalized
 
     @model_validator(mode="after")
     def _validate_retrieval_signal(self) -> GenerationRuleProperties:

@@ -11,7 +11,11 @@ requires-python = ">=3.11"
 dependencies = [
   "click>=8.1",
   "httpx>=0.27,<1",
+  "langchain>=1.4,<1.5",
+  "langgraph>=1.2,<2",
+  "langgraph-checkpoint-sqlite>=3,<4",
   "langchain-openai>=1.0,<2",
+  "langsmith>=0.10,<1",
   "openpyxl>=3.1",
   "pydantic>=2.11,<3",
   "pymysql>=1.1",
@@ -19,6 +23,10 @@ dependencies = [
   "sqlalchemy>=2.0",
   "sqlglot>=25.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=9,<10", "ruff>=0.17,<0.18"]
+web = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "python-multipart>=0.0.9,<1", "python-dotenv>=1,<2"]
 
 [project.scripts]
 cortex = "cortex.cli.main:main"
@@ -31,5 +39,6 @@ artifacts = [
   "src/cortex/capabilities/sql_training/**/*.yaml",
   "src/cortex/capabilities/online_context/**/*.md",
   "src/cortex/capabilities/retrieve_db/**/*.md",
+  "src/cortex/capabilities/query_signals/**/*.md",
   "src/cortex/schema/roots/*.json",
 ]

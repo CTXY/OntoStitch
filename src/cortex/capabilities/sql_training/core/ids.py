@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -32,7 +33,19 @@ def parse_node_id(value: str) -> NodeId:
 
 def make_node_id(node_type: NodeType | str, *parts: Any) -> str:
     normalized_type = NodeType(node_type)
-    name = ".".join(stable_slug(part) for part in parts if _has_node_id_part(part))
+    if normalized_type == NodeType.DIMENSION_VALUE:
+        if len(parts) != 3 or parts[2] is None:
+            raise ValueError(
+                "Dimension Value identity requires table, column and value"
+            )
+        # SQL literals and stored values share a lexical identity; preserve all
+        # whitespace/punctuation. Owner/value collisions are checked at merge.
+        digest = hashlib.sha256(
+            json.dumps(str(parts[2]), ensure_ascii=False).encode()
+        ).hexdigest()
+        name = f"{stable_slug(parts[0])}.{stable_slug(parts[1])}.v_{digest}"
+    else:
+        name = ".".join(stable_slug(part) for part in parts if _has_node_id_part(part))
     if not name:
         raise ValueError("NODE ID requires at least one non-empty name part")
     return str(NodeId(type=normalized_type, name=name))
@@ -49,7 +62,9 @@ def make_generation_rule_id(
     rule_name_text = re.sub(r"\s+", " ", str(rule_name or "").strip())
     if not rule_name_text:
         raise ValueError("Generation Rule CREATE requires a stable behavior name")
-    return make_node_id(NodeType.GENERATION_RULE, stable_slug(rule_name_text, with_hash=True))
+    return make_node_id(
+        NodeType.GENERATION_RULE, stable_slug(rule_name_text, with_hash=True)
+    )
 
 
 def stable_slug(text: Any, *, max_length: int = 120, with_hash: bool = False) -> str:
@@ -88,7 +103,9 @@ def normalize_ref(value: Any, *, expected_type: NodeType | str | None = None) ->
     text = value.strip()
     parsed = parse_node_id(text)
     if expected_type is not None and parsed.type != NodeType(expected_type):
-        raise ValueError(f"reference {text!r} must be a {NodeType(expected_type).value} reference")
+        raise ValueError(
+            f"reference {text!r} must be a {NodeType(expected_type).value} reference"
+        )
     return text
 
 

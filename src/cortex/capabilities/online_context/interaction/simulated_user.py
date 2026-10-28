@@ -69,22 +69,36 @@ class SimulatedUserAgent:
                 "interaction_questions": [
                     item.model_dump(mode="json") for item in interaction_questions
                 ],
-                "tentative_answers": [item.model_dump(mode="json") for item in tentative_answers],
-                "prior_questions": [item.model_dump(mode="json") for item in prior_questions],
-                "prior_answers": [item.model_dump(mode="json") for item in prior_answers],
+                "tentative_answers": [
+                    item.model_dump(mode="json") for item in tentative_answers
+                ],
+                "prior_questions": [
+                    item.model_dump(mode="json") for item in prior_questions
+                ],
+                "prior_answers": [
+                    item.model_dump(mode="json") for item in prior_answers
+                ],
             },
             repair_with_context=True,
         )
         expected_ids = tuple(item.question_id for item in interaction_questions)
         invalid_ids = result.invalid_question_ids
-        if len(invalid_ids) != len(set(invalid_ids)) or not set(invalid_ids) <= set(expected_ids):
+        if len(invalid_ids) != len(set(invalid_ids)) or not set(invalid_ids) <= set(
+            expected_ids
+        ):
             raise ValueError("simulator review returned invalid question IDs")
         if invalid_ids:
-            raise ValueError("simulator rejected non-local Slots: " + ", ".join(invalid_ids))
+            raise ValueError(
+                "simulator rejected non-local Slots: " + ", ".join(invalid_ids)
+            )
         actual_ids = tuple(item.question_id for item in result.answers)
         if actual_ids != expected_ids:
-            raise ValueError("simulator review must return every current answer once and in order")
-        for answer, interaction_question in zip(result.answers, interaction_questions, strict=True):
+            raise ValueError(
+                "simulator review must return every current answer once and in order"
+            )
+        for answer, interaction_question in zip(
+            result.answers, interaction_questions, strict=True
+        ):
             _validate_answer(answer, interaction_question)
         return result.answers
 
@@ -148,7 +162,8 @@ def _parse_sql(sql: str, dialect: str):
 
 def _aliases(tree) -> dict[str, str]:
     return {
-        table.alias_or_name.casefold(): table.name for table in tree.find_all(expressions.Table)
+        table.alias_or_name.casefold(): table.name
+        for table in tree.find_all(expressions.Table)
     }
 
 

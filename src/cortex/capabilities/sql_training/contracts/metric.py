@@ -152,6 +152,7 @@ def validate_metric_contract(
     if placeholders != ref_names:
         raise ValueError(
             "Metric expression placeholders must exactly match expression.refs keys; "
+            "use ${key} in expression.expr and bare key in expression.refs (not {key}, <key>, or bare SQL names); "
             f"missing_refs={sorted(placeholders-ref_names)}, "
             f"unused_refs={sorted(ref_names-placeholders)}"
         )

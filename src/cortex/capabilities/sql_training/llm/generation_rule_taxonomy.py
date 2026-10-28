@@ -47,6 +47,17 @@ DEFAULT_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
         ),
     ),
     GenerationRuleTaxonomyItem(
+        intent_class="population_average_comparison",
+        description="Compare an already-complete stored meaning or Metric with its average over the same requested population; keep averaging and comparison in the Rule, not a helper Metric.",
+        reference_implementations=(
+            GenerationRuleReferenceImplementation(
+                "population_average_threshold",
+                ("<value> > (SELECT AVG(<value>) FROM <source> WHERE <population_filter>)",),
+                "Compute the average over the requested population before testing each row against it; equivalent CTE or window implementations are allowed.",
+            ),
+        ),
+    ),
+    GenerationRuleTaxonomyItem(
         intent_class="count_aggregation",
         description="Return the number of requested entities or values.",
         reference_implementations=(
@@ -175,6 +186,12 @@ DEFAULT_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
             ),
         ),
     ),
+)
+
+
+# Direct discovers request operations; join decisions remain available to Repair.
+DIRECT_GENERATION_RULE_TAXONOMY = tuple(
+    item for item in DEFAULT_GENERATION_RULE_TAXONOMY if item.intent_class != "joinability"
 )
 
 

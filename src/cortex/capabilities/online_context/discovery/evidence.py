@@ -4,7 +4,9 @@ import re
 
 from cortex.application.online_context import ChoicePoint
 from cortex.capabilities.online_context.discovery.models import IntraNodeOutput
-from cortex.capabilities.online_context.graph.context import without_untrusted_dimension_values
+from cortex.capabilities.online_context.graph.context import (
+    without_untrusted_dimension_values,
+)
 from cortex.schema import GraphState
 
 
@@ -26,13 +28,17 @@ def _validate_slots(
                 f"candidates={[(o.option_id, o.statement, o.graph_refs) for o in slot.options]}"
             )
         for option in slot.options:
-            if not option.graph_refs and not (option.initial_sql_evidence or "").strip():
+            if (
+                not option.graph_refs
+                and not (option.initial_sql_evidence or "").strip()
+            ):
                 raise ValueError("candidate has no Graph or Initial SQL evidence")
             unknown_refs = set(option.graph_refs) - graph_ids
             invalid_refs = unknown_refs
             if invalid_refs:
                 raise ValueError(
-                    "candidate references unknown Graph objects: " + ", ".join(sorted(invalid_refs))
+                    "candidate references unknown Graph objects: "
+                    + ", ".join(sorted(invalid_refs))
                 )
             if option.initial_sql_evidence and not _sql_contains(
                 initial_sql, option.initial_sql_evidence
@@ -45,8 +51,8 @@ def _validate_slots(
 def _graph_ids(state: GraphState) -> set[str]:
     result = {node.id for node in state.graph.nodes}
     result.update(edge.id for edge in state.graph.edges)
-    for conflict in state.node_conflicts:
-        result.add(conflict.node_id)
+    for conflict in state.conflict_nodes:
+        result.add(conflict.id)
         for alternative in conflict.alternatives:
             result.add(alternative.alternative_id)
         for point in conflict.conflict_points:
@@ -62,7 +68,7 @@ def _graph_ref_payloads(state: GraphState) -> dict[str, object]:
         node.id: node.model_dump(mode="json") for node in state.graph.nodes
     }
     result.update((edge.id, edge.model_dump(mode="json")) for edge in state.graph.edges)
-    for conflict in state.node_conflicts:
+    for conflict in state.conflict_nodes:
         for alternative in conflict.alternatives:
             result[alternative.alternative_id] = {
                 "alternative": alternative.model_dump(mode="json"),
@@ -106,41 +112,47 @@ def _analysis_graph_payload(state: GraphState) -> dict:
     payload = without_untrusted_dimension_values(state).model_dump(mode="json")
     for node in payload["graph"]["nodes"]:
         node.pop("sources", None)
-        for index, target in enumerate(_dict_list(node["properties"].get("targets")), 1):
+        for index, target in enumerate(
+            _dict_list(node["properties"].get("targets")), 1
+        ):
             target["graph_ref"] = _target_ref(node["id"], index)
             target.pop("id", None)
     for edge in payload["graph"]["edges"]:
         edge.pop("sources", None)
-    for conflict in payload["node_conflicts"]:
-        for alternative in conflict["alternatives"]:
-            alternative.pop("sources", None)
-            alternative["content"].pop("sources", None)
     return payload
 
 
 def _residual_graph_payload(graph_payload: dict, intra: IntraNodeOutput) -> dict:
-    payload = {
-        "graph": {
-            "nodes": [
-                {**node, "properties": dict(node["properties"])}
-                for node in graph_payload["graph"]["nodes"]
-            ],
-            "edges": list(graph_payload["graph"]["edges"]),
-        },
-        "node_conflicts": list(graph_payload["node_conflicts"]),
-    }
+    """A bounded analysis view, never another stored conflict representation."""
+    from copy import deepcopy
+
+    payload = deepcopy(graph_payload)
     handled = {
         assessment.signal_node_id
         for assessment in intra.assessments
         if assessment.status in {"confirmed", "not_conflicting"}
     }
-    payload["node_conflicts"] = [
-        item for item in payload["node_conflicts"] if item["node_id"] not in handled
+    # A handled conflict need not be reanalysed by later discovery stages.
+    # Remove that node from this evidence view rather than detach its metadata.
+    removed = {
+        node["id"]
+        for node in payload["graph"]["nodes"]
+        if node["id"] in handled and node.get("alternatives")
+    }
+    payload["graph"]["nodes"] = [
+        node for node in payload["graph"]["nodes"] if node["id"] not in removed
+    ]
+    payload["graph"]["edges"] = [
+        edge
+        for edge in payload["graph"]["edges"]
+        if edge["from_node_id"] not in removed and edge["to_node_id"] not in removed
     ]
     for node in payload["graph"]["nodes"]:
         if node["id"] in handled and node["node_type"] == "concept":
             node["properties"] = {
-                key: value for key, value in node["properties"].items() if key != "targets"
+                key: value
+                for key, value in node["properties"].items()
+                if key != "targets"
             }
     return payload
 
@@ -167,7 +179,11 @@ def _replace_refs(value, replacements: dict[str, str]):
 
 
 def _dict_list(value: object) -> list[dict]:
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+    return (
+        [item for item in value if isinstance(item, dict)]
+        if isinstance(value, list)
+        else []
+    )
 
 
 def _union(values: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:

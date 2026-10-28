@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cortex.schema.sources import SourceCorpus
+from cortex.application.sources import SourceCorpus
 
 
 class RunStatus(StrEnum):
@@ -52,7 +52,9 @@ class SourceLoadError(ApplicationError):
 
 
 class DocumentLoader(Protocol):
-    def load(self, paths: tuple[Path, ...]) -> SourceCorpus | Awaitable[SourceCorpus]: ...
+    def load(
+        self, paths: tuple[Path, ...]
+    ) -> SourceCorpus | Awaitable[SourceCorpus]: ...
 
 
 __all__ = [

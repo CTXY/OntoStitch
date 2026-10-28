@@ -39,7 +39,11 @@ def select_query_examples(
         source_ids = {
             source_id
             for source in node.sources
-            if (source_id := ((source.case_id or "").strip() or source.source_id.strip()))
+            if (
+                source_id := (
+                    (source.case_id or "").strip() or source.source_id.strip()
+                )
+            )
         }
         for source_id in source_ids:
             support[source_id] += 1
@@ -49,7 +53,8 @@ def select_query_examples(
         sorted(
             source_id
             for source_id in support
-            if source_id not in example_index or not example_index[source_id].question.strip()
+            if source_id not in example_index
+            or not example_index[source_id].question.strip()
         )
     )
     ranked = sorted(

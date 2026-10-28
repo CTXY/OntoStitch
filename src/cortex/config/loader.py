@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import SecretStr
 
 from cortex.config.models import CortexConfig, DatabaseConfig, SQLiteDatabaseConfig
 
@@ -38,6 +39,11 @@ def load_config(path: str | Path = "configs/cortex.yaml") -> CortexConfig:
             "database": _resolve_database(config.database, base),
             "services": config.services.model_copy(
                 update={
+                    "graph_merge": config.services.graph_merge.model_copy(update={
+                        "checkpoint_url": SecretStr("sqlite:///" + str(_resolve_path(
+                            Path(config.services.graph_merge.checkpoint_url.get_secret_value().removeprefix("sqlite:///")), base
+                        )))
+                    }),
                     "online_context": online_context.model_copy(
                         update={
                             "query_example_source_root": _resolve_optional_path(
@@ -90,6 +96,7 @@ def _resolve_optional_path(value: Path | None, base: Path) -> Path | None:
 
 
 def _resolve_database(config: DatabaseConfig, base: Path) -> DatabaseConfig:
+    config = config.model_copy(update={"description_path": _resolve_optional_path(config.description_path, base)})
     if not isinstance(config, SQLiteDatabaseConfig):
         return config
     return config.model_copy(

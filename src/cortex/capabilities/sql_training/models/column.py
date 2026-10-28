@@ -19,6 +19,7 @@ class ColumnStatistics(NodeModel):
 class ColumnProperties(NodeModel):
     references: list[str] = Field(default_factory=list)
     column_name: str
+    source_metadata: dict[str, dict[str, str]] = Field(default_factory=dict)
     data_type: str | None = None
     sample_values: list[Any] = Field(default_factory=list)
     unit: UnitType | None = Field(

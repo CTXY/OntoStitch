@@ -15,66 +15,8 @@ from cortex.capabilities.sql_training.contracts.semantic_mapping import (
 from cortex.capabilities.sql_training.core.enums import NodeType
 from cortex.capabilities.sql_training.core.ids import make_node_id
 from cortex.capabilities.sql_training.models import NodeAsset
-from cortex.capabilities.sql_training.training.repair.plan import CandidateAsset
 
 _SCHEMA_COLUMN_LINE = re.compile(r"(?m)^\s*-\s*([^\n:]+?)\s*:")
-
-
-def validate_candidate_references(
-    candidate: CandidateAsset,
-    *,
-    working_assets: Iterable[NodeAsset],
-    table_schema: Any,
-) -> None:
-    """Validate one Candidate against Working and its own frozen composition.
-
-    Candidate-local validation deliberately cannot see sibling Candidates. This prevents an
-    unaccepted parallel proposal from satisfying another proposal's reference closure.
-    """
-
-    working = {asset.id: asset for asset in working_assets}
-    members = [candidate.asset, *candidate.dependency_assets]
-    member_ids = {asset.id for asset in members}
-    if len(member_ids) != len(members):
-        raise ValueError("candidate composition contains duplicate logical asset IDs")
-    collisions = sorted(member_ids.intersection(working) - {candidate.asset.id})
-    if collisions:
-        raise ValueError(
-            "candidate dependency_assets must be newly created; Working collisions: "
-            f"{collisions}"
-        )
-
-    physical_ids = physical_reference_catalog(table_schema)
-    if not physical_ids and not table_schema:
-        # Some deterministic unit/legacy call sites do not carry a schema snapshot. Preserve
-        # shape validation there; real training always supplies the physical catalog.
-        physical_ids.update(
-            reference
-            for asset in members
-            for reference in _asset_reference_values(asset)
-            if reference.startswith(("table.", "column.", "dimension_value."))
-        )
-    visible_ids = set(working) | member_ids | physical_ids
-    for asset in members:
-        _validate_asset_references(
-            asset,
-            visible_ids=visible_ids,
-            physical_ids=physical_ids,
-            table_schema=table_schema,
-        )
-
-    metrics = [asset for asset in members if asset.node_type == NodeType.METRIC]
-    diagnostics = metric_dependency_diagnostics(
-        [asset for asset in working.values() if asset.node_type == NodeType.METRIC],
-        metrics,
-    )
-    if diagnostics:
-        diagnostic = diagnostics[0]
-        raise ValueError(
-            f"{diagnostic.code}: source={diagnostic.source_metric_id}; "
-            f"targets={list(diagnostic.target_metric_ids)}; "
-            f"cycle={list(diagnostic.cycle_path)}"
-        )
 
 
 def validate_asset_batch_references(
@@ -95,7 +37,14 @@ def validate_asset_batch_references(
     if len(batch_by_id) != len(batch):
         raise ValueError("extracted asset batch contains duplicate logical asset IDs")
 
-    physical_ids = physical_reference_catalog(table_schema)
+    physical_ids = physical_reference_catalog(
+        table_schema,
+        dimension_values=[
+            asset
+            for asset in [*working.values(), *batch]
+            if asset.node_type == NodeType.DIMENSION_VALUE
+        ],
+    )
     if not physical_ids and not table_schema:
         physical_ids.update(
             reference
@@ -126,18 +75,6 @@ def validate_asset_batch_references(
         )
 
 
-def validate_cross_candidate_collisions(candidates: Iterable[CandidateAsset]) -> None:
-    owners: dict[str, str] = {}
-    for candidate in candidates:
-        for asset in [candidate.asset, *candidate.dependency_assets]:
-            previous = owners.setdefault(asset.id, candidate.candidate_id)
-            if previous != candidate.candidate_id:
-                raise ValueError(
-                    "duplicate logical asset ID across candidates: "
-                    f"{asset.id} ({previous}, {candidate.candidate_id})"
-                )
-
-
 def _validate_asset_references(
     asset: NodeAsset,
     *,
@@ -149,23 +86,29 @@ def _validate_asset_references(
         validate_semantic_mapping_candidate_contract(
             asset,
             table_schema=table_schema if isinstance(table_schema, dict) else {},
+            physical_catalog=physical_ids,
         )
         validate_semantic_mapping_schema_grounding(
             asset,
             table_schema=table_schema if isinstance(table_schema, dict) else {},
+            physical_catalog=physical_ids,
         )
         references = {
             reference
             for target in asset.properties.targets
             for reference in target.references
         }
-        invalid = sorted(reference for reference in references if reference not in physical_ids)
+        invalid = sorted(
+            reference for reference in references if reference not in physical_ids
+        )
         if invalid:
             raise ValueError(f"Concept references unresolved physical IDs: {invalid}")
         return
 
     if asset.node_type == NodeType.METRIC:
-        validate_metric_contract(asset, require_generation_plan=True, require_pattern=True)
+        validate_metric_contract(
+            asset, require_generation_plan=True, require_pattern=True
+        )
         references = set(asset.properties.references)
         unresolved = sorted(
             reference
@@ -221,7 +164,11 @@ def _validate_asset_references(
             )
 
 
-def physical_reference_catalog(table_schema: Any) -> set[str]:
+def physical_reference_catalog(
+    table_schema: Any,
+    *,
+    dimension_values: Iterable[NodeAsset] = (),
+) -> set[str]:
     if not isinstance(table_schema, dict):
         return set()
     result: set[str] = set()
@@ -253,7 +200,22 @@ def physical_reference_catalog(table_schema: Any) -> set[str]:
             aliases[(table.casefold(), column.casefold())] = canonical
     # A canonical Dimension Value is valid when its owner Column is in the supplied catalog.
     # It is checked lazily because table_schema does not enumerate observed values.
-    return _PhysicalCatalog(result, column_aliases=aliases)
+    value_aliases: dict[str, str] = {}
+    for asset in dimension_values:
+        if asset.node_type != NodeType.DIMENSION_VALUE:
+            continue
+        owner = next(
+            ref for ref in asset.properties.references if ref.startswith("column.")
+        )
+        _, table, column = owner.split(".", 2)
+        for value in [asset.properties.value, *asset.aliases]:
+            reference = make_node_id(NodeType.DIMENSION_VALUE, table, column, value)
+            previous = value_aliases.get(reference)
+            if previous is not None and previous != asset.id:
+                raise ValueError("ambiguous verified Dimension Value alias")
+            value_aliases[reference] = asset.id
+        value_aliases[asset.id] = asset.id
+    return _PhysicalCatalog(result, column_aliases=aliases, value_aliases=value_aliases)
 
 
 class _PhysicalCatalog(set[str]):
@@ -262,9 +224,15 @@ class _PhysicalCatalog(set[str]):
         values: Iterable[str] = (),
         *,
         column_aliases: dict[tuple[str, str], str] | None = None,
+        value_aliases: dict[str, str] | None = None,
     ) -> None:
         super().__init__(values)
         self._column_aliases = column_aliases or {}
+        self._value_aliases = value_aliases or {}
+
+    @property
+    def verified_value_ids(self) -> frozenset[str]:
+        return frozenset(self._value_aliases.values())
 
     def __contains__(self, item: object) -> bool:
         return self.resolve(item) is not None
@@ -274,6 +242,8 @@ class _PhysicalCatalog(set[str]):
             return item if isinstance(item, str) else None
         if not isinstance(item, str):
             return None
+        if item in self._value_aliases:
+            return self._value_aliases[item]
         if item.startswith("column."):
             return self._resolve_column(item)
         if not item.startswith("dimension_value."):
@@ -286,19 +256,22 @@ class _PhysicalCatalog(set[str]):
         if owner is None:
             return None
         _, canonical_table, canonical_column = owner.split(".", 2)
-        return make_node_id(
-            NodeType.DIMENSION_VALUE,
-            canonical_table,
-            canonical_column,
-            value,
-        )
+        if re.fullmatch(r"v_[0-9a-f]{64}", value):
+            reference = f"dimension_value.{canonical_table}.{canonical_column}.{value}"
+        else:
+            reference = make_node_id(
+                NodeType.DIMENSION_VALUE, canonical_table, canonical_column, value
+            )
+        return self._value_aliases.get(reference, reference)
 
     def _resolve_column(self, item: str) -> str | None:
         parts = item.split(".", 2)
         if len(parts) != 3 or not all(parts[1:]):
             return None
         _, table_name, column_name = parts
-        canonical = self._column_aliases.get((table_name.casefold(), column_name.casefold()))
+        canonical = self._column_aliases.get(
+            (table_name.casefold(), column_name.casefold())
+        )
         if canonical is not None:
             return canonical
         candidate = make_node_id(NodeType.COLUMN, table_name, column_name)

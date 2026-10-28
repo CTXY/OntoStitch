@@ -9,19 +9,33 @@ llm:
   embedding:
     model: ${CORTEX_EMBEDDING_MODEL}
 database:
+  # Optional original column semantics (BIRD-style per-table CSV files).
+  # description_path: /path/to/database_description
   type: sqlite
   path: data/databases/demo/demo.sqlite
 services:
+  graph_merge:
+    checkpoint_url: ${GRAPH_MERGE_CHECKPOINT_URL}
   sql_training:
     workspace: workspace/sql_training
     case_max_workers: 1
-    extraction_max_workers: 1
+    agent_max_steps: 10
+    agent_read_concurrency: 4
+    agent_context_characters: 64000
     max_rounds: 3
     max_iterations: 3
     required_consecutive_correct_replays: 3
     validation:
       dialect: sqlite
+  retrieve_db:
+    concept_limit: 12
+    metric_limit: 10
+    generation_rule_limit: 10
+    column_limit: 20
+    dimension_value_limit: 12
   online_context:
+    checkpoint_path: workspace/checkpoints/online_context.sqlite
+    questions_per_round: 1
     question_budget: null  # Maximum questions per request; includes JOIN choices.
     evaluation_case_max_workers: 1
     query_example_top_k: 0

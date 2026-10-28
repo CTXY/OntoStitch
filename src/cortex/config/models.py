@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 
 class _ConfigModel(BaseModel):
@@ -113,6 +121,7 @@ class DocumentsConfig(_ConfigModel):
 
 
 class _DatabaseConfig(_ConfigModel):
+    description_path: Path | None = None
     include_tables: tuple[str, ...] = ()
 
     @field_validator("include_tables", mode="before")
@@ -133,6 +142,7 @@ class MySQLDatabaseConfig(_DatabaseConfig):
 class SQLiteDatabaseConfig(_DatabaseConfig):
     type: Literal["sqlite"] = "sqlite"
     path: Path
+    read_only: bool = False
     schema_path: Path | None = None
     seed_path: Path | None = None
     overwrite: bool = False
@@ -203,7 +213,11 @@ class RetrieveDbConfig(_ConfigModel):
     mention_candidate_limit: int = Field(default=5, ge=1)
     sql_literal_concept_limit: int = Field(default=10, ge=1)
     sql_literal_value_limit: int = Field(default=10, ge=1)
+    concept_limit: int = Field(default=12, ge=1)
+    metric_limit: int = Field(default=10, ge=1)
     generation_rule_limit: int = Field(default=10, ge=1)
+    column_limit: int = Field(default=20, ge=1)
+    dimension_value_limit: int = Field(default=12, ge=1)
     edge_rule_per_seed_limit: int = Field(default=10, ge=1)
     edge_rule_total_limit: int = Field(default=20, ge=1)
     binding_concept_per_seed_limit: int = Field(default=10, ge=1)
@@ -233,17 +247,40 @@ class SqlTrainingConfig(_ConfigModel):
     max_iterations: int = Field(default=3, ge=1)
     sql_timeout: float = Field(default=30.0, gt=0)
     required_consecutive_correct_replays: int = Field(default=3, ge=1)
-    max_trial_attempts: int = Field(default=3, ge=1)
-    extraction_max_workers: int = Field(default=3, ge=1)
     case_max_workers: int | None = Field(default=None, ge=1)
+    agent_max_steps: int = Field(default=10, ge=1)
+    agent_read_concurrency: int = Field(default=4, ge=1, le=4)
+    agent_episode_timeout: float = Field(default=180.0, gt=0)
+    agent_context_characters: int = Field(default=64_000, ge=4_000)
+    agent_notes_characters: int = Field(default=4_000, ge=256)
+    agent_tool_characters: int = Field(default=12_000, ge=1_000)
+    agent_database_calls: int = Field(default=12, ge=1)
     trace_level: Literal["", "info", "debug"] = ""
-    validation: SqlTrainingValidationConfig = Field(default_factory=SqlTrainingValidationConfig)
+    validation: SqlTrainingValidationConfig = Field(
+        default_factory=SqlTrainingValidationConfig
+    )
     error_analysis: SqlTrainingErrorAnalysisConfig = Field(
         default_factory=SqlTrainingErrorAnalysisConfig
     )
 
 
 class GraphMergeConfig(_ConfigModel):
+    checkpoint_url: SecretStr = Field(
+        default_factory=lambda: SecretStr(
+            os.environ.get(
+                "GRAPH_MERGE_CHECKPOINT_URL", "sqlite:///workspace/checkpoints/graph_merge.sqlite"
+            )
+        ),
+        validate_default=True,
+    )
+    @field_validator("checkpoint_url")
+    @classmethod
+    def sqlite_checkpoint(cls, value: SecretStr) -> SecretStr:
+        url = value.get_secret_value()
+        if not url.startswith("sqlite:///") or url.removeprefix("sqlite:///") in ("", ":memory:"):
+            raise ValueError("checkpoint_url must be a file-backed sqlite:/// URL")
+        return value
+
     consolidation_max_rounds: int = Field(default=3, ge=1)
     consolidation_max_calls: int = Field(default=18, ge=1)
     candidate_top_k: int = Field(default=5, ge=1)
@@ -252,6 +289,9 @@ class GraphMergeConfig(_ConfigModel):
 
 
 class OnlineContextConfig(_ConfigModel):
+    checkpoint_path: Path = Path("workspace/checkpoints/online_context.sqlite")
+    questions_per_round: int = Field(default=1, ge=1)
+
     question_budget: int | None = Field(default=None, ge=0, strict=True)
     concept_limit: int = Field(default=12, ge=1)
     metric_limit: int = Field(default=10, ge=1)
@@ -265,7 +305,9 @@ class OnlineContextConfig(_ConfigModel):
 
 class ServicesConfig(_ConfigModel):
     online_context: OnlineContextConfig = Field(default_factory=OnlineContextConfig)
-    schema_generation: SchemaGenerationConfig = Field(default_factory=SchemaGenerationConfig)
+    schema_generation: SchemaGenerationConfig = Field(
+        default_factory=SchemaGenerationConfig
+    )
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     retrieve_db: RetrieveDbConfig = Field(default_factory=RetrieveDbConfig)

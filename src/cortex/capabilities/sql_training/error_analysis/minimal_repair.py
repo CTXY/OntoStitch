@@ -247,7 +247,9 @@ def run_minimal_repair(
         review=review,
         candidates=candidates,
         completeness_status=completeness_status,
-        completeness_reason=review_error,
+        completeness_reason=review_error or (
+            final_error if terminal_status == "analysis_incomplete" else ""
+        ),
     )
 
 
@@ -334,7 +336,7 @@ def _validate_representation_action(action: RepairAction, *, input_sql: str) -> 
 def _qualified_column_names(sql: str) -> set[tuple[str, str]]:
     try:
         tree = sqlglot.parse_one(sql, dialect="sqlite")
-    except Exception as exc:  # noqa: BLE001 - feedback belongs to the producing LLM stage
+    except Exception as exc:
         raise ValueError(f"could not inspect repair SQL columns: {exc}") from exc
     if tree is None:
         raise ValueError("could not inspect repair SQL columns")

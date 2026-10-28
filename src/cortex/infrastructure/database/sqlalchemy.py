@@ -26,7 +26,9 @@ class SQLAlchemyDatabase:
         self._table_names_cache: set[str] | None = None
         self._columns_cache: dict[str, dict[str, dict[str, Any]]] = {}
 
-    def introspect_catalog(self, *, include_tables: list[str] | None = None) -> CatalogSnapshot:
+    def introspect_catalog(
+        self, *, include_tables: list[str] | None = None
+    ) -> CatalogSnapshot:
         inspector = inspect(self.engine)
         include = set(include_tables or [])
         table_names = [
@@ -43,7 +45,9 @@ class SQLAlchemyDatabase:
             )
             foreign_keys = inspector.get_foreign_keys(table_name)
             fk_columns = {
-                column for fk in foreign_keys for column in fk.get("constrained_columns") or []
+                column
+                for fk in foreign_keys
+                for column in fk.get("constrained_columns") or []
             }
             for fk in foreign_keys:
                 referred_table = fk.get("referred_table")
@@ -55,7 +59,9 @@ class SQLAlchemyDatabase:
                     JoinProfile(
                         from_table=table_name,
                         to_table=referred_table,
-                        column_pairs=list(zip(left_columns, right_columns, strict=False)),
+                        column_pairs=list(
+                            zip(left_columns, right_columns, strict=True)
+                        ),
                         constraint_name=fk.get("name"),
                     )
                 )
@@ -64,6 +70,11 @@ class SQLAlchemyDatabase:
                     name=table_name,
                     comment=_table_comment(inspector, table_name),
                     primary_keys=sorted(pk_columns),
+                    unique_keys=[
+                        list(key["column_names"])
+                        for key in inspector.get_unique_constraints(table_name)
+                        if key.get("column_names")
+                    ],
                     foreign_keys=sorted(fk_columns),
                 )
             )
@@ -76,7 +87,9 @@ class SQLAlchemyDatabase:
                         data_type=str(column.get("type") or ""),
                         nullable=column.get("nullable"),
                         default=(
-                            str(column["default"]) if column.get("default") is not None else None
+                            str(column["default"])
+                            if column.get("default") is not None
+                            else None
                         ),
                         comment=column.get("comment"),
                         sample_values=self.sample_column_values(
@@ -124,7 +137,9 @@ class SQLAlchemyDatabase:
         where = self._non_empty_where_clause(column_name, column)
         quoted_table = self._quote(table_name)
         quoted_column = self._quote(column_name)
-        query = text(f"select distinct {quoted_column} as value from {quoted_table} where {where}")
+        query = text(
+            f"select distinct {quoted_column} as value from {quoted_table} where {where}"
+        )
         with self.engine.connect() as connection:
             result = connection.execution_options(stream_results=True).execute(query)
             while rows := result.fetchmany(batch_size):
@@ -155,7 +170,10 @@ class SQLAlchemyDatabase:
     def run_validation_query(self, sql: str) -> list[dict[str, object]]:
         with self.engine.connect() as connection:
             driver_sql = _prepare_driver_sql(sql, self.engine.dialect.name)
-            return [dict(row) for row in connection.exec_driver_sql(driver_sql).mappings().all()]
+            return [
+                dict(row)
+                for row in connection.exec_driver_sql(driver_sql).mappings().all()
+            ]
 
     def get_dialect(self) -> str:
         return self.engine.dialect.name
@@ -200,11 +218,15 @@ class SQLAlchemyDatabase:
             self._table_names_cache = set(inspector.get_table_names())
         return self._table_names_cache
 
-    def _columns_for_table(self, inspector: Any, table_name: str) -> dict[str, dict[str, Any]]:
+    def _columns_for_table(
+        self, inspector: Any, table_name: str
+    ) -> dict[str, dict[str, Any]]:
         cached = self._columns_cache.get(table_name)
         if cached is not None:
             return cached
-        columns = {column["name"]: column for column in inspector.get_columns(table_name)}
+        columns = {
+            column["name"]: column for column in inspector.get_columns(table_name)
+        }
         self._columns_cache[table_name] = columns
         return columns
 

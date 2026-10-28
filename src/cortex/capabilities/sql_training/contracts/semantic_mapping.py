@@ -5,6 +5,7 @@ from typing import Any
 
 import sqlglot
 from sqlglot import expressions
+from sqlglot.dialects import Dialect
 
 from cortex.capabilities.sql_training.core.enums import NodeType
 from cortex.capabilities.sql_training.core.ids import make_node_id
@@ -36,15 +37,25 @@ def relative_time_mentions(value: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(match.group(0) for match in _RELATIVE_TIME_TERM.finditer(value)))
 
 
+def _parse_binding(expression: str, dialect: str = "sqlite"):
+    tree = sqlglot.parse_one(f"SELECT {expression}", dialect=dialect)
+    if not isinstance(tree, expressions.Select) or any(value for key, value in tree.args.items() if key != "expressions"):
+        raise ValueError("Concept binding must be an expression, not a query or query clause")
+    return tree
+
+
 def normalize_semantic_mapping_candidate(
     asset: NodeAsset,
     *,
     table_schema: dict[str, str],
+    physical_catalog: Any = None,
+    dialect: str = "sqlite",
 ) -> NodeAsset:
     """Qualify unqualified target columns when their physical table is unambiguous."""
 
     normalized = asset.model_copy(deep=True)
-    physical_catalog = _physical_catalog(table_schema)
+    if physical_catalog is None:
+        physical_catalog = _physical_catalog(table_schema)
     physical_names_by_ref = _physical_names_by_ref(table_schema)
     schema_tables_by_column = _schema_tables_by_column(table_schema)
     for target_index, target in enumerate(normalized.properties.targets):
@@ -55,13 +66,10 @@ def normalize_semantic_mapping_candidate(
         target_changed = canonical_references != target.references
         target.references = canonical_references
         try:
-            tree = sqlglot.parse_one(
-                f"SELECT 1 WHERE {target.sql_expression}", dialect="sqlite"
-            )
+            tree = _parse_binding(target.sql_expression, dialect)
         except Exception:  # noqa: BLE001
             continue
         reference_tables_by_column = _reference_tables_by_column(target.references)
-        changed = False
         for column in tree.find_all(expressions.Column):
             if column.table or not column.name:
                 continue
@@ -72,30 +80,18 @@ def normalize_semantic_mapping_candidate(
             if len(candidate_tables) != 1:
                 continue
             column.set("table", next(iter(candidate_tables)))
-            changed = True
-        if changed:
-            where = tree.args.get("where")
-            if isinstance(where, expressions.Where):
-                target.sql_expression = where.this.sql()
-        tree, expression_changed = _canonicalize_expression_columns(
-            tree,
-            physical_catalog=physical_catalog,
+        tree, _ = _canonicalize_expression_columns(
+            tree, physical_catalog=physical_catalog,
             physical_names_by_ref=physical_names_by_ref,
         )
-        if expression_changed:
-            where = tree.args.get("where")
-            if isinstance(where, expressions.Where):
-                target.sql_expression = where.this.sql()
-            target_changed = True
-        tree, dqs_changed = coerce_sqlite_dqs_literals(
-            tree,
-            physical_catalog=physical_catalog,
-        )
-        if dqs_changed:
-            where = tree.args.get("where")
-            if isinstance(where, expressions.Where):
-                target.sql_expression = where.this.sql()
-            target_changed = True
+        if dialect == "sqlite":
+            tree, _ = coerce_sqlite_dqs_literals(tree, physical_catalog=physical_catalog)
+        # Serialize the same projection AST used by validation. Preserve literal values
+        # and identifier spelling; only remove unnecessary identifier quoting.
+        keywords = {word for key in Dialect.get_or_raise(dialect).tokenizer_class.KEYWORDS for word in key.split()}
+        for identifier in tree.find_all(expressions.Identifier):
+            identifier.set("quoted", not bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", identifier.name)) or identifier.name.upper() in keywords)
+        target.sql_expression = ", ".join(item.sql(dialect=dialect) for item in tree.expressions)
         expected_references = _expression_references(
             tree,
             physical_catalog=physical_catalog,
@@ -145,6 +141,7 @@ def validate_semantic_mapping_candidate_contract(
     asset: NodeAsset,
     *,
     table_schema: dict[str, str] | None = None,
+    physical_catalog: Any = None,
 ) -> None:
     if asset.node_type != NodeType.SEMANTIC_MAPPING:
         raise ValueError("Semantic Mapping contract requires a semantic_mapping asset")
@@ -153,7 +150,8 @@ def validate_semantic_mapping_candidate_contract(
         raise ValueError("Semantic Mapping term must be non-empty")
     if not asset.properties.targets:
         raise ValueError("Semantic Mapping requires at least one target")
-    physical_catalog = _physical_catalog(table_schema or {})
+    if physical_catalog is None:
+        physical_catalog = _physical_catalog(table_schema or {})
     for index, target in enumerate(asset.properties.targets, start=1):
         _validate_target(
             target,
@@ -190,12 +188,14 @@ def validate_semantic_mapping_schema_grounding(
     asset: NodeAsset,
     *,
     table_schema: dict[str, str],
+    physical_catalog: Any = None,
 ) -> None:
     """Verify candidate column references against the supplied schema snapshot."""
 
     if not table_schema:
         return
-    physical_catalog = _physical_catalog(table_schema)
+    if physical_catalog is None:
+        physical_catalog = _physical_catalog(table_schema)
     unresolved: set[str] = set()
     for target in asset.properties.targets:
         for reference in target.references:
@@ -278,6 +278,8 @@ def _canonicalize_physical_ref(reference: str, *, physical_catalog: Any) -> str:
     if len(parts) != 4 or not all(parts[1:]):
         return reference
     _, table_name, column_name, value = parts
+    if re.fullmatch(r"v_[0-9a-f]{64}", value):
+        return reference
     return make_node_id(NodeType.DIMENSION_VALUE, table_name, column_name, value)
 
 
@@ -297,8 +299,8 @@ def _validate_target(
         # qualified columns in one target. Parse it as a projection list so every
         # column is captured; framing it as ``SELECT 1 WHERE <expr>`` silently drops
         # every column after the first in a comma-separated binding.
-        tree = sqlglot.parse_one(f"SELECT {expression}", dialect="sqlite")
-    except Exception as exc:  # noqa: BLE001
+        tree = _parse_binding(expression)
+    except Exception as exc:
         raise ValueError(
             f"Semantic Mapping target {index} sql_expression is invalid: {exc}"
         ) from exc
@@ -504,6 +506,16 @@ def _expression_references(
                     literal,
                 )
             )
+    expected_references = {
+        _canonicalize_physical_ref(reference, physical_catalog=physical_catalog)
+        for reference in expected_references
+    }
+    # Numeric auto-discovery is conservative; an explicitly governed, verified
+    # stored Value is already evidence and must not be stripped by that heuristic.
+    expected_references.update(
+        _all_expression_dimension_value_references(tree, physical_catalog=physical_catalog)
+        & getattr(physical_catalog, "verified_value_ids", frozenset())
+    )
     return expected_references
 
 
@@ -534,7 +546,7 @@ def _all_expression_dimension_value_references(
                 make_node_id(NodeType.DIMENSION_VALUE, table_name, column_name, literal)
                 for literal in literals
             )
-    return references
+    return {_canonicalize_physical_ref(reference, physical_catalog=physical_catalog) for reference in references}
 
 
 def column_allows_numeric_dimension_values(

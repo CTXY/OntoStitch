@@ -24,7 +24,9 @@ from cortex.capabilities.online_context.discovery.evidence import (
     _union,
     _validate_slots,
 )
-from cortex.capabilities.online_context.discovery.join_paths import discovery_join_candidates
+from cortex.capabilities.online_context.discovery.join_paths import (
+    discovery_join_candidates,
+)
 from cortex.capabilities.online_context.discovery.models import (
     CandidateDraft,
     ChoiceOrganizationResult,
@@ -63,7 +65,9 @@ class _GraphRefHandles:
 class LlmChoiceOrganizer:
     """Accumulate grounded choices, including JOINs, through three discovery stages."""
 
-    def __init__(self, llm: BaseChatModel, *, trace_sink=None, audit_slots: bool = False) -> None:
+    def __init__(
+        self, llm: BaseChatModel, *, trace_sink=None, audit_slots: bool = False
+    ) -> None:
         self._llm = llm
         self._trace_sink = trace_sink
         self._audit_slots = audit_slots
@@ -112,13 +116,17 @@ class LlmChoiceOrganizer:
             },
         )
         self._trace("intra_raw", intra.model_dump(mode="json"))
-        intra = IntraNodeOutput.model_validate(handles.decode(intra.model_dump(mode="json")))
+        intra = IntraNodeOutput.model_validate(
+            handles.decode(intra.model_dump(mode="json"))
+        )
         intra = _render_intra_columns(intra, retrieved_graph_state)
         intra = _reconcile_intra_slot_ids(intra)
         self._trace("intra_rendered", intra.model_dump(mode="json"))
         _validate_intra(intra, signals)
         slots = tuple(
-            _materialize_slot(item) for item in intra.slots if _draft_slot_has_provenance(item)
+            _materialize_slot(item)
+            for item in intra.slots
+            if _draft_slot_has_provenance(item)
         )
         slots = _deduplicate_slots(slots)
         slots = self._retain_valid_slots(
@@ -131,7 +139,9 @@ class LlmChoiceOrganizer:
                 "question": question,
                 "initial_sql": initial_sql,
                 "join_candidates": join_candidates,
-                "handled_slots": handles.encode([item.model_dump(mode="json") for item in slots]),
+                "handled_slots": handles.encode(
+                    [item.model_dump(mode="json") for item in slots]
+                ),
                 "residual_graph_state": handles.encode(
                     _residual_graph_payload(graph_payload, intra)
                 ),
@@ -152,7 +162,9 @@ class LlmChoiceOrganizer:
                 except LLMStructuredOutputError:
                     if attempt == 1:
                         raise
-                    self._trace("initial_sql_memory_structured_retry", {"attempt": attempt + 2})
+                    self._trace(
+                        "initial_sql_memory_structured_retry", {"attempt": attempt + 2}
+                    )
                     initial_memory_payload = {
                         **initial_memory_payload,
                         "format_feedback": (
@@ -160,7 +172,9 @@ class LlmChoiceOrganizer:
                             "Candidates. If only one Candidate is available, remove that Slot."
                         ),
                     }
-            self._trace("initial_sql_memory_raw", initial_memory.model_dump(mode="json"))
+            self._trace(
+                "initial_sql_memory_raw", initial_memory.model_dump(mode="json")
+            )
             _validate_initial_memory_new_slots(initial_memory)
             slots = _apply_augmentations(slots, initial_memory)
             slots = _render_choice_point_columns(slots, retrieved_graph_state)
@@ -177,8 +191,12 @@ class LlmChoiceOrganizer:
         cross_payload = {
             "question": question,
             "join_candidates": join_candidates,
-            "handled_slots": handles.encode([item.model_dump(mode="json") for item in slots]),
-            "residual_graph_state": handles.encode(_residual_graph_payload(graph_payload, intra)),
+            "handled_slots": handles.encode(
+                [item.model_dump(mode="json") for item in slots]
+            ),
+            "residual_graph_state": handles.encode(
+                _residual_graph_payload(graph_payload, intra)
+            ),
         }
         for attempt in range(2):
             try:
@@ -207,7 +225,9 @@ class LlmChoiceOrganizer:
         self._trace("cross_raw", cross.model_dump(mode="json"))
         combined = _apply_augmentations(slots, cross)
         combined = _render_choice_point_columns(combined, retrieved_graph_state)
-        self._trace("slots_before_validation", [s.model_dump(mode="json") for s in combined])
+        self._trace(
+            "slots_before_validation", [s.model_dump(mode="json") for s in combined]
+        )
         combined = _deduplicate_slots(combined)
         combined = self._retain_valid_slots(
             "cross_rejected_slot", combined, retrieved_graph_state, initial_sql
@@ -231,8 +251,12 @@ class LlmChoiceOrganizer:
                 len(audit.decisions) != len(expected)
                 or {item.slot_id for item in audit.decisions} != expected
             ):
-                raise ValueError("slot audit must assess every conflict point exactly once")
-            kept = expected - {item.slot_id for item in audit.decisions if not item.keep}
+                raise ValueError(
+                    "slot audit must assess every conflict point exactly once"
+                )
+            kept = expected - {
+                item.slot_id for item in audit.decisions if not item.keep
+            }
             self._trace("slot_relevance_audit", audit.model_dump(mode="json"))
             combined = tuple(item for item in combined if item.choice_point_id in kept)
         return ChoiceOrganizationResult(
@@ -262,7 +286,7 @@ class LlmChoiceOrganizer:
 
 
 def _intra_node_signal_ids(state: GraphState) -> tuple[str, ...]:
-    conflict_ids = {item.node_id for item in state.node_conflicts}
+    conflict_ids = {item.id for item in state.conflict_nodes}
     multi_target_ids = {
         node.id
         for node in state.graph.nodes
@@ -292,7 +316,11 @@ def _reconcile_intra_slot_ids(output: IntraNodeOutput) -> IntraNodeOutput:
         update={
             "assessments": tuple(
                 item.model_copy(
-                    update={"slot_ids": tuple(ref for ref in item.slot_ids if ref in emitted)}
+                    update={
+                        "slot_ids": tuple(
+                            ref for ref in item.slot_ids if ref in emitted
+                        )
+                    }
                 )
                 for item in output.assessments
             )
@@ -323,7 +351,9 @@ def _draft_candidate_has_provenance(item: CandidateDraft) -> bool:
 
 
 def _draft_slot_has_provenance(item: SlotDraft) -> bool:
-    return all(_draft_candidate_has_provenance(candidate) for candidate in item.candidates)
+    return all(
+        _draft_candidate_has_provenance(candidate) for candidate in item.candidates
+    )
 
 
 def _materialize_slot(slot: SlotDraft) -> ChoicePoint:
@@ -336,7 +366,9 @@ def _materialize_slot(slot: SlotDraft) -> ChoicePoint:
     )
 
 
-def _render_intra_columns(output: IntraNodeOutput, state: GraphState) -> IntraNodeOutput:
+def _render_intra_columns(
+    output: IntraNodeOutput, state: GraphState
+) -> IntraNodeOutput:
     payloads = _graph_ref_payloads(state)
     return output.model_copy(
         update={
@@ -371,7 +403,11 @@ def _render_choice_point_columns(
             update={
                 "options": tuple(
                     option.model_copy(
-                        update={"statement": _render_statement_columns(option.statement, payloads)}
+                        update={
+                            "statement": _render_statement_columns(
+                                option.statement, payloads
+                            )
+                        }
                     )
                     for option in point.options
                 )
@@ -399,7 +435,9 @@ def _render_statement_columns(statement: str, payloads: dict[str, object]) -> st
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column_name)
             else f"`{column_name}`"
         )
-        replacements[_physical_ref(table_name, column_name)] = f"{table_name}.{rendered_column}"
+        replacements[_physical_ref(table_name, column_name)] = (
+            f"{table_name}.{rendered_column}"
+        )
 
     def replace(match: re.Match[str]) -> str:
         table, quoted, backticked, plain = match.groups()
@@ -455,10 +493,14 @@ def _apply_augmentations(
                 continue
             option = _materialize_candidate(draft)
             if draft.candidate_id in options:
-                options[option.option_id] = _merge_options(options[option.option_id], option)
+                options[option.option_id] = _merge_options(
+                    options[option.option_id], option
+                )
                 continue
             options[option.option_id] = option
-        by_id[augmentation.slot_id] = slot.model_copy(update={"options": tuple(options.values())})
+        by_id[augmentation.slot_id] = slot.model_copy(
+            update={"options": tuple(options.values())}
+        )
     for draft in output.new_slots:
         if not _draft_slot_has_provenance(draft):
             continue

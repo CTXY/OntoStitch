@@ -5,7 +5,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from cortex.capabilities.sql_training.error_analysis.models import ExecutionFailureAnalysis
+from cortex.capabilities.sql_training.error_analysis.models import (
+    ExecutionFailureAnalysis,
+)
 from cortex.capabilities.sql_training.llm.parsing import run_llm_extraction
 from cortex.capabilities.sql_training.llm.prompts import load_prompt
 

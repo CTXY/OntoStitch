@@ -1,4 +1,6 @@
-from cortex.infrastructure.online_context.column_context import DatabaseDescriptionLoader
+from cortex.infrastructure.online_context.column_context import (
+    DatabaseDescriptionLoader,
+)
 from cortex.infrastructure.online_context.graph_state import (
     FileSystemGraphStateLoader,
     OnlineGraphSourceError,

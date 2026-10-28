@@ -18,7 +18,9 @@ EdgePropertyMappingKey = tuple[str, str, str]
 @dataclass(frozen=True)
 class GroupNormalizationResult:
     group: FinalNodeGroup
-    edge_property_mappings: dict[EdgePropertyMappingKey, Any] = field(default_factory=dict)
+    edge_property_mappings: dict[EdgePropertyMappingKey, Any] = field(
+        default_factory=dict
+    )
 
 
 class NodeGroupNormalizer(Protocol):
@@ -32,9 +34,8 @@ class NodeGroupNormalizerRegistry:
 
     def __init__(
         self,
-        registrations: dict[
-            str, tuple[frozenset[str], NodeGroupNormalizer]
-        ] | None = None,
+        registrations: dict[str, tuple[frozenset[str], NodeGroupNormalizer]]
+        | None = None,
     ) -> None:
         self._registrations = dict(registrations or {})
 
@@ -84,14 +85,16 @@ class ConceptTargetNormalizer:
                 if isinstance(target_id, str) and target_id:
                     key = concept_target_semantic_key(target)
                     if target_id in local_ids and local_ids[target_id] != key:
-                        raise ValueError(f"ambiguous target ID in {member.ref.ref_id}: {target_id}")
+                        raise ValueError(
+                            f"ambiguous target ID in {member.ref.ref_id}: {target_id}"
+                        )
                     local_ids[target_id] = key
                     if key in canonical_by_semantics:
                         continue
                     candidate = target_id
                     if candidate in semantics_by_id:
                         suffix = hashlib.sha256(key.encode()).hexdigest()[:16]
-                        candidate = f"{target_id}.{suffix}"
+                        candidate = f"{target_id[:80]}_{suffix}"
                         while candidate in semantics_by_id or candidate in reserved_ids:
                             candidate += "_"
                     canonical_by_semantics[key] = candidate
@@ -113,7 +116,9 @@ class ConceptTargetNormalizer:
                 )
                 if isinstance(old_id, str) and isinstance(canonical_id, str):
                     mappings[
-                        edge_property_mapping_key(member.ref.ref_id, "target_id", old_id)
+                        edge_property_mapping_key(
+                            member.ref.ref_id, "target_id", old_id
+                        )
                     ] = canonical_id
                     target["id"] = canonical_id
                 targets.append(target)
@@ -122,7 +127,9 @@ class ConceptTargetNormalizer:
             members.append(
                 member.model_copy(
                     update={
-                        "content": member.content.model_copy(update={"properties": properties})
+                        "content": member.content.model_copy(
+                            update={"properties": properties}
+                        )
                     }
                 )
             )
@@ -146,36 +153,12 @@ def build_default_node_group_normalizer_registry() -> NodeGroupNormalizerRegistr
 def concept_target_semantic_key(target: Any) -> str:
     if not isinstance(target, dict):
         return _canonical(target)
-    semantic_targets = target.get("semantic_targets")
-    if semantic_targets:
-        stable = {
-            "binding_operator": target.get("binding_operator"),
-            "semantic_targets": sorted(
-                (
-                    {
-                        "relation": item.get("relation"),
-                        "node_id": item.get("node_id"),
-                    }
-                    for item in semantic_targets
-                    if isinstance(item, dict)
-                ),
-                key=lambda item: (str(item["relation"]), str(item["node_id"])),
-            ),
+    return _canonical(
+        {
+            "sql_expression": _predicate_key(target.get("sql_expression")),
+            "references": sorted(set(target.get("references", []))),
         }
-        return _canonical(stable)
-
-    def clean(value: Any) -> Any:
-        if isinstance(value, dict):
-            return {
-                key: _predicate_key(child) if key == "sql_expression" else clean(child)
-                for key, child in value.items()
-                if key not in {"id", "predicate_id", "target_id"}
-            }
-        if isinstance(value, list):
-            return [clean(child) for child in value]
-        return value
-
-    return _canonical(clean(target))
+    )
 
 
 def _predicate_key(sql: Any) -> Any:
@@ -188,9 +171,21 @@ def _predicate_key(sql: Any) -> Any:
             return sql
         tree = expressions[0]
         allowed = (
-            exp.And, exp.Or, exp.Paren, exp.EQ, exp.NEQ, exp.GT, exp.GTE,
-            exp.LT, exp.LTE, exp.Is, exp.Column, exp.Identifier, exp.Literal,
-            exp.Null, exp.Boolean,
+            exp.And,
+            exp.Or,
+            exp.Paren,
+            exp.EQ,
+            exp.NEQ,
+            exp.GT,
+            exp.GTE,
+            exp.LT,
+            exp.LTE,
+            exp.Is,
+            exp.Column,
+            exp.Identifier,
+            exp.Literal,
+            exp.Null,
+            exp.Boolean,
         )
         if any(type(node) not in allowed for node in tree.walk()):
             return sql

@@ -13,8 +13,12 @@ def rank_choice_points(points: tuple[ChoicePoint, ...]) -> tuple[ChoicePoint, ..
     ranked = []
     for point in _deduplicate_slots(points):
         if any(option.evidence_assessment is None for option in point.options):
-            raise ValueError("every clarification candidate requires an evidence assessment")
-        source_sets = [set(option.evidence_assessment.source_types) for option in point.options]
+            raise ValueError(
+                "every clarification candidate requires an evidence assessment"
+            )
+        source_sets = [
+            set(option.evidence_assessment.source_types) for option in point.options
+        ]
         pairs = {
             frozenset((left_source, right_source))
             for left, right in combinations(source_sets, 2)
@@ -35,11 +39,16 @@ def rank_choice_points(points: tuple[ChoicePoint, ...]) -> tuple[ChoicePoint, ..
         elif frozenset(("database_schema",)) in pairs:
             category = "L"
         else:
-            raise ValueError("candidates do not form a supported evidence-source contrast")
+            raise ValueError(
+                "candidates do not form a supported evidence-source contrast"
+            )
         count = sum(
-            option.evidence_assessment.applicability == "applicable" for option in point.options
+            option.evidence_assessment.applicability == "applicable"
+            for option in point.options
         )
-        relevance = sum(option.evidence_assessment.relevance_score for option in point.options)
+        relevance = sum(
+            option.evidence_assessment.relevance_score for option in point.options
+        )
         score = _WEIGHTS[category] * (1 + relevance / (relevance + 1))
         ranked.append(
             point.model_copy(

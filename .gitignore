@@ -27,7 +27,19 @@ usecase/
 *.log
 .DS_Store
 /results_final/
-/docs/
-/tests/
+/docs/*
+!/docs/design/
+/tests/*
+!/tests/*.py
 /baseline/tests/
 /datasets/
+
+# Private local data and generated files (never publish)
+/ablation_study/
+/artifacts/
+/data/
+/workspace/
+/tests/
+/datasets/
+/output/
+/examples/

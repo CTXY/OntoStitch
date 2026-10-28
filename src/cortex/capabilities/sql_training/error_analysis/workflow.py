@@ -8,7 +8,9 @@ from cortex.capabilities.sql_training.error_analysis.agent import ErrorAnalysisP
 from cortex.capabilities.sql_training.error_analysis.execution_failure import (
     analyze_execution_failure,
 )
-from cortex.capabilities.sql_training.error_analysis.minimal_repair import run_minimal_repair
+from cortex.capabilities.sql_training.error_analysis.minimal_repair import (
+    run_minimal_repair,
+)
 from cortex.capabilities.sql_training.evaluation import evaluate
 from cortex.capabilities.sql_training.pipeline.execution import (
     GoldQueryCache,
