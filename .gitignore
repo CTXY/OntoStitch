@@ -46,3 +46,7 @@ usecase/
 
 # Documentation is excluded from this source release.
 /docs/
+
+# Documentation and web container are not part of this release
+/docs/
+/Dockerfile.web
