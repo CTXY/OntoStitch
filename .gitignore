@@ -43,3 +43,6 @@ usecase/
 /datasets/
 /output/
 /examples/
+
+# Documentation is excluded from this source release.
+/docs/
