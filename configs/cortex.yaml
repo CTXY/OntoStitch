@@ -3,6 +3,7 @@ llm:
   model: ${CORTEX_LLM_MODEL}
   base_url: ${CORTEX_LLM_BASE_URL}
   api_key: ${CORTEX_LLM_API_KEY}
+  enable_thinking: ${CORTEX_LLM_ENABLE_THINKING}
   temperature: 0
   timeout: 300
   max_retries: 2

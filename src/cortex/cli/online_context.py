@@ -8,7 +8,7 @@ from typing import Any
 import click
 
 from cortex.application.online_context import InteractionAnswer, OnlineContextPending
-from cortex.bootstrap import build_online_context_service
+from cortex.bootstrap import build_online_context_service, build_simulated_user_agent
 from cortex.config import load_config
 from cortex.infrastructure.online_context import (
     DatabaseDescriptionLoader,
@@ -32,6 +32,11 @@ def online_context_cli() -> None:
 )
 @click.option(
     "--initial-sql", default=None, help="Optional caller-supplied candidate SQL."
+)
+@click.option(
+    "--gold-sql",
+    default=None,
+    help="Evaluation only: simulate clarification answers from reference SQL.",
 )
 @click.option(
     "--run-id",
@@ -78,6 +83,7 @@ def online_context_run_cli(
     question: str,
     graph_state_source: Path,
     initial_sql: str | None,
+    gold_sql: str | None,
     run_id: str | None,
     question_budget: int | None,
     column_context_dir: Path | None,
@@ -87,6 +93,8 @@ def online_context_run_cli(
 ) -> None:
     """Run Online Context for one natural-language question."""
     try:
+        if gold_sql is not None and not gold_sql.strip():
+            raise ValueError("--gold-sql must not be empty")
         config = load_config(config_path)
         graph_state = FileSystemGraphStateLoader().load(graph_state_source)
         column_context = (
@@ -105,8 +113,16 @@ def online_context_run_cli(
             config=config,
             trace_sink=trace_sink,
         )
-        result = asyncio.run(
-            service.run(
+        simulator = (
+            build_simulated_user_agent(config_path, config=config)
+            if gold_sql is not None
+            else None
+        )
+        result, rounds = asyncio.run(
+            _run_online(
+                service=service,
+                simulator=simulator,
+                gold_sql=gold_sql,
                 question=question,
                 graph_state=graph_state,
                 dialect=_dialect_from_config(config),
@@ -117,6 +133,8 @@ def online_context_run_cli(
             )
         )
         payload = _public_payload(result.public_payload())
+        if simulator is not None:
+            payload["simulation"] = {"interaction_rounds": rounds}
         _write_optional(trace_output_path, {"traces": traces})
         _publish(payload, output_path)
     except click.ClickException:
@@ -188,6 +206,37 @@ def online_context_resume_cli(
     except Exception as exc:
         notes = getattr(exc, "__notes__", ())
         raise click.ClickException("\n".join((str(exc), *notes))) from exc
+
+
+async def _run_online(*, service, simulator=None, gold_sql=None, **request):
+    """Gold is visible only to the simulator after a real clarification exists."""
+    current = await service.run(**request)
+    rounds = []
+    prior_questions, prior_answers = [], []
+    while simulator is not None and current.pending is not None:
+        questions = current.interaction_questions
+        answers = await simulator.answer_round(
+            question=request["question"],
+            gold_sql=gold_sql,
+            interaction_questions=questions,
+            prior_questions=tuple(prior_questions),
+            prior_answers=tuple(prior_answers),
+            dialect=request["dialect"],
+        )
+        rounds.append(
+            {
+                "questions": [item.model_dump(mode="json") for item in questions],
+                "answers": [item.model_dump(mode="json") for item in answers],
+            }
+        )
+        prior_questions.extend(questions)
+        prior_answers.extend(answers)
+        current = await service.resume(
+            graph_state=request["graph_state"],
+            pending=current.pending,
+            answers=answers,
+        )
+    return current, rounds
 
 
 def _dialect_from_config(config) -> str:

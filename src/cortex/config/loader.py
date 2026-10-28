@@ -46,6 +46,9 @@ def load_config(path: str | Path = "configs/cortex.yaml") -> CortexConfig:
                     }),
                     "online_context": online_context.model_copy(
                         update={
+                            "checkpoint_path": _resolve_path(
+                                online_context.checkpoint_path, base
+                            ),
                             "query_example_source_root": _resolve_optional_path(
                                 online_context.query_example_source_root, base
                             ),

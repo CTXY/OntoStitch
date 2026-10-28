@@ -52,7 +52,11 @@ def create_chat_model(
         temperature=resolved.temperature,
         timeout=resolved.timeout,
         max_retries=resolved.max_retries,
-        extra_body={"enable_thinking": resolved.enable_thinking},
+        extra_body=(
+            {"enable_thinking": resolved.enable_thinking}
+            if resolved.enable_thinking is not None
+            else None
+        ),
     )
 
 

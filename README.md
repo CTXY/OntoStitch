@@ -1,38 +1,66 @@
 # OntoStitch for NL2SQL
 
-> Source-only release: datasets, example data, experiment outputs, local workspaces, ablation studies, and tests are not distributed. Supply your own local data and configuration. Demo commands that reference these files require local preparation.
+OntoStitch learns ontology knowledge from question–SQL examples, merges it into a
+persistent graph, and builds request-specific guidance for downstream SQL generation.
 
-OntoStitch learns ontology knowledge from question–SQL examples and uses it to
-guide natural-language-to-SQL generation.
-
-## Environment
-
-Use Python 3.11 and run the following commands from the repository root
-(Bash or Zsh):
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt -e . -e ./baseline
+```text
+SQLite + training question/SQL pairs
+  → sql-train: extraction → validation → graph merge
+  → graph_state.json
+  → online-context: retrieval → clarification → guidance
+                               ↳ human answers OR Gold-SQL simulated answers
 ```
 
-## Configuration
+This repository distributes source code. Local datasets, `ablation_study/`,
+`artifacts/`, `data/`, `datasets/`, `workspace/`, `output/`, `examples/`, `tests/`,
+`docs/`, and `Dockerfile.web` are excluded. The synthetic quick start below creates
+its own data locally; no downloaded dataset or excluded file is needed.
+
+## 1. Install
+
+Use **CPython 3.11** with SQLite support and a Bash/Zsh shell on Linux or macOS
+(or Bash in WSL). Run all commands from the repository root. Network access to
+your model provider and a writable local workspace are required. No PostgreSQL,
+Neo4j, GPU, or external validation server is required for the SQLite workflow.
+
+```bash
+git clone https://github.com/CTXY/OntoStitch.git
+cd OntoStitch
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt -e .
+python -m pip check
+cortex --help
+```
+
+`requirements.txt` pins the validated runtime dependencies. The optional guided
+SQL evaluation baseline needs one additional local package:
+
+```bash
+python -m pip install -e ./baseline
+```
+
+## 2. Configure the model and database
 
 ```bash
 cp .env.example .env
 ```
 
-Edit these values in `.env`:
+Fill in your own OpenAI-compatible **chat model** connection in `.env`:
 
 ```dotenv
 CORTEX_LLM_MODEL=your-chat-model
 CORTEX_LLM_BASE_URL=https://api.openai.com/v1
-CORTEX_LLM_API_KEY=your-api-key
-CORTEX_EMBEDDING_MODEL=your-embedding-model
+CORTEX_LLM_API_KEY=replace-with-your-own-key
+LANGSMITH_TRACING=false
 ```
 
-The chat and embedding models use the same endpoint and API key. Load the settings
-before running the commands below:
+The model must support tool calling and structured JSON output. Extraction and
+merge use agent tools; retrieval, assessment, guidance, and the simulated user
+also use the chat model. Small-model output errors can produce `needs_review`;
+a completed process does not by itself prove that every learned definition is correct.
+
+Load the environment **in every new shell** before invoking `cortex`:
 
 ```bash
 set -a
@@ -40,353 +68,311 @@ source .env
 set +a
 ```
 
-Set the SQLite database path in `configs/cortex.yaml`:
+The CLI does not automatically load `.env`. Keep that file private.
+
+**Embeddings are optional and disabled when `CORTEX_EMBEDDING_MODEL` is unset.**
+The default retrieval path works without them. Enable them only if the same
+endpoint and API key support `/embeddings` and the selected embedding model:
+
+```dotenv
+# Optional; omit this line for the simplest setup.
+CORTEX_EMBEDDING_MODEL=your-embedding-model
+```
+
+An endpoint that supports chat may still reject embedding requests with 404.
+To turn embeddings off after previously enabling them:
+
+```bash
+unset CORTEX_EMBEDDING_MODEL
+```
+
+Remove/comment the corresponding line in `.env` as well. Alternatively set
+`llm.embedding.model: null` in YAML. No embeddings service is needed for the
+quick start.
+
+`CORTEX_LLM_ENABLE_THINKING` is an optional provider extension. Leave it unset
+for the standard OpenAI API; set it to `true` or `false` only when your provider
+supports the `enable_thinking` request field. It is omitted from requests unless
+explicitly configured.
+
+`configs/cortex.yaml` selects the database and runtime settings. The shipped
+configuration matches the synthetic demo:
 
 ```yaml
 database:
   type: sqlite
   path: data/databases/demo/demo.sqlite
+services:
+  sql_training:
+    case_max_workers: 1
+    agent_max_steps: 10
+    max_rounds: 3
+    max_iterations: 3
+    required_consecutive_correct_replays: 3
+    validation:
+      dialect: sqlite
+  online_context:
+    checkpoint_path: workspace/checkpoints/online_context.sqlite
+    questions_per_round: 1
+    question_budget: null
+    query_example_top_k: 0
 ```
 
-To run without embeddings, set `llm.embedding.model` to `null` in the same file.
+| Setting | Effect |
+| --- | --- |
+| `database.path` | Existing SQLite database used for schema inspection and SQL validation |
+| `validation.dialect` | SQL dialect for training validation; use `sqlite` for this demo |
+| `required_consecutive_correct_replays` | Required consecutive SQL regeneration/execution successes before acceptance; default 3 |
+| `case_max_workers` | Concurrent extraction cases; start with 1 |
+| `questions_per_round` | Clarification questions presented in each round; default 1 |
+| `question_budget` | Maximum questions across a request, including JOINs; `null` allows all discovered questions, 0 skips asking |
+| `checkpoint_path` | Persistent Online Context SQLite checkpoint, needed by `resume` |
+| `query_example_top_k` | Historical examples attached to guidance; 0 needs no historical workspace |
 
-## Quick start
+Relative paths inside a configuration under `configs/` resolve against the
+repository root; for other config locations they resolve against the config's
+parent directory. CLI input/output paths resolve against the working directory.
+Process one database per training graph. Online Context must use that same graph
+and database dialect. Checkpoints are created automatically in writable directories.
 
-Create the sample database and input files, then train:
+Optional per-stage chat model overrides belong under `llm.profiles` in YAML, e.g.:
+
+```yaml
+llm:
+  profiles:
+    sql_training:
+      model: your-training-model
+    graph_merge:
+      model: your-merge-model
+    retrieve_db:
+      model: your-retrieval-model
+    online_context:
+      model: your-online-model
+    simulated_user:
+      model: your-simulator-model
+```
+
+These profiles share the configured endpoint and credentials. With no overrides,
+all stages inherit `CORTEX_LLM_MODEL`.
+
+## 3. Extraction → merge with `sql-train`
+
+Generate a tiny synthetic database (three orders) and training/dev records:
 
 ```bash
 python scripts/create_demo.py
-cortex sql-train --config configs/cortex.yaml \
-  --training-set data/train.qa_sql.jsonl --output workspace/train
 ```
 
-Run guided SQL evaluation using the generated graph. These commands assume a new
-`workspace/train` directory containing one training run:
+This recreates `data/databases/demo/demo.sqlite` and the demo input files; use it
+only for the demo. Real data can be supplied in the format described below.
+
+Run the complete extraction, SQL validation, semantic merge, and graph export:
 
 ```bash
-python scripts/run_guided_evaluation.py --database demo \
-  --graph-state workspace/train/*/graph_state.json \
-  --cases data/dev.qa_sql.jsonl --database-root data/databases \
-  --config configs/cortex.yaml --env-file .env --output workspace/eval
+cortex sql-train \
+  --config configs/cortex.yaml \
+  --training-set data/train.qa_sql.jsonl \
+  --output workspace/train \
+  --result-file workspace/train-summary.json \
+  --progress-file workspace/train-progress.jsonl
 ```
 
-Use a new evaluation output directory for each run. Results are saved under
-`workspace/eval`, including predictions and the evaluation report in `final_results/`.
-
-## Core interfaces
-
-Examples below assume one run under each training output directory. If you have
-multiple runs, pass the path to the specific run instead of using `*`.
-
-### SQL training
-
-`sql-train` extracts knowledge and merges it into the graph in one command:
+The command prints a terminal JSON summary. Read its exact `output` path instead
+of using a wildcard, which becomes ambiguous when multiple runs exist:
 
 ```bash
-cortex sql-train --config configs/cortex.yaml \
-  --training-set data/train.qa_sql.jsonl --output workspace/train
+TRAIN_RUN="$(python -c 'import json; print(json.load(open("workspace/train-summary.json"))["output"])')"
+export TRAIN_RUN
 ```
 
-| Parameter | Required | Description / default |
-| --- | --- | --- |
-| `--training-set PATH` | Yes | Training records in JSONL or JSON format |
-| `--output DIR` | Yes | Parent directory for the generated run directory |
-| `--config PATH` | No | Configuration; default `configs/cortex.yaml` |
-| `--schema PATH` | No | Schema JSON; defaults to the configured root schema |
-| `--graph-state DIR` | No | Persistent graph bundle to load and update; defaults inside the new run directory |
+Successful/review runs export the **merged graph** to:
 
-The command prints the run path in its `output` field and exports
-`graph_state.json` there. `--graph-state` is the persistent bundle directory used
-for incremental training, not the exported `graph_state.json` file. Exit code 2
-means the training result needs review.
+| File under `$TRAIN_RUN` | Content |
+| --- | --- |
+| `graph_state.json` | Complete merged GraphState; pass this file to Online Context |
+| `graph.json` | Graph nodes and edges |
+| `graph.html` | Standalone graph viewer |
+| `result.json` | Full extraction evaluation and merge result |
+| `merge_report.json` | Merge mappings, diagnostics, and candidate state |
+| `case_review.jsonl` | Case-by-case review index |
+| `graph_state/` | Persistent graph repository bundle for incremental training |
 
-Extraction now uses one Learning Agent (`LangChain create_agent`) for initial
-learning and repair, with six domain tools and short working notes. Independent
-Diagnosis and Assessment provide feedback; one case-level LangGraph owns validation,
-acceptance, recovery and output with a persistent SQLite checkpointer. All configured Tables/Columns are initialized;
-Values are included conditionally after database verification.
+Check `status`, `passed`, and `failed` in `workspace/train-summary.json`:
 
-Training and Graph Merge expose synchronous Python APIs: call
-`SqlTrainingService.run(...)`, `SqlTrainingCapability.train(...)`, or
-`GraphMergeOperator.merge(...)` directly, without `await` or `asyncio.run`.
-Case workers and parallel read-only agent tools retain their existing concurrency.
+- **Exit 0 / `completed`**: extraction, merge, and final validation completed.
+- **Exit 2 / `needs_review`**: a graph is exported, but case failures, unresolved
+  conflicts, or merge diagnostics need review. Inspect `result.json` and
+  `case_review.jsonl`; do not treat this as all cases passing.
+- **Exit 1 / `failed`**: no new final graph is published. Inspect the error and
+  local case artifacts. Fatal extraction does not invoke merge.
 
-### Graph Merge checkpoint and agents
+Training is model-dependent and may take several minutes. The progress file
+shows stage and case events. Validation executes regenerated read-only SQL
+against the configured database and compares it with the reference SQL.
 
-Graph Merge uses one LangGraph consolidation loop: prepare → Consolidator →
-Assessment → finalize. The two roles use LangChain `create_agent` and share two
-read-only tools, `read_evidence` and `read_nodes`. Physical, unchanged existing,
-single-definition and identical-definition groups use deterministic shortcuts.
-Conflicts retain complete alternatives; failed revision preserves original content.
-Each group receives its own source evidence. Candidate formulas, nested references
-and SQL plan structure are checked before assessment. Changed definitions and their
-complete alternatives synchronize compiled dependency edges; unrelated groups and
-other semantic relationships are preserved.
-There is no miner, legacy reconciliation backend, Store, or cross-run agent memory.
+For incremental training, pass `--graph-state workspace/graph-store` to every
+`sql-train` call that should update the same persistent graph. This flag expects a
+**bundle directory**. Online Context's flag with the same name expects an exported
+**GraphState JSON or a run directory**.
 
-Graph Merge uses the official `SqliteSaver` with durable, file-backed SQLite checkpoints.
-No database server is required. The default is `workspace/checkpoints/graph_merge.sqlite`;
-relative paths resolve against the configuration directory (repository root for `configs/`).
-Optionally override it:
+### Optional: run extraction and merge independently
 
-```bash
-export GRAPH_MERGE_CHECKPOINT_URL='sqlite:///workspace/checkpoints/graph_merge.sqlite'
-```
-
-Checkpoint tables are initialized automatically; each merge owns and closes its
-connection. PostgreSQL and in-memory checkpoint URLs are rejected. Tests can inject
-`InMemorySaver` explicitly. Web training uses a separate SQLite checkpoint file
-for each run, alongside its input snapshot, progress events and generated graph.
-
-For separate pre-merge output, `scripts/merge_training_output.py` prints and saves
-`merge_run_id.txt` before execution. Resume by repeating the command with the same
-inputs/output and `--run-id ID`. Python callers use `operator.merge(existing,
-incoming, schema, run_id=ID)`. Completed runs return the saved result. Changed
-inputs, configuration or rendered prompts are rejected for that run ID; a new
-run uses a new ID. Identity groups and source evidence are checkpointed before
-group processing. Official child checkpoints retain the working state; a model
-call interrupted before its result was saved can run again. Formal graph saving
-remains at the application boundary.
-
-Set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` to enable native model and tool
-spans, token usage, and cost estimates where model pricing is available. Remote
-inputs/outputs and exception payloads are filtered; full merge evidence stays in
-local artifacts/SQLite checkpoints. Custom model names may need LangSmith pricing
-configuration. Checkpointing and cost observation do not require a billing ledger.
-
-Code is organized as follows:
-
-```text
-capabilities/graph_merge/
-  operator.py                  graph assembly and canonical mappings
-  identity.py / edges.py       matching and deterministic graph operations
-  reconciliation/             proposal models, validation, materialization, facade
-  workflow/                   run checkpoints, group state and four-node loop
-  llm/                        agents, read tools, reference codec
-    prompts/                  role registry, shared rules, type-specific fragments
-infrastructure/workflow/      official SQLite saver and native LangSmith tracing
-```
-
-Prompt composition and maintenance are documented in
-`src/cortex/capabilities/graph_merge/llm/prompts/README.md`. Prompts are versioned
-with source code and identified by their rendered hashes, rather than fetched
-from a mutable remote "latest" version during a run.
-Online retrieval/context APIs remain asynchronous; training adapts RetrieveDB at
-its dedicated retrieval boundary. An asynchronous host should dispatch the
-synchronous training service to a worker thread.
-
-Ontology revisions and detailed evidence remain independently stored. The former
-manual controller and per-type extraction/optimization runtimes are removed.
-
-Each execution gate requires three consecutive correct SQL regenerations by
-default and stops at the first failure. Working changes dynamically; accepted
-improvements advance a separate retained snapshot. Finalization discards tentative
-changes and verifies the actual retained graph, reusing exact matching evidence
-within the same case. Only `ready` semantic fragments enter normal Graph Merge.
-
-See the [case state machine](docs/design/extract-case-agent-loop.md),
-[implementation design](docs/design/extract-implementation.md), and
-[prompt maintenance guide](src/cortex/capabilities/sql_training/llm/prompts/README.md).
-Case directories under `train_runs/<run>/cases/` contain complete snapshots,
-evidence, a safe checkpoint and the final semantic bundle. The programmatic
-`TrainPipeline.resume_case(case_root)` resumes one case using the same configuration,
-source and fixed database; completed bundles can be read without rerunning learning.
-
-Set standard `LANGSMITH_TRACING=true` and LangSmith connection variables to enable
-native LangGraph/agent/model/tool traces, readable inputs/outputs and token usage.
-Credential values are redacted before upload; ontology snapshots and evidence remain
-the local recovery source. Custom model costs require matching LangSmith pricing. Without
-tracing configuration the pipeline runs locally.
-
-### Separate training and graph merge
-
-The two offline modules have public builders and synchronous Python APIs:
-
-```python
-from cortex.bootstrap import build_sql_extraction, build_graph_merge_operator
-from cortex.application import extract_training, merge_training_extraction
-
-engine = build_sql_extraction("configs/cortex.yaml", workspace="workspace/extract")
-extraction = extract_training(engine, training_pairs, schema, existing_state)
-# extraction.state is an incoming fragment, not a complete merged graph.
-operator = build_graph_merge_operator("configs/cortex.yaml", evidence_resolver=evidence_resolver)
-result = merge_training_extraction(extraction, operator, schema)
-merged_graph = result.state.graph
-```
-
-The bootstrap layer has two public training builders:
-
-| Builder | Returns | Scope |
-| --- | --- | --- |
-| `build_sql_extraction(...)` | `SqlTrainingCapability` | Standalone extraction |
-| `build_sql_training_service(...)` | `SqlTrainingService` | Extraction, merge and graph publication |
-
-Both accept a config file path or an already loaded `CortexConfig`. The service
-builder delegates extraction construction to the engine builder; there is no
-separate private service builder. Constructing dependencies belongs to bootstrap;
-`extract_training(...)`, `merge_training_extraction(...)` and `service.run(...)`
-execute the corresponding application workflows.
-
-Passing `engine=` reuses that extraction dependency and preserves the default
-semantic merge behavior. Supply the matching `workspace=` so merge reads its
-source evidence. For deterministic merging without model calls, explicitly pass
-`graph_merge=build_graph_merge_operator(config, live_semantics=False)`.
-
-`build_sql_extraction` builds extraction resources only, without merge model,
-embedding or graph repository initialization. The lower-level
-`engine.train(training_pairs, schema, existing_graph)` and
-`operator.merge(existing_state, incoming_state, schema, run_id=...)` remain available.
-Use `extract_training` and `merge_training_extraction` for the shared training gates,
-terminal reports and optional repository publication. For semantic merge, supply
-source evidence; the CLI wires the training workspace evidence resolver automatically.
-Both the full CLI and separate merge use the configured `graph_merge` model profile.
-
-The independent commands are:
+These commands use the same gates and result contract as `sql-train`:
 
 ```bash
 cortex sql-extract --config configs/cortex.yaml \
-  --training-set data/train.qa_sql.jsonl --output workspace/premerge
+  --training-set data/train.qa_sql.jsonl --output workspace/extract \
+  --result-file workspace/extract-summary.json
 
-cortex graph-merge \
-  --training-workspace workspace/premerge/<run> \
-  --config configs/cortex.yaml --output workspace/merged
+EXTRACT_RUN="$(python -c 'import json; print(json.load(open("workspace/extract-summary.json"))["output"])')"
+
+cortex graph-merge --config configs/cortex.yaml \
+  --training-workspace "$EXTRACT_RUN" --output workspace/merged
 ```
 
-`sql-extract` accepts the same JSON/JSONL/NDJSON records, wrappers and field aliases
-as `sql-train`. It creates a dated run directory. Its formal handoff is
-`extraction_result.json`, containing the incoming state, complete evaluation report,
-base graph and schema hash. `incoming_state.json`, `incoming_graph.json` and
-`evaluation_report.json` are inspection views. A graph alone cannot authorize merge;
-old workspaces without the complete handoff must be regenerated with `sql-extract`.
+`sql-extract` writes `extraction_result.json` with its evaluation, incoming graph,
+base graph, and schema identity. `graph-merge` requires this complete handoff and
+its evidence artifacts; a bare incoming graph is insufficient. Its final graph
+is `workspace/merged/graph_state.json`. Use a fresh merge output directory for a
+new run. To retry an interrupted merge, reuse its saved `merge_run_id.txt` via
+`--run-id ID` with unchanged inputs, configuration, and output directory.
 
-| Parameter | Commands | Meaning |
-| --- | --- | --- |
-| `--training-set PATH` | `sql-extract` | Required training pairs, same format as `sql-train` |
-| `--training-workspace DIR` | `graph-merge` | Required extraction run with `extraction_result.json` and evidence artifacts |
-| `--output DIR` | Both | Required; extraction creates a dated child, merge uses this exact directory |
-| `--config PATH` | Both | Defaults to `configs/cortex.yaml` |
-| `--schema PATH` | Both | Optional root schema override; merge must match extraction |
-| `--existing-state FILE` | Both | Exported base `GraphState` JSON; merge checks it matches the extraction base |
-| `--graph-state DIR` | Both | Persistent graph bundle; extraction only reads, merge validates and updates atomically |
-| `--run-id ID` | `graph-merge`, `sql-train` | Stable merge ID for checkpoint recovery |
-| `--progress-file PATH`, `--result-file PATH` | All three | Optional progress events and terminal summary |
+## 4. Online Context — setting A: human interaction
 
-`--existing-state` and `--graph-state` are mutually exclusive. Without either flag,
-extraction starts with an empty base; merge uses the base saved in the handoff.
-To update an existing graph, pass the same `--graph-state DIR` to extraction and merge.
-To use an exported JSON graph, pass `--existing-state FILE` when extracting;
-merge retains that base automatically. A different base requires new extraction,
-because incoming fragments may reference existing nodes. An existing merge output
-directory requires `--run-id` matching its `merge_run_id.txt`.
-
-The previous script entry points remain aliases with the same flags and exit codes:
-`python scripts/run_sql_training_premerge.py` runs `sql-extract`, and
-`python scripts/merge_training_output.py` runs `graph-merge`.
-
-Full and split training share one terminal contract:
-
-- `completed` / exit 0: extraction and merge finished without review items.
-- `needs_review` / exit 2: nonfatal case failures, extraction errors, unresolved
-  graph conflicts or merge diagnostics requiring review. Valid `ready` fragments
-  are still merged and the validated final graph is exported.
-- `failed` / exit 1: fatal extraction (including a fatal case), invalid handoff,
-  merge initialization/execution failure, final graph validation or publication failure.
-  Fatal extraction never initializes or invokes merge. Failed integration does not
-  publish a candidate graph.
-
-Deterministic cleanup diagnostics `STALE_REFERENCE_EDGE_DROPPED` and
-`INVALIDATED_RELATIONSHIP_DROPPED` are informational; all other current merge
-codes require review. Existing unresolved node conflicts also require review even
-when merge emits no diagnostic.
-
-`sql-train` and `graph-merge` export the same `result.json` structure. Its
-`merge_report` preserves the run ID, complete node/edge mappings, diagnostics and
-candidate state, and is also exported as `merge_report.json` when available.
-Successful/review results have `state == merge_report.state`; failures retain the
-base state and may retain a rejected candidate report for inspection. Runtime
-failures record `failure_stage` and `failure_message` in `diagnostics.context`.
-The final `graph.json`, `graph_state.json` and `graph.html` are exported only for
-`completed` or `needs_review` results.
-
-### Online context
-
-Run guidance for one question using the graph from the quick start:
+Start from the merged graph created in step 3:
 
 ```bash
-cortex online-context run "What is the total revenue for North?" \
-  --graph-state workspace/train/*/graph_state.json \
-  --config configs/cortex.yaml --output workspace/online.json
+cortex online-context run "Show the revenue for North." \
+  --graph-state "$TRAIN_RUN/graph_state.json" \
+  --initial-sql "SELECT AVG(revenue) FROM orders WHERE region = 'North'" \
+  --config configs/cortex.yaml \
+  --output workspace/online-human.json
 ```
 
-For the separate merge workflow, use `workspace/merged/graph_state.json` instead.
+`--initial-sql` is an optional independently generated candidate, which may
+conflict with learned knowledge. It is not a reference answer. Omit it when no
+candidate exists. A clear question may complete immediately; an ambiguous request
+or conflicting candidate can return `status: needs_user_input`.
 
-| Parameter | Required | Description / default |
-| --- | --- | --- |
-| `QUESTION` | Yes | Positional natural-language question |
-| `--graph-state PATH` | Yes | Exported `graph_state.json` or a run directory containing that file |
-| `--config PATH` | No | Configuration; default `configs/cortex.yaml` |
-| `--initial-sql TEXT` | No | Initial candidate SQL |
-| `--question-budget INTEGER` | No | Maximum clarification questions, including JOIN questions; defaults to configuration |
-| `--schema-context DIR` | No | BIRD-style column description directory; alias `--column-context-dir` |
-| `--output PATH` | No | Save the result JSON; the result is also printed to stdout |
-| `--trace-output PATH` | No | Save organizer trace JSON |
-
-If the result has `status: needs_user_input`, read `interaction_questions` and
-create `workspace/answers.json` using the returned question and option IDs:
+For `needs_user_input`, inspect `interaction_questions` and create
+`workspace/answers.json` with the **actual IDs returned by this run**:
 
 ```json
 [
   {
-    "question_id": "question-1",
-    "selected_option_ids": ["option-1"],
+    "question_id": "COPY_ACTUAL_QUESTION_ID",
+    "selected_option_ids": ["COPY_ACTUAL_OPTION_ID"],
     "explanation": ""
   }
 ]
 ```
 
-Select one or more option IDs, or use an empty list with a nonempty explanation.
-Resume using the original result file, which already contains `pending`:
+Answer every question in the current round exactly once. Select one or more
+returned option IDs. If no option fits, use `selected_option_ids: []` and provide
+a nonempty `explanation` describing the desired interpretation.
+
+Resume with the result JSON, which contains its `pending` state:
 
 ```bash
 cortex online-context resume \
-  --graph-state workspace/train/*/graph_state.json \
-  --pending workspace/online.json --answers workspace/answers.json \
-  --config configs/cortex.yaml --output workspace/resolved.json
+  --graph-state "$TRAIN_RUN/graph_state.json" \
+  --pending workspace/online-human.json \
+  --answers workspace/answers.json \
+  --config configs/cortex.yaml \
+  --output workspace/online-human.json
 ```
 
-| Parameter | Required | Description / default |
-| --- | --- | --- |
-| `--graph-state PATH` | Yes | Same graph used for the pending request |
-| `--pending PATH` | Yes | Result JSON containing `pending`, or a JSON file containing just that state |
-| `--answers PATH` | Yes | Answer array as above, or an object with an `answers` array |
-| `--config PATH` | No | Configuration; default `configs/cortex.yaml` |
-| `--output PATH` | No | Save the resumed result JSON; also printed to stdout |
+If another round is returned, replace the answers file using the new question
+and option IDs and repeat `resume`. The result file may be overwritten as above.
+Preserve the same graph, configuration, and checkpoint SQLite file throughout the
+session. `resume` works across processes; changing the graph or deleting the
+checkpoint requires a new `run`.
 
-Repeat if another clarification round is returned. The final result contains
-`downstream_guidance.guidance_content` for use in SQL generation. Online context
-produces guidance; the guided evaluation command in the quick start also generates
-SQL and evaluates it.
+## 5. Online Context — setting B: Gold SQL simulates the user
 
-## Dataset format
+For offline evaluation, add `--gold-sql` to the same public `run` interface:
 
-Training and guided evaluation use UTF-8 JSONL files, with one example per line:
+```bash
+cortex online-context run "Show the revenue for North." \
+  --graph-state "$TRAIN_RUN/graph_state.json" \
+  --initial-sql "SELECT AVG(revenue) FROM orders WHERE region = 'North'" \
+  --gold-sql "SELECT SUM(revenue) FROM orders WHERE region = 'North'" \
+  --config configs/cortex.yaml \
+  --output workspace/online-simulated.json
+```
+
+The system first retrieves knowledge and produces its own clarification questions.
+Only then does `SimulatedUserAgent` read Gold SQL, answer/review those questions,
+and call the same `resume` interface used in setting A. This repeats until a
+terminal result. Gold SQL is not supplied to retrieval, question organization, or
+guidance synthesis. Do not copy Gold SQL into `--initial-sql` when evaluating.
+
+The output adds `simulation.interaction_rounds` with the actual questions and
+simulated answers. An empty array means no clarification was needed; it does not
+prove that simulator answering was exercised. No Gold SQL is needed in setting A.
+
+For a batch of JSONL cases, the existing evaluation script uses the same
+Gold-only-to-simulator boundary:
+
+```bash
+python scripts/evaluate_online_context.py \
+  --graph-state "$TRAIN_RUN/graph_state.json" \
+  --cases data/dev.qa_sql.jsonl --dialect sqlite \
+  --config configs/cortex.yaml --output workspace/online-batch.json
+```
+
+Each case must include `question` and reference `sql`; optional `initial_sql`
+is a separate candidate. Inspect each record's `error` and
+`online_after_interaction.status`, not only the script's exit code.
+
+### Result contract and useful flags (both settings)
+
+Terminal successful results contain:
+
+```text
+downstream_guidance.guidance_content
+```
+
+This is guidance text to insert into a downstream SQL-generation prompt. Online
+Context itself does not generate or execute the final SQL.
+
+| Status | Meaning |
+| --- | --- |
+| `needs_user_input` | Paused; answer current questions and resume (automatic in setting B) |
+| `completed` | Terminal guidance with resolved choices |
+| `completed_with_custom_guidance` | Terminal guidance incorporates a custom user explanation |
+| `completed_with_unresolved` | Guidance exists but some choices remain unresolved, e.g. budget exhausted |
+| `no_match` | No usable relevant knowledge; no terminal guidance |
+| `unavailable` | Required context construction unavailable; no terminal guidance |
+
+An Online Context command's exit 0 means a result was returned; inspect its
+`status` and guidance before using it downstream. Exceptions exit nonzero.
+
+| Flag | Purpose |
+| --- | --- |
+| `--question-budget N` | Override configured question budget; 0 does not mean all ambiguities are resolved |
+| `--run-id ID` | Alphanumeric session ID; retry a failed `run` with the same ID and unchanged inputs |
+| `--trace-output PATH` | Save organizer trace for the initial run |
+| `--schema-context DIR` | Optional BIRD-style database column description directory |
+| `--output PATH` | Save the result; also printed to stdout |
+
+Use `cortex sql-train --help`, `cortex sql-extract --help`,
+`cortex graph-merge --help`, and `cortex online-context run/resume --help`
+(replace `run/resume` with the individual subcommand) for the complete flags.
+
+## 6. Input format and Python APIs
+
+Training accepts UTF-8 JSONL/NDJSON, a JSON array, or an object containing a
+`training_set` or `queries` array. Use unique IDs and SQL valid for the configured
+database:
 
 ```jsonl
 {"source_id":"train-1","question":"What is total revenue in each region?","sql":"SELECT region, SUM(revenue) FROM orders GROUP BY region","evidence":null}
 ```
 
-| Field | Required | Description |
-| --- | --- | --- |
-| `source_id` | Yes | Unique example ID within the input file |
-| `question` | Yes | Natural-language question |
-| `sql` | Yes | Reference SQL for the selected database |
-| `evidence` | No | Additional context for the question |
-
-Place each SQLite database at `data/databases/DB_ID/DB_ID.sqlite`. Process one
-database at a time: set `database.path` in `configs/cortex.yaml` and use the same
-`DB_ID` for the evaluation command's `--database` argument.
-
-For BIRD or SPIDER JSON files, prepare the inputs with:
+`question` and `sql` are required; `source_id` is recommended (generated when
+omitted), and `evidence` is optional. Native `query` / `gt_sql` aliases are accepted.
+Convert public BIRD/SPIDER datasets to this format with:
 
 ```bash
 python scripts/prepare_public_inputs.py \
@@ -394,33 +380,101 @@ python scripts/prepare_public_inputs.py \
   --database your_database_id --output data
 ```
 
-The adapter accepts BIRD `SQL` and SPIDER `query` fields and writes
-`data/train.qa_sql.jsonl`, `data/dev.qa_sql.jsonl` and `data/dev.json`.
+Set `database.path` to your own database and keep all training examples within
+that database. The adapter reads BIRD `SQL` and SPIDER `query` fields. No real
+dataset is included in the repository.
 
+The full offline Python interface is synchronous:
 
-## Ontology web workbench
+```python
+import json
+from pathlib import Path
+from cortex.application import QASqlTrainingRecord
+from cortex.bootstrap import build_sql_training_service
+from cortex.schema import load_root_schema
 
-The integrated DocSensaAI frontend now supports preloaded SQLite previews,
-question–SQL JSONL import, real `cortex sql-train` execution, and an embedded
-ontology explorer with PNG/SVG export and Graph JSON import/save.
-The build button trains the first one or two imported cases, reports actual case
-and merge progress, and loads that invocation's generated graph. Task metadata
-and official LangGraph checkpoints use file-backed SQLite; no PostgreSQL server
-is needed. Archived graphs remain available through their separate explorer.
-See
-[setup and implementation](docs/design/ontology-web-implementation.md).
+pairs = tuple(QASqlTrainingRecord.model_validate(json.loads(line))
+              for line in Path("data/train.qa_sql.jsonl").read_text().splitlines()
+              if line.strip())
+service = build_sql_training_service("configs/cortex.yaml", workspace=Path("workspace/api"))
+result = service.run(training_set=pairs, schema=load_root_schema())
+if result.status.value == "failed":
+    raise RuntimeError("Inspect result.evaluation_report and result.diagnostics")
+merged_state = result.state
+Path("workspace/api/graph_state.json").write_text(merged_state.model_dump_json(indent=2))
+```
 
-### Interactive database question answering
+Separate APIs are `build_sql_extraction` / `extract_training` and
+`build_graph_merge_operator` / `merge_training_extraction`. Semantic merge needs
+the extraction workspace's evidence resolver; the CLI wires it automatically.
 
-The ontology workbench now includes **Ask database**: a dedicated NL2SQL agent
-with real online-context retrieval, user clarification, persistent pause/resume,
-SQL validation and read-only execution, and graph/SQL evidence links. It does not
-use or modify the experimental `baseline/` workflow.
+Online Python APIs are asynchronous:
 
-Start the existing portal and API with
-`scripts/start_ontology_web.sh /path/to/DataMosaic 8012`, then open
-`http://127.0.0.1:8012/ontomosaic-text2sql?view=ask&db=financial`.
-Select the database and an ontology source, ask a question, and answer any
-clarification cards. Conversations and checkpoints survive page refreshes and
-API restarts. See [implementation and verification](docs/design/nl2sql-agent-implementation.md)
-for configuration, API contracts, execution limits and linkage semantics.
+```python
+import asyncio
+from cortex.bootstrap import build_online_context_service, build_simulated_user_agent
+
+async def online(merged_state, question, gold_sql=None):
+    service = build_online_context_service("configs/cortex.yaml")
+    current = await service.run(question=question, graph_state=merged_state, dialect="sqlite")
+    if gold_sql is None:
+        return current  # Present pending questions to the human, then call service.resume.
+    simulator = build_simulated_user_agent("configs/cortex.yaml")
+    prior_questions, prior_answers = [], []
+    while current.pending is not None:
+        questions = current.interaction_questions
+        answers = await simulator.answer_round(
+            question=question, gold_sql=gold_sql, dialect="sqlite",
+            interaction_questions=questions,
+            prior_questions=tuple(prior_questions), prior_answers=tuple(prior_answers),
+        )
+        prior_questions.extend(questions)
+        prior_answers.extend(answers)
+        current = await service.resume(
+            graph_state=merged_state, pending=current.pending, answers=answers,
+        )
+    return current
+
+# current = asyncio.run(online(merged_state, "What is total revenue for North?"))
+```
+
+Use `InteractionAnswer` objects for Python `service.resume`, and preserve the
+returned `OnlineContextPending`. An async application should dispatch synchronous
+training to a worker thread.
+
+## 7. Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Missing LLM configuration | Export `.env` in the current shell; verify the three required `CORTEX_LLM_*` values |
+| 401/403 from provider | API key, endpoint, model access, and account permissions |
+| 404 while validating/retrieving | Chat model name and endpoint; disable embeddings unless `/embeddings` is available |
+| Tool/structured-output errors | Choose a model supporting tool calls/JSON; inspect case diagnostics |
+| No such table / database file | `database.path`, config-relative paths, and that demo creation ran from the repo root |
+| `needs_review` after training | Review case failures and merge conflicts; a graph export alone is not a passing run |
+| Pending checkpoint missing/incompatible | Use the same config and graph; preserve checkpoint files or start a fresh session |
+| Training/model timeout | Check provider connectivity and `llm.timeout`; allow sufficient model context and quota |
+
+Tracing is optional: set `LANGSMITH_TRACING=true` with your own LangSmith key to
+enable native traces. The workflows work with tracing disabled. Keep local input,
+output, checkpoints, and credentials out of Git.
+
+## 8. Verification record
+
+On 2026-10-28, the SQLite workflow was checked with CPython 3.11, the pinned
+runtime, a real configured chat endpoint, embeddings disabled, and tracing off:
+
+- Fresh virtual environment: dependency installation and `pip check` passed.
+- Synthetic `sql-train`: `completed`, 1/1 case passed, merged graph exported.
+- Independent `sql-extract` followed by `graph-merge`: both `completed`.
+- Human interface: real ambiguity → `needs_user_input` → answer submission in a
+  separate CLI process → `completed` with nonempty guidance.
+- Gold simulator: real clarification question → simulated answer → `completed`
+  with nonempty guidance and one recorded interaction round.
+- 677 existing local regression checks plus four release-specific checks passed,
+  including multiple clarification rounds, Gold isolation, checkpoint paths,
+  and optional provider extensions. Local tests and run artifacts are excluded
+  from the published source.
+
+These checks cover the documented paths and the synthetic data, rather than a
+claim that arbitrary datasets, model outputs, or providers can never fail.

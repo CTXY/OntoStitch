@@ -61,7 +61,7 @@ class ResolvedLLMConfig(_ConfigModel):
     model: str | None = None
     base_url: str | None = None
     api_key: SecretStr | None = None
-    enable_thinking: bool = False
+    enable_thinking: bool | None = None
     temperature: float = Field(default=0.0, ge=0)
     timeout: float = Field(default=300.0, gt=0)
     max_retries: int = Field(default=2, ge=0)
@@ -72,7 +72,7 @@ class LLMConfig(_ConfigModel):
     model: str | None = None
     base_url: str | None = None
     api_key: SecretStr | None = None
-    enable_thinking: bool = False
+    enable_thinking: bool | None = None
     temperature: float = Field(default=0.0, ge=0)
     timeout: float = Field(default=300.0, gt=0)
     max_retries: int = Field(default=2, ge=0)
