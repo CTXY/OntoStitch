@@ -5,15 +5,6 @@ pairs and uses it to guide SQL generation. It extracts concepts, metrics, and
 generation rules, merges them with database schema knowledge into an ontology
 graph, and retrieves relevant knowledge for new questions.
 
-The workflow has three stages:
-
-1. **Data preparation:** provide a database and question–SQL training pairs.
-2. **Offline learning:** `sql-train` extracts and validates knowledge, then merges
-   it into an ontology graph.
-3. **Online context:** retrieve relevant knowledge, clarify ambiguities through
-   human interaction or a Gold SQL simulated user, and return guidance for a
-   downstream SQL generator.
-
 ## Installation
 
 Use **Python 3.11** on Linux or macOS (or WSL). Run the following commands from
