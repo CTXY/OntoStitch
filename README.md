@@ -172,3 +172,19 @@ Read `downstream_guidance.guidance_content` from the terminal result JSON.
 `completed_with_unresolved` means some choices remain unresolved; `no_match` or
 `unavailable` means no guidance was produced. Online Context produces guidance;
 your downstream SQL generator uses it to generate the final SQL.
+
+
+## Database metadata
+
+Initialize metadata from SQLite DDL/profiling, optional file import, and optional
+Agent enrichment. BIRD import uses the configured LLM to faithfully extract its
+column and value explanations. Database enrichment is separately enabled.
+
+```bash
+cortex metadata build --database path/to/database.sqlite --workspace workspace/metadata --initial-file path/to/database_description --loader bird
+cortex metadata export --workspace workspace/metadata --output metadata.json
+```
+
+Use `--agent` to enable database exploration and enrichment, or `--file-mode agent`
+for unknown file layouts. Configuration defaults to `configs/cortex.yaml`. Source
+databases are read-only; metadata revisions and model traces are saved separately.

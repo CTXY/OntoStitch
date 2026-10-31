@@ -1,5 +1,6 @@
 import click
 
+from cortex.cli.metadata import metadata_cli
 from cortex.cli.online_context import online_context_cli
 from cortex.cli.retrieve import retrieve_cli
 from cortex.cli.sql_training import (
@@ -19,6 +20,7 @@ main.add_command(sql_extraction_cli)
 main.add_command(graph_merge_cli)
 main.add_command(online_context_cli)
 main.add_command(retrieve_cli)
+main.add_command(metadata_cli)
 
 if __name__ == "__main__":
     main()
