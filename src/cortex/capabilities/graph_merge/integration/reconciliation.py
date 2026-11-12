@@ -113,6 +113,9 @@ class ReconciliationController:
                 and self.checked_signals.get(s["id"])
                 != _stamp(current, signal_targets(s, current), s)
             ]
+            # Organization repairs may retire abstract edges; resolve them
+            # before spending calls on predicate wording alone.
+            active.sort(key=lambda check: check["kind"] == "abstract_predicate")
             candidates = [(signal_targets(s, current), [s]) for s in active]
             covered = (
                 set().union(*(ids for ids, _ in candidates)) if candidates else set()
@@ -206,7 +209,6 @@ class ReconciliationController:
         pending = []
         new_prefix = f"generated::{uuid4().hex}::"
         checks = {s["id"]: s for s in task.checks}
-        routine = set(payload["routine_review_ids"])
 
         def expand(ids, reason):
             nodes, edges = _indexes(engine.current)
@@ -240,7 +242,9 @@ class ReconciliationController:
             payload.update(
                 new_id_prefix=new_prefix,
                 feedback=unresolved,
-                routine_review_ids=sorted(routine - completed),
+                routine_review_ids=sorted(
+                    set(payload["routine_review_ids"]) - completed
+                ),
             )
             if attempt:
                 payload["retry_units"] = [u.model_dump(mode="json") for u in pending]
@@ -318,6 +322,31 @@ class ReconciliationController:
                         raise ValueError(
                             "A changed conclusion requires an actual graph repair"
                         )
+                    affected = affected_query_roots(base, batch.preview)
+                    changed_ids = {
+                        key
+                        for values in delta(base, batch.preview).values()
+                        for keys in values.values()
+                        for key in keys
+                    }
+                    for conclusion in unit.patch.inspection_checks:
+                        check = checks[conclusion.inspection_id]
+                        if conclusion.conclusion == "changed" and not (
+                            (affected | changed_ids) & signal_targets(check, base)
+                        ):
+                            raise ValueError(
+                                f"Inspection {conclusion.inspection_id} is not repaired by unrelated edits"
+                            )
+                        if check["kind"] == "abstract_predicate":
+                            from cortex.schema.relation_vocabulary import (
+                                require_concrete_relation,
+                            )
+
+                            for key in check.get("edge_ids", ()):
+                                if key in _indexes(batch.preview)[1]:
+                                    require_concrete_relation(
+                                        _indexes(batch.preview)[1][key].edge_type
+                                    )
                     review_ids = self._review_ids(
                         base,
                         batch.preview,
@@ -424,6 +453,10 @@ class ReconciliationController:
                 if kind in {"node", "edge"}
             }
             scope |= repair_refs
+            nodes, edges = _indexes(engine.current)
+            # New objects remain complete in retry_units, not missing accepted
+            # targets. Feedback-referenced current objects become routine roots.
+            scope &= nodes.keys() | edges.keys()
             task.checks = list(checks.values())
         raise IntegrationIncomplete(
             f"{task.id} failed reconciliation assessment; graph not published"

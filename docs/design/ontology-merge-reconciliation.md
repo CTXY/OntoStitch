@@ -14,7 +14,7 @@ The previous four-case run used 27 Reconciliation calls plus 21 Assessment calls
 4. Code groups units with actual write/read or disposition dependencies, plus Agent-declared semantic coupling. Shared read-only parents alone do not couple units. Each component must independently apply to the accepted baseline; the combined candidate is checked too.
 5. Batch Assessment reviews actual semantic changes, deletions, concrete business-role changes, fresh evidence and explicit related-decision/source-selection inspections. Unchanged unrelated Rules are not mandatory review targets. Complete ordinary no-change inspections skip a second review. Rejected semantic feedback cannot be closed by returning an empty patch.
 6. Independently accepted units update the workspace graph and lineage together. Failed units retain their proposed patch and current feedback; the next invocation contains only their required scope. Mechanically or semantically coupled units pass/fail together. No dependency DAG or speculative execution is used.
-7. Recompute remaining signals against the accepted graph after each batch. Run-local check coverage is invalidated by changes to the checked objects, incident facts or relevant contracts. New patterns receive explicit conclusions. This is not a global semantic cache or a claim of inferred correctness.
+7. Recompute remaining signals against the accepted graph after each batch. Resolve organization before standalone abstract-predicate wording: an organization repair may retire the old edge entirely. Run-local check coverage is invalidated by changes to the checked objects, incident facts or relevant contracts. New patterns receive explicit conclusions. This is not a global semantic cache or a claim of inferred correctness.
 8. Final publication and complete public provenance audit run once. An incomplete/rejected run does not publish a final graph.
 
 ## Input and output
@@ -34,6 +34,8 @@ ReconciliationBatch
 ```
 
 Each routine target and named inspection must be answered exactly once. Patches are complete replacements for failed units; there is no invalid-pending accumulation or `remove_*` protocol in this path. Code preserves the existing current-relative patch validator, source checks and conflict compaction.
+
+On retry, feedback-referenced current objects are promoted into the refreshed routine target list; validation uses that refreshed list, not the original batch's list. Rejected newly created objects remain in complete `retry_units` rather than becoming nonexistent accepted-graph targets. A changed inspection must affect its actual problem, not merely an unrelated object. A no-change claim cannot override an explicit hard relation constraint.
 
 Assessment receives a shared candidate, exact per-unit target lists, actual-change directories, accepted-before contents for changed objects, source evidence and compact unit patch directories. Complete candidate definitions are not duplicated in the patch directory. It returns:
 

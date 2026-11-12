@@ -367,3 +367,85 @@ def test_commit_refreshes_and_removes_obsolete_signal(monkeypatch):
     controller.run(first=True)
     assert len(visits) == 2  # B is covered; only the independent C still needs review.
     assert b not in visits[1].targets
+
+
+def test_feedback_extension_becomes_an_explicit_retry_review_target():
+    first = True
+
+    def writer(ctx, p):
+        units = []
+        for key in p["routine_review_ids"]:
+            old = next(n for n in ctx.candidate.graph.nodes if n.id == key)
+            new = old.model_copy(update={"description": "Supported revised content"})
+            units.append(
+                RepairUnit(
+                    unit_id=key,
+                    checked_node_ids=(key,),
+                    patch=BatchResult(
+                        edits=(
+                            {
+                                "operation": "update_node",
+                                "node": new.model_dump(mode="json"),
+                            },
+                        )
+                    ),
+                )
+            )
+        return ReconciliationBatch(
+            units=tuple(units),
+            coupled_units=(tuple(u.unit_id for u in units),) if len(units) > 1 else (),
+        )
+
+    def assessor(p):
+        nonlocal first
+        if first:
+            first = False
+            unit = p["review_units"][0]
+            return BatchNodeReview(
+                results=(
+                    UnitNodeReview(
+                        unit_id=unit["unit_id"],
+                        review=NodeReview(
+                            verdict="revise",
+                            issues=("The directly related B also requires correction",),
+                            issue_refs=({"kind": "node", "id": b},),
+                        ),
+                    ),
+                )
+            )
+        return review_all(p)
+
+    agent = ScriptedAgent(writer, assessor)
+    engine = engine_for(agent)
+    a, b = (engine.ctx.input_node_map[k] for k in ("A", "B"))
+    ReconciliationController(engine, "feedback-extension").run(initial_targets={a})
+    retry = next(
+        p for phase, p in agent.calls if phase == "reconcile" and p.get("retry_units")
+    )
+    assert set(retry["routine_review_ids"]) == {a, b}
+    assert [phase for phase, _ in agent.calls] == [
+        "reconcile",
+        "node_assess",
+        "reconcile",
+        "node_assess",
+    ]
+
+
+def test_abstract_no_change_cannot_bypass_the_hard_relation_contract():
+    source = state(
+        [*catalog(), concept("A", "a"), concept("B", "b")],
+        [edge("abstract", "A", "B", "has_attribute")],
+    )
+    agent = ScriptedAgent(no_change)
+    engine = engine_for(agent, source)
+    with pytest.raises(ValueError, match="abstract|specializ|concrete"):
+        ReconciliationController(engine, "abstract").run(first=True)
+    assert not engine.history
+
+
+def test_mechanical_coupling_rejects_empty_or_unknown_groups():
+    unit = RepairUnit(unit_id="one", patch=BatchResult())
+    with pytest.raises(ValueError, match="two distinct"):
+        group_units([unit], state(), coupled=[()])
+    with pytest.raises(ValueError, match="Unknown"):
+        group_units([unit], state(), coupled=[("one", "unknown")])

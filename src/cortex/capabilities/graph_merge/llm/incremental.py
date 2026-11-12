@@ -285,6 +285,11 @@ class IncrementalIntegrationAgent:
             "inspect_pending",
         }
         budget_announced = False
+        repair_hint = (
+            "No invalid units are saved. Return complete corrected units using the current routine_review_ids and retry_units."
+            if payload.get("reconciliation_batch")
+            else "Replace faulty objects; previously saved pending objects remain. Use remove_edits/remove_changes/remove_edge_merges to withdraw them."
+        )
         try:
             for _ in range(self.max_calls):
                 batch = getattr(context, "active_batch", None)
@@ -353,7 +358,9 @@ class IncrementalIntegrationAgent:
                     except (ValueError, TypeError) as exc:
                         messages.append(
                             HumanMessage(
-                                f"Output rejected: {exc}. Submit only replacements for the affected objects; pending objects remain saved. Use {output.__name__} or valid complete JSON."
+                                f"Output rejected: {exc}. {repair_hint} Use {output.__name__} or valid complete JSON."
+                                if payload.get("reconciliation_batch")
+                                else f"Output rejected: {exc}. Submit only replacements for the affected objects; pending objects remain saved. Use {output.__name__} or valid complete JSON."
                             )
                         )
                     continue
@@ -381,7 +388,7 @@ class IncrementalIntegrationAgent:
                         result = {
                             "status": "rejected",
                             "error": str(exc),
-                            "repair": "Replace faulty objects; previously saved pending objects remain. Use remove_edits/remove_changes/remove_edge_merges to withdraw them.",
+                            "repair": repair_hint,
                         }
                     if self.trace_sink:
                         self.trace_sink.record(

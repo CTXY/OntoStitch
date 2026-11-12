@@ -124,6 +124,8 @@ def group_units(units, state, coupled=()):
             if w & (w2 | r2) or w2 & r:
                 links.append((left.unit_id, right.unit_id))
     for link in links:
+        if len(set(link)) < 2:
+            raise ValueError("Coupling needs two distinct known unit IDs")
         if not set(link) <= footprints.keys():
             raise ValueError("Unknown coupled unit")
         touched = [g for g in groups if g & set(link)]
