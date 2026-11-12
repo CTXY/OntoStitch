@@ -30,6 +30,8 @@ Feedback on a completed workspace can start a new local transaction with explici
 
 A concrete late identity counterexample fails the unpublished batch and requires rebuilding it from immutable sources; merely reversing aliases cannot undo fused semantics safely.
 
+Before each matched batch, code projects only still-live members. An absent member must already have a recorded rewrite into the confirmed canonical owner; otherwise the controller fails before calling the model. The full original group is still supplied for content comparison and independent assessment. This retains earlier coupled repairs without inferring identity from provenance or restoring retired copies. Controller-owned projection and lineage assumptions are preflight-validated, not repeatedly presented to the Agent as repairable tool errors.
+
 ## Local graph selection
 
 Each task has **editable targets**, full relevant objects, and **read-only context**. Code never uses accumulated read history as scope or write permission.

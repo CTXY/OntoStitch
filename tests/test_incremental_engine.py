@@ -268,3 +268,48 @@ def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypat
     engine._run_task = lambda task, run_id: calls.append(task.targets) or set()
     engine._reconcile("local", initial_targets={a})
     assert calls == [{a}]
+
+
+def test_later_identity_batch_does_not_reproject_a_consumed_member():
+    import pytest
+
+    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+    from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+    from cortex.capabilities.graph_merge.integration.incremental import (
+        active_identity_projection,
+    )
+    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.integration.models import Change
+
+    ctx = IntegrationContext(
+        state(),
+        state([*catalog(), concept("A", "a"), concept("B", "a")]),
+        load_root_schema(),
+    )
+    before = ctx.union_state()
+    a, b = ctx.input_node_map["A"], ctx.input_node_map["B"]
+    after = before.model_copy(
+        update={
+            "graph": before.graph.model_copy(
+                update={"nodes": tuple(n for n in before.graph.nodes if n.id != b)}
+            )
+        }
+    )
+    ledger = LineageIndex(ctx)
+    with pytest.raises(IntegrationIncomplete, match="absent without"):
+        active_identity_projection(after, {a: a, b: a}, ledger)
+    ledger.observe(
+        before,
+        after,
+        [
+            Change.model_validate(
+                {
+                    "before": [{"kind": "node", "id": b}],
+                    "after": [{"kind": "node", "id": a}],
+                    "explanation": "Earlier coupled repair already incorporated this matched member.",
+                }
+            )
+        ],
+    )
+    assert active_identity_projection(after, {a: a, b: a}, ledger) == {a: a}
+    assert any(r.id == b for r in ledger.origin_refs("node", a))

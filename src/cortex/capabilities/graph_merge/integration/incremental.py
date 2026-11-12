@@ -63,6 +63,32 @@ def _nodes(state):
     return {n.id: n for n in state.graph.nodes}
 
 
+def active_identity_projection(current, aliases, lineage):
+    """Project live members only; retain recorded earlier structural rewrites.
+
+    Identity is already Agent-confirmed. Provenance here only verifies why an
+    absent member needs no second physical projection; it establishes no match.
+    The subsequent Agent still compares the complete immutable matched group.
+    """
+    nodes = _nodes(current)
+    active = {}
+    for source, target in aliases.items():
+        if target not in nodes:
+            raise IntegrationIncomplete(
+                f"Matched canonical {target} was retired; rebuild the unpublished plan"
+            )
+        if source in nodes:
+            active[source] = target
+        elif not any(
+            r.kind == "node" and r.id == source
+            for r in lineage.origin_refs("node", target)
+        ):
+            raise IntegrationIncomplete(
+                f"Matched member {source} is absent without a recorded rewrite to {target}"
+            )
+    return active
+
+
 def _signal_targets(check, state):
     edges = {e.id: e for e in state.graph.edges}
     keys = set(check.get("node_ids", ())) | set(check.get("edge_ids", ()))
@@ -293,6 +319,9 @@ class IncrementalGraphIntegrationEngine:
                     continue
                 group_aliases = {k: aliases[k] for g in groups for k in g["members"]}
                 targets = {aliases[k] for g in groups for k in g["members"]}
+                group_aliases = active_identity_projection(
+                    self.current, group_aliases, self.lineage
+                )
                 self._run_task(
                     LocalTask(
                         f"content-{index}", "consolidate", targets, groups=groups
@@ -328,6 +357,12 @@ class IncrementalGraphIntegrationEngine:
         before = self.current
         new_id_prefix = f"generated::{uuid4().hex}::"
         batch = ActiveBatch(ctx, before, targets=task.targets, aliases=aliases)
+        projected_lineage = LineageIndex.restore(ctx, self.lineage.snapshot())
+        # This projection is controller-owned, so fail before any model call if
+        # its state assumptions are invalid. The Agent cannot repair this map.
+        projected_lineage.observe(
+            before, batch.seed, node_aliases=aliases, edge_aliases=batch.edge_aliases
+        )
         ctx.active_task = task
         ctx.active_batch = batch
         self.open_tasks = [
@@ -452,13 +487,7 @@ class IncrementalGraphIntegrationEngine:
                 raise ValueError("Repair unsupported Rule reasons before accepting")
             # Origin ledger checks are staged on a clone, so invalid patches do
             # not pollute the accepted source correspondences.
-            staged = LineageIndex.restore(ctx, self.lineage.snapshot())
-            staged.observe(
-                before,
-                batch.seed,
-                node_aliases=aliases,
-                edge_aliases=batch.edge_aliases,
-            )
+            staged = LineageIndex.restore(ctx, projected_lineage.snapshot())
             staged.observe(batch.seed, candidate, changes)
             validate_rewrite_sources(
                 ctx,
