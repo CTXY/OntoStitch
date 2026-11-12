@@ -17,6 +17,9 @@ class GroundingDatabase:
     def __init__(self, session: LearningSession):
         self.session = session
 
+    def get_dialect(self) -> str:
+        return self.session.dialect
+
     def find_exact_column_values(self, table_name, column_name, value):
         assets = self.session.graph.working.physical_assets
         target = next(

@@ -1,64 +1,23 @@
+"""Physical equality relationships, independent of a query's JOIN operator."""
+
 from __future__ import annotations
 
-import hashlib
-import json
+from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
 
 import sqlglot
 from sqlglot import expressions
 
+from cortex.capabilities.sql_training.core.enums import NodeType
+from cortex.capabilities.sql_training.core.ids import make_node_id
 from cortex.schema import GraphEdge, SourceReference
-
-_JOIN_EDGE_PROPERTY_KEYS = frozenset({"default_join_type", "cardinality", "conditions"})
-
-
-def join_edge_key(edge: GraphEdge) -> tuple[tuple[str, str], tuple[tuple[str, str, str], ...]]:
-    """Identify one physical relation independently of alias, direction, or case."""
-
-    if edge.edge_type != "joins_with":
-        raise ValueError("join edge identity requires joins_with")
-    conditions = edge.properties.get("conditions")
-    if not isinstance(conditions, list) or not conditions:
-        raise ValueError("join edge requires complete conditions")
-    normalized: list[tuple[str, str, str]] = []
-    for condition in conditions:
-        if not isinstance(condition, dict):
-            raise ValueError("join condition must be an object")
-        left = condition.get("left_column_ref")
-        right = condition.get("right_column_ref")
-        operator = condition.get("operator", "=")
-        if not isinstance(left, str) or not isinstance(right, str) or operator != "=":
-            raise ValueError("join condition must be a column equality")
-        normalized.append((*sorted((left, right)), "="))
-    return tuple(sorted((edge.from_node_id, edge.to_node_id))), tuple(sorted(normalized))
-
-
-def merge_join_edges(
-    existing: Iterable[GraphEdge], incoming: Iterable[GraphEdge]
-) -> list[GraphEdge]:
-    """Keep catalog IDs for equivalent Gold joins and union their provenance."""
-
-    by_key: dict[tuple, GraphEdge] = {}
-    used_ids: set[str] = set()
-    for edge in (_public_join_edge(edge) for edge in (*tuple(existing), *tuple(incoming))):
-        key = join_edge_key(edge)
-        current = by_key.get(key)
-        if current is not None:
-            sources = tuple(
-                {
-                    (source.source_id, source.locator, source.case_id, source.chunk_id): source
-                    for source in (*current.sources, *edge.sources)
-                }.values()
-            )
-            by_key[key] = current.model_copy(update={"sources": sources})
-            continue
-        if edge.id in used_ids:
-            digest = hashlib.sha256(json.dumps(key).encode()).hexdigest()[:24]
-            edge = edge.model_copy(update={"id": f"edge_{digest}"})
-        by_key[key] = edge
-        used_ids.add(edge.id)
-    return list(by_key.values())
+from cortex.schema.physical_joins import (
+    _edge_id,
+    _public_join_edge,
+    join_edge_key,
+    merge_join_edges,
+)
 
 
 def gold_join_edge(
@@ -67,124 +26,204 @@ def gold_join_edge(
     to_table: str,
     column_pairs: Iterable[tuple[str, str]],
     source_id: str,
-    join_type: str = "INNER",
-    sql_construct_type: str | None = None,
-    evidence_fragment: str | None = None,
 ) -> GraphEdge:
-    conditions = [
-        {
-            "left_column_ref": f"column.{from_table}.{left}",
-            "right_column_ref": f"column.{to_table}.{right}",
-            "operator": "=",
-        }
-        for left, right in column_pairs
-    ]
-    properties: dict[str, Any] = {
-        "default_join_type": join_type,
-        "conditions": conditions,
-    }
     edge = GraphEdge(
         id="pending",
         edge_type="joins_with",
-        from_node_id=f"table.{from_table}",
-        to_node_id=f"table.{to_table}",
-        properties=properties,
-        sources=(SourceReference(source_id=source_id, locator="qa", case_id=source_id),),
+        from_node_id=make_node_id(NodeType.TABLE, from_table),
+        to_node_id=make_node_id(NodeType.TABLE, to_table),
+        properties={
+            "column_pairs": [
+                {
+                    "from_column_ref": make_node_id(NodeType.COLUMN, from_table, left),
+                    "to_column_ref": make_node_id(NodeType.COLUMN, to_table, right),
+                }
+                for left, right in column_pairs
+            ]
+        },
+        sources=(
+            SourceReference(source_id=source_id, locator="qa", case_id=source_id),
+        ),
     )
-    digest = hashlib.sha256(json.dumps(join_edge_key(edge)).encode()).hexdigest()[:24]
-    return edge.model_copy(update={"id": f"edge_{digest}"})
+    edge = _public_join_edge(edge)
+    return edge.model_copy(update={"id": _edge_id(join_edge_key(edge))})
 
 
-def _public_join_edge(edge: GraphEdge) -> GraphEdge:
-    """Return the schema-public physical edge shape used in GraphSpace.
-
-    Gold extraction may produce training evidence such as SQL construct kind or
-    SQL fragments. That evidence is trace data; the public `joins_with` edge is
-    the reusable physical relation and must stay inside the root schema.
-    """
-
-    if edge.edge_type != "joins_with":
-        return edge
-    properties = {
-        key: value
-        for key, value in edge.properties.items()
-        if key in _JOIN_EDGE_PROPERTY_KEYS
-    }
-    if properties == edge.properties:
-        return edge
-    return edge.model_copy(update={"properties": properties})
+def constraint_cardinality(
+    from_columns: set[str],
+    to_columns: set[str],
+    from_keys: Iterable[Iterable[str]],
+    to_keys: Iterable[Iterable[str]],
+) -> str | None:
+    """A complete declared unique key bounds matches; data samples are irrelevant."""
+    left = any(key and set(key) <= from_columns for key in from_keys)
+    right = any(key and set(key) <= to_columns for key in to_keys)
+    return "1:1" if left and right else "1:N" if left else "N:1" if right else None
 
 
-def build_gold_join_edges_from_llm_proposals(
+def extract_gold_join_edges(
     *,
-    proposals: Iterable[dict[str, Any]],
+    sql: str,
+    dialect: str,
     source_id: str,
     table_columns: dict[str, set[str]],
+    skipped: list[dict[str, str]] | None = None,
 ) -> list[GraphEdge]:
-    """Project LLM-proposed Gold relationships after catalog-level safety checks."""
+    """Extract complete equality keys from explicit JOIN ON/USING only.
 
-    edges: list[GraphEdge] = []
-    canonical = _canonical_table_columns(table_columns)
-    for proposal in proposals:
-        from_table = canonical.get(str(proposal.get("from_table") or "").lower())
-        to_table = canonical.get(str(proposal.get("to_table") or "").lower())
-        raw_pairs = proposal.get("column_pairs")
-        if (
-            from_table is None
-            or to_table is None
-            or from_table == to_table
-            or not isinstance(raw_pairs, list)
-            or not raw_pairs
-        ):
+    Each ON must consist entirely of direct column equalities to its joined
+    table. Derived sources, self-relations, cross-source WHERE conditions and
+    joins inside IN/EXISTS are conservatively skipped as whole relationships.
+    """
+    from sqlglot.optimizer.scope import traverse_scope
+
+    tree = sqlglot.parse_one(sql, dialect=dialect)
+    catalog = {
+        name.casefold(): (name, {col.casefold(): col for col in columns})
+        for name, columns in table_columns.items()
+    }
+    edges = []
+
+    def skip(join, reason):
+        if skipped is not None:
+            skipped.append({"reason": reason, "sql": join.sql(dialect=dialect)})
+
+    for scope in traverse_scope(tree):
+        select = scope.expression
+        if not isinstance(select, expressions.Select):
             continue
-        pairs: list[tuple[str, str]] = []
-        valid = True
-        for pair in raw_pairs:
-            if not isinstance(pair, dict):
-                valid = False
-                break
-            left = canonical.get(f"{from_table}.{str(pair.get('from_column') or '').lower()}")
-            right = canonical.get(f"{to_table}.{str(pair.get('to_column') or '').lower()}")
-            if left is None or right is None:
-                valid = False
-                break
-            pairs.append((left, right))
-        join_type = str(proposal.get("join_type") or "INNER").upper()
-        if not valid or join_type not in {"INNER", "LEFT", "RIGHT", "FULL"}:
+        joins = select.args.get("joins") or []
+        if select.find_ancestor(expressions.In, expressions.Exists) is not None:
+            for join in joins:
+                skip(join, "existence_subquery")
             continue
-        edges.append(
-            gold_join_edge(
-                from_table=from_table,
-                to_table=to_table,
-                column_pairs=pairs,
-                source_id=source_id,
-                join_type=join_type,
-                sql_construct_type=_optional_text(proposal.get("sql_construct_type")),
-                evidence_fragment=_optional_text(proposal.get("evidence_fragment")),
+        sources = {
+            alias.casefold(): source
+            for alias, (_, source) in scope.selected_sources.items()
+        }
+        physical_sources = {
+            alias: source
+            for alias, source in sources.items()
+            if isinstance(source, expressions.Table)
+            and source.name.casefold() in catalog
+        }
+
+        def resolve(column, sources=sources):
+            if not isinstance(column, expressions.Column) or column.is_star:
+                return None
+            candidates = (
+                [sources.get(column.table.casefold())]
+                if column.table
+                else list(sources.values())
             )
-        )
-    return edges
+            matches = []
+            for source in candidates:
+                # Unknown/derived local outputs cannot establish a physical key.
+                if not isinstance(source, expressions.Table):
+                    if not column.table:
+                        return None
+                    continue
+                entry = catalog.get(source.name.casefold())
+                if entry and column.name.casefold() in entry[1]:
+                    matches.append((source, entry[0], entry[1][column.name.casefold()]))
+            return matches[0] if len(matches) == 1 else None
 
-
-def _canonical_table_columns(table_columns: dict[str, set[str]]) -> dict[str, str]:
-    canonical: dict[str, str] = {}
-    for table, columns in table_columns.items():
-        table_name = str(table)
-        canonical[table_name.lower()] = table_name
-        for column in columns:
-            column_name = str(column)
-            canonical[f"{table_name}.{column_name.lower()}"] = column_name
-    return canonical
-
-
-def _optional_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
+        source = select.args.get("from_")
+        previous = [source.this] if source is not None else []
+        where = select.args.get("where")
+        for join in joins:
+            right = physical_sources.get(join.this.alias_or_name.casefold())
+            using, on = join.args.get("using"), join.args.get("on")
+            terms = []
+            if right is None:
+                skip(join, "non_physical_source")
+            elif using:
+                left_candidates = [
+                    table
+                    for table in previous
+                    if isinstance(table, expressions.Table)
+                    and table.name.casefold() in catalog
+                    and all(
+                        name.name.casefold() in catalog[table.name.casefold()][1]
+                        for name in using
+                    )
+                ]
+                if len(left_candidates) != 1:
+                    skip(join, "ambiguous_using_source")
+                else:
+                    left = left_candidates[0]
+                    terms = [
+                        expressions.EQ(
+                            this=expressions.column(
+                                name.name, table=left.alias_or_name
+                            ),
+                            expression=expressions.column(
+                                name.name, table=right.alias_or_name
+                            ),
+                        )
+                        for name in using
+                    ]
+            elif on is not None:
+                terms = _and_terms(on)
+            else:
+                skip(join, "missing_explicit_equality_key")
+            previous.append(join.this)
+            if not terms:
+                continue
+            groups = defaultdict(list)
+            valid = True
+            for term in terms:
+                if not isinstance(term, expressions.EQ):
+                    valid = False
+                    break
+                left, other = resolve(term.left), resolve(term.right)
+                if (
+                    left is None
+                    or other is None
+                    or left[0] is other[0]
+                    or left[1] == other[1]
+                ):
+                    valid = False
+                    break
+                if left[0] is right:
+                    left, other = other, left
+                if other[0] is not right or left[0] not in previous[:-1]:
+                    valid = False
+                    break
+                groups[(id(left[0]), id(other[0]), left[1], other[1])].append(
+                    (left[2], other[2])
+                )
+            # Never publish ON alone when another predicate supplies additional
+            # constraints on that same source pair outside the explicit key.
+            if valid and where is not None:
+                candidate_sources = {frozenset(key[:2]) for key in groups}
+                for predicate in _and_terms(where.this):
+                    owners = {
+                        id(resolved[0])
+                        for col in predicate.find_all(expressions.Column)
+                        if (resolved := resolve(col)) is not None
+                    }
+                    if any(pair <= owners for pair in candidate_sources):
+                        valid = False
+                        break
+            if not valid:
+                skip(join, "complex_or_incomplete_key")
+                continue
+            for (_, _, left_table, right_table), pairs in groups.items():
+                edges.append(
+                    gold_join_edge(
+                        from_table=left_table,
+                        to_table=right_table,
+                        column_pairs=pairs,
+                        source_id=source_id,
+                    )
+                )
+    return merge_join_edges([], edges)
 
 
 def _and_terms(expression: expressions.Expression) -> list[expressions.Expression]:
+    if isinstance(expression, expressions.Paren):
+        return _and_terms(expression.this)
     if isinstance(expression, expressions.And):
         return [*_and_terms(expression.left), *_and_terms(expression.right)]
     return [expression]
@@ -202,7 +241,8 @@ def pure_routing_paths(
     if tree.find(expressions.CTE):
         return []
     if any(
-        star.find_ancestor(expressions.Count) is None for star in tree.find_all(expressions.Star)
+        star.find_ancestor(expressions.Count) is None
+        for star in tree.find_all(expressions.Star)
     ):
         return []
     source = tree.args.get("from_")
@@ -256,7 +296,9 @@ def pure_routing_paths(
             {
                 "semantic_tables": [f"table.{name}" for name in endpoints],
                 "routing_table": f"table.{route_table}",
-                "edge_ids": [edge.id for edge in sorted(edges, key=lambda item: item.id)],
+                "edge_ids": [
+                    edge.id for edge in sorted(edges, key=lambda item: item.id)
+                ],
             }
         )
     return result

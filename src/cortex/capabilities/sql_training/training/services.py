@@ -18,6 +18,14 @@ from cortex.capabilities.sql_training.graph.snapshots import (
     fingerprint,
     table_schema,
 )
+from cortex.capabilities.sql_training.learning.inputs import (
+    ontology_contract,
+    system_prompt,
+)
+from cortex.capabilities.sql_training.learning.prompt_rendering import (
+    render_type_guide,
+    render_write_guide,
+)
 from cortex.capabilities.sql_training.llm import NodeLLMProvider
 from cortex.capabilities.sql_training.llm.prompts import prompt_fingerprint
 from cortex.capabilities.sql_training.pipeline.execution import (
@@ -27,6 +35,7 @@ from cortex.capabilities.sql_training.pipeline.execution import (
 )
 from cortex.capabilities.sql_training.runtime_config import SqlTrainingRuntimeConfig
 from cortex.capabilities.sql_training.training.evidence import EvidenceStore
+from cortex.capabilities.sql_training.training.feedback import assessment_policy_id
 from cortex.capabilities.sql_training.training.replay import (
     ReplayAttempt,
     StableReplayResult,
@@ -44,7 +53,8 @@ def database_stamp(url: str) -> dict[str, Any]:
         and parsed.database
         and parsed.database != ":memory:"
     ):
-        path = Path(parsed.database)
+        from urllib.parse import unquote
+        path = Path(unquote(parsed.database.removeprefix("file:")))
         return {
             str(p): (p.stat().st_size, p.stat().st_mtime_ns) if p.exists() else None
             for p in (path, Path(str(path) + "-wal"))
@@ -81,18 +91,34 @@ class CaseServices:
         )
         self.gold_cache = GoldQueryCache()
         self._data_stamp = database_stamp(config.database.url or "")
-        from cortex.schema.ontology_asset_definitions import (
+        from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
             ONTOLOGY_ASSET_DEFINITION_VERSION,
         )
 
+        input_contract = ontology_contract(graph.schema)
         self.context_id = fingerprint(
             {
                 "config": config.model_dump(mode="json"),
                 "source": record,
                 "data": self._data_stamp,
                 "gate_policy": "stable-v1",
+                "assessment_policy": assessment_policy_id(),
                 "asset_contract": ONTOLOGY_ASSET_DEFINITION_VERSION,
                 "graph_schema": graph.schema_version,
+                "graph_storage_contract": "inline-node-conflicts-v1",
+                "learning_input_contract": fingerprint(input_contract),
+                "learning_guides": {
+                    kind: fingerprint(render_type_guide(input_contract, kind))
+                    for kind in input_contract["editable_node_types"]
+                },
+                "learning_write_guides": {
+                    kind: fingerprint(render_write_guide(input_contract, kind))
+                    for kind in ("dimension_value", "relations")
+                },
+                "learning_rendered_prompts": {
+                    mode: fingerprint(system_prompt(mode, graph.schema))
+                    for mode in ("direct", "repair")
+                },
                 "learning_prompts": {
                     name: prompt_fingerprint(name)
                     for name in (
@@ -234,7 +260,8 @@ class CaseServices:
 
     def reset_unavailable_validation(self) -> None:
         self._index = {
-            key: value for key, value in self._index.items()
+            key: value
+            for key, value in self._index.items()
             if self.replay(value["evidence_ref"]).status.value != "unavailable"
         }
         self.evidence.write_index(self._index)
@@ -261,6 +288,8 @@ class CaseServices:
                     "reason": a.evaluation.get("reason"),
                     "selected_ids": a.selected_ontology_ids,
                     "raw_retrieved_ids": a.raw_retrieved_ontology_ids,
+                    **({"context_ids": [n["id"] for n in a.intent_output["data"]["matched_ontology"]]} if "matched_ontology" in (a.intent_output or {}).get("data", {}) else {}),
+                    **({"context_edge_ids": a.intent_output["data"]["context_edge_ids"]} if "context_edge_ids" in (a.intent_output or {}).get("data", {}) else {}),
                     "gold_result": _result_summary(a.evaluation.get("gold_result")),
                     "predicted_result": _result_summary(
                         a.evaluation.get("predicted_result")
@@ -269,6 +298,27 @@ class CaseServices:
                 for a in replay.attempts
             ],
         }
+
+    def validation_feedback(self, evidence_id):
+        from cortex.capabilities.sql_training.training.assessment_inputs import sql_attempts
+        compact = self.compact_validation(evidence_id)
+        return {**compact, "attempts": sql_attempts(compact)}
+
+    def prior_assessment_evidence(self, baseline_revision, trial_revision):
+        """Reuse available comparison evidence; never run a new query for assessment."""
+        revisions = {baseline_revision, self.graph.accepted_revision} - {trial_revision}
+        rows = []
+        for revision in sorted(revisions):
+            snapshot = self.graph.read(revision)
+            for entry in self._index.values():
+                ref = entry["evidence_ref"]
+                payload = self.evidence.read(ref)["payload"]
+                if payload.get("context_id") != self.context_id or payload.get("content_fingerprint") != snapshot.content_fingerprint:
+                    continue
+                compact = self.validation_feedback(ref)
+                rows.append({"revision": revision, **compact})
+                break
+        return rows
 
     def diagnose(
         self, snapshot: GraphSnapshot, validation_ref: str
@@ -294,7 +344,7 @@ class CaseServices:
             "sql_gt": self.record["sql"],
             "sql_ic": evaluation["query"],
             "working_assets": [
-                a.model_dump(mode="json") for a in snapshot.semantic_assets
+                a.model_dump(mode="json") for a in self.graph.accepted.semantic_assets
             ],
         }
         if evaluation.get("predicted_error"):

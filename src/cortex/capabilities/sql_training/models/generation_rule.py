@@ -13,12 +13,12 @@ def _normalize_strings(value: Any, *, lowercase: bool = False) -> list[str]:
     if value is None:
         return []
     if not isinstance(value, list):
-        raise ValueError("value must be a list of strings")
+        raise ValueError("value must be a list of strings")  # noqa: TRY004 - Pydantic field feedback.
     normalized: list[str] = []
     seen: set[str] = set()
     for item in value:
         if not isinstance(item, str):
-            raise ValueError("value must be a list of strings")
+            raise ValueError("value must be a list of strings")  # noqa: TRY004 - Pydantic field feedback.
         text = re.sub(r"\s+", " ", item.strip())
         if lowercase:
             text = text.lower()
@@ -67,9 +67,13 @@ class SqlTrigger(NodeModel):
     @classmethod
     def _normalize_columns(cls, value: list[str]) -> list[str]:
         columns = list(dict.fromkeys(normalize_refs(value)))
-        invalid = [reference for reference in columns if not reference.startswith("column.")]
+        invalid = [
+            reference for reference in columns if not reference.startswith("column.")
+        ]
         if invalid:
-            raise ValueError(f"SQL trigger columns must be canonical Column IDs: {invalid}")
+            raise ValueError(
+                f"SQL trigger columns must be canonical Column IDs: {invalid}"
+            )
         return columns
 
     @field_validator("operations", mode="before")
@@ -84,21 +88,12 @@ class GenerationRuleTriggers(NodeModel):
 
 
 class GenerationRuleProperties(NodeModel):
-    references: list[str] = Field(
+    operation_intents: list[str] = Field(
         default_factory=list,
         description=(
-            "Canonical Node IDs required by the condition or by the action's governed operand or "
-            "target. They are all required together for the complete rule contract. Retrieval-only "
-            "hints, replaceable implementation details, reason evidence, bare SQL identifiers, "
-            "and case-coincident assets are invalid."
-        ),
-    )
-    operation_intent: str | None = Field(
-        default=None,
-        description=(
-            "Optional schema-independent discovery label. Initial Extraction uses a Registry "
-            "intent; Repair may use one primary behavior kind. This field does not replace "
-            "condition/action, define identity, or prove correctness."
+            "Reusable intent labels used to organize the atomic action. Consult the operation "
+            "registry, reuse matching labels, or propose a new label explained in reason. "
+            "Multiple labels do not justify combining independent actions."
         ),
     )
     triggers: GenerationRuleTriggers = Field(
@@ -136,19 +131,10 @@ class GenerationRuleProperties(NodeModel):
         )
     )
 
-    @field_validator("references")
+    @field_validator("operation_intents", mode="before")
     @classmethod
-    def _validate_references(cls, value: list[str]) -> list[str]:
-        return list(dict.fromkeys(normalize_refs(value)))
-
-    @field_validator("operation_intent", mode="before")
-    @classmethod
-    def _normalize_operation_intent(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("operation_intent must be a non-empty string or null")
-        return value.strip()
+    def _normalize_operation_intents(cls, value: Any) -> list[str]:
+        return _normalize_strings(value)
 
     @field_validator("condition", "action", "reason", mode="before")
     @classmethod
@@ -157,41 +143,15 @@ class GenerationRuleProperties(NodeModel):
             raise ValueError("condition, action, and reason must be non-empty strings")
         return value.strip()
 
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_relations(cls, value: Any) -> Any:
-        """Read legacy relation declarations while keeping references as the only write shape."""
-
-        if not isinstance(value, dict) or "relations" not in value:
-            return value
-        normalized = dict(value)
-        relations = normalized.pop("relations") or []
-        references = list(normalized.get("references") or [])
-        if not isinstance(relations, list):
-            raise ValueError("legacy Generation Rule relations must be a list")
-        for relation in relations:
-            if not isinstance(relation, dict) or relation.get("relation") not in {
-                "applies_to",
-                "grounded_on",
-            }:
-                raise ValueError("legacy Generation Rule relation is invalid")
-            node_id = relation.get("node_id")
-            if not isinstance(node_id, str):
-                raise ValueError("legacy Generation Rule relation requires node_id")
-            references.append(node_id)
-        normalized["references"] = references
-        return normalized
-
     @model_validator(mode="after")
     def _validate_retrieval_signal(self) -> GenerationRuleProperties:
         if not (
             self.triggers.question.phrases
             or self.triggers.sql.columns
             or self.triggers.sql.operations
-            or self.references
         ):
             raise ValueError(
-                "at least one question phrase, SQL Column, SQL operation, or ontology dependency "
+                "at least one question phrase, SQL Column, or SQL operation "
                 "is required"
             )
         return self

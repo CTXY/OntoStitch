@@ -16,7 +16,6 @@ from cortex.application.sql_training import (
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
 from cortex.capabilities.graph_merge.identity import IdentityGrouper
 from cortex.capabilities.graph_merge.llm.agents import LLMSemanticIdentityResolver
-from cortex.capabilities.graph_merge.mining.base import GraphMiningResult
 from cortex.capabilities.graph_merge.models import (
     GroupIdentityView,
     IdentityRepresentationView,
@@ -99,23 +98,19 @@ def test_application_runs_real_merge_and_saves_without_event_loop(
     assert len(result.state.graph.nodes) == len(incoming.graph.nodes)
 
 
-def test_merge_deduplicates_exact_nodes_and_calls_miner_synchronously(case_graph):
+def test_merge_deduplicates_exact_nodes_synchronously(case_graph):
     store, _database, _workspace = case_graph
     table = next(
         n
         for n in store.validation_graph(store.working_revision).nodes
         if n.node_type == "table"
     )
+    # This test isolates table identity; catalog key metadata requires its columns.
+    table = table.model_copy(
+        update={"properties": {"table_name": table.properties["table_name"]}}
+    )
     incoming = table.model_copy(update={"id": "incoming-table"})
     operator = build_graph_merge_operator(CortexConfig(), live_semantics=False)
-    seen = []
-
-    class Miner:
-        def propose(self, state, schema):
-            seen.append(state)
-            return GraphMiningResult()
-
-    operator.graph_miner = Miner()
     existing = GraphState(graph=GraphSpace(nodes=(table,)), node_conflicts=())
     result = operator.merge(
         existing,
@@ -124,7 +119,6 @@ def test_merge_deduplicates_exact_nodes_and_calls_miner_synchronously(case_graph
     )
     assert len(result.state.graph.nodes) == 1
     assert result.node_mappings[0].canonical_id == table.id
-    assert seen and seen[0].graph.nodes == result.state.graph.nodes
     assert not inspect.isawaitable(result)
 
 
@@ -265,7 +259,7 @@ def test_training_sql_generator_invokes_sync_and_executes_real_sql(
 
 
 def test_evidence_resolution_and_cache_are_synchronous():
-    from cortex.capabilities.graph_merge.reconciliation.service import (
+    from cortex.capabilities.graph_merge.reconciliation.evidence import (
         CachedEvidenceResolver,
     )
 
@@ -281,91 +275,6 @@ def test_evidence_resolution_and_cache_are_synchronous():
     assert cache.resolve((source,)) == evidence
 
 
-def test_reconciliation_preserves_unresolved_members_with_sync_feedback():
-    from conftest import make_rule
-
-    from cortex.capabilities.graph_merge.models import (
-        ConsolidationProposal,
-        ConsolidationReview,
-        FinalNodeGroup,
-        NodeContent,
-        NodeRepresentation,
-    )
-    from cortex.capabilities.graph_merge.reconciliation.consolidation import (
-        active_memory,
-    )
-    from cortex.capabilities.graph_merge.reconciliation.service import (
-        NodeGroupReconciler,
-    )
-
-    calls = []
-
-    class Proposer:
-        def propose(self, *, group, **kwargs):
-            calls.append("propose")
-            return ConsolidationProposal(
-                candidates=(),
-                unresolved_refs=tuple(m.ref for m in group.members),
-                reason="Keep both original instructions for review",
-            )
-
-    class Checker:
-        def check(self, **kwargs):
-            calls.append("check")
-            return ConsolidationReview(
-                verdicts=(),
-                generalization={
-                    "verdict": "not_applicable",
-                    "reason": "Preservation only",
-                },
-                consistency={"verdict": "acceptable", "reason": "No original is lost"},
-                reason="Preserve",
-            )
-
-    members = []
-    for name, action in (
-        ("first", "Count all records."),
-        ("second", "Count distinct records."),
-    ):
-        asset = make_rule(name, action)
-        members.append(
-            NodeRepresentation(
-                ref=RepresentationRef(origin="incoming_node", ref_id=asset.id),
-                node_type="generation_rule",
-                content=NodeContent(
-                    name=asset.name,
-                    description=None,
-                    aliases=(),
-                    tags=(),
-                    properties=asset.properties.model_dump(mode="json"),
-                ),
-                sources=(),
-            )
-        )
-    reconciler = NodeGroupReconciler(
-        reconciler=None,
-        evidence_resolver=None,
-        branch_selector=None,
-        generalizer=None,
-        group_consolidator=Proposer(),
-        consolidation_checker=Checker(),
-    )
-    result = reconciler.reconcile_group(
-        FinalNodeGroup(
-            group_id="group",
-            node_type="generation_rule",
-            existing_node_id=None,
-            members=tuple(members),
-        ),
-        schema=load_root_schema(),
-    )
-    assert calls == ["propose", "check"]
-    assert result.conflict is not None
-    assert len(result.conflict.alternatives) == 2
-    assert "CONSOLIDATION_PRESERVED_UNRESOLVED" in result.diagnostic_codes
-    assert active_memory.get() is None
-
-
 @pytest.mark.parametrize("fail_close", [False, True])
 def test_sync_train_parallel_cases_close_owned_resources_before_return(
     case_graph, fail_close
@@ -374,8 +283,10 @@ def test_sync_train_parallel_cases_close_owned_resources_before_return(
     from pathlib import Path
     from threading import Barrier, Lock, get_ident
 
-    from test_case_workflow import Validator
+    from langsmith import tracing_context
+    from test_agent_observability import RecordingClient, assert_parents_exist
     from test_agent_runtime import finish
+    from test_case_workflow import Validator
 
     from cortex.capabilities.sql_training.engine import SqlTrainingCapability
     from cortex.capabilities.sql_training.runtime_config import (
@@ -432,20 +343,31 @@ def test_sync_train_parallel_cases_close_owned_resources_before_return(
         case_llm_factory=case_resources,
         database=database,
     )
-    _state, report = capability.train(
-        tuple(
-            QASqlTrainingRecord(
-                source_id=f"case-{index}",
-                question="How many orders?",
-                sql="SELECT COUNT(*) FROM orders",
-            )
-            for index in range(2)
-        ),
-        load_root_schema(),
-        GraphSpace(),
-    )
+    client = RecordingClient()
+    with tracing_context(enabled=True, client=client):
+        _state, report = capability.train(
+            tuple(
+                QASqlTrainingRecord(
+                    source_id=f"case-{index}",
+                    question="How many orders?",
+                    sql="SELECT COUNT(*) FROM orders",
+                )
+                for index in range(2)
+            ),
+            load_root_schema(),
+            GraphSpace(),
+        )
+    client.flush()
+    created = assert_parents_exist(client)
+    run = next(p for p in created if p["name"] == "extract.run")
+    cases = [p for p in created if p["name"] == "extract.case"]
+    assert len(cases) == 2
+    assert all(str(p["parent_run_id"]) == str(run["id"]) for p in cases)
     assert len(lifecycle) == 2
-    assert all(item.closed and item.generate_calls == 3 for item in lifecycle)
+    assert all(item.closed and item.generate_calls == 3 for item in lifecycle), {
+        "lifecycle": [(item.closed, item.generate_calls) for item in lifecycle],
+        "report": report.model_dump(mode="json"),
+    }
     assert len({item.owner for item in lifecycle}) == 2
     assert get_ident() not in {item.owner for item in lifecycle}
     assert report.passed == (1 if fail_close else 2)

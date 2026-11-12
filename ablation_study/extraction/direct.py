@@ -24,7 +24,7 @@ def export_direct(spec: dict, root: Path):
             raise ValueError(f"frozen extraction snapshot changed: {path}")
         snapshot = GraphSnapshot.model_validate(read_json(path))
         rows = [serialize_asset_envelope(asset) for asset in snapshot.semantic_assets]
-        assets = validate_assets(rows, Path(spec["physical_workspace"]))
+        assets = validate_assets(rows, Path(spec["physical_workspace"]), explicit_edges=snapshot.explicit_edges)
         result = {
             "source_id": record["source_id"],
             "correct": None,
@@ -42,6 +42,8 @@ def export_direct(spec: dict, root: Path):
                 result=result,
                 provenance=source,
                 case_index=case_index,
+                physical_workspace=Path(spec["physical_workspace"]),
+                explicit_edges=snapshot.explicit_edges,
             )
         )
     return finalize_collection(root, spec=spec, arm="direct", cases=cases)

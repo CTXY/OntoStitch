@@ -26,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=9,<10", "ruff>=0.17,<0.18"]
+web = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "python-multipart>=0.0.9,<1", "python-dotenv>=1,<2"]
 
 [project.scripts]
 cortex = "cortex.cli.main:main"
@@ -33,10 +34,12 @@ cortex = "cortex.cli.main:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cortex"]
 artifacts = [
+  "src/cortex/capabilities/metadata/prompts/**/*.md",
   "src/cortex/capabilities/graph_merge/llm/prompts/**/*.md",
   "src/cortex/capabilities/sql_training/**/*.md",
   "src/cortex/capabilities/sql_training/**/*.yaml",
   "src/cortex/capabilities/online_context/**/*.md",
   "src/cortex/capabilities/retrieve_db/**/*.md",
+  "src/cortex/capabilities/query_signals/**/*.md",
   "src/cortex/schema/roots/*.json",
 ]

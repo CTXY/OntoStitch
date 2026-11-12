@@ -17,11 +17,11 @@ class DatabaseClient(Protocol):
 
 
 __all__ = [
-    "DatabaseClient",
-    "DatabaseConnector",
     "CatalogSnapshot",
     "ColumnProfile",
     "ColumnValueStats",
+    "DatabaseClient",
+    "DatabaseConnector",
     "JoinProfile",
     "QueryExecutionResult",
     "SQLAlchemyDatabase",

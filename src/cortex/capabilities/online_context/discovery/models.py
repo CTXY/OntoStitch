@@ -4,7 +4,11 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cortex.application.online_context import CandidateEvidenceAssessment, ChoicePoint, SlotScope
+from cortex.application.online_context import (
+    CandidateEvidenceAssessment,
+    ChoicePoint,
+    SlotScope,
+)
 from cortex.schema import GraphState
 
 

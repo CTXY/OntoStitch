@@ -9,7 +9,7 @@ from threading import Lock
 
 from cortex.application.retrieve_db import RetrieveDbResult
 from cortex.infrastructure.artifacts import render_graph_html
-from cortex.schema import GraphSpace, SchemaDefinition
+from cortex.schema import GraphSpace, GraphState, SchemaDefinition, export_inline_graph
 
 _SAFE_COMPONENT = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -29,14 +29,25 @@ class FileSystemRetrieveDbArtifactRecorder:
         with self._lock:
             self._sequence += 1
             sequence = self._sequence
-        artifact_dir = self.workspace / "retrieval" / _safe_component(trace_id) / f"{sequence:04d}"
+        artifact_dir = (
+            self.workspace / "retrieval" / _safe_component(trace_id) / f"{sequence:04d}"
+        )
         artifact_dir.mkdir(parents=True, exist_ok=False)
         try:
             _atomic_write(
                 artifact_dir / "result.json",
-                validated.model_dump_json(indent=2) + "\n",
+                json.dumps(validated.public_payload(), ensure_ascii=False, indent=2)
+                + "\n",
             )
-            _atomic_write(artifact_dir / "graph.json", graph.model_dump_json(indent=2) + "\n")
+            _atomic_write(
+                artifact_dir / "graph.json",
+                json.dumps(
+                    export_inline_graph(GraphState(graph=graph)),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+            )
             _atomic_write(
                 artifact_dir / "graph.html",
                 render_graph_html(

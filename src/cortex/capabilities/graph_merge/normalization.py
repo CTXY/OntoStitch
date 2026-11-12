@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -18,7 +17,9 @@ EdgePropertyMappingKey = tuple[str, str, str]
 @dataclass(frozen=True)
 class GroupNormalizationResult:
     group: FinalNodeGroup
-    edge_property_mappings: dict[EdgePropertyMappingKey, Any] = field(default_factory=dict)
+    edge_property_mappings: dict[EdgePropertyMappingKey, Any] = field(
+        default_factory=dict
+    )
 
 
 class NodeGroupNormalizer(Protocol):
@@ -32,9 +33,8 @@ class NodeGroupNormalizerRegistry:
 
     def __init__(
         self,
-        registrations: dict[
-            str, tuple[frozenset[str], NodeGroupNormalizer]
-        ] | None = None,
+        registrations: dict[str, tuple[frozenset[str], NodeGroupNormalizer]]
+        | None = None,
     ) -> None:
         self._registrations = dict(registrations or {})
 
@@ -57,78 +57,34 @@ def edge_property_mapping_key(
 
 
 class ConceptTargetNormalizer:
-    """Canonicalize semantically equal Concept targets and their authored Edge references."""
+    """Normalize match members while preserving positional group/expression identity."""
 
     def normalize(
         self, group: FinalNodeGroup, schema: SchemaDefinition
     ) -> GroupNormalizationResult:
         del schema
-        canonical_by_semantics: dict[str, str] = {}
-        semantics_by_id: dict[str, str] = {}
-        ordered = sorted(
-            group.members,
-            key=lambda item: (item.ref.origin != "existing_node", item.ref.ref_id),
-        )
-        reserved_ids = {
-            target["id"]
-            for member in ordered
-            for target in member.content.properties.get("targets") or ()
-            if isinstance(target, dict) and isinstance(target.get("id"), str)
-        }
-        for member in ordered:
-            local_ids: dict[str, str] = {}
-            for target in member.content.properties.get("targets") or ():
-                if not isinstance(target, dict):
-                    continue
-                target_id = target.get("id")
-                if isinstance(target_id, str) and target_id:
-                    key = concept_target_semantic_key(target)
-                    if target_id in local_ids and local_ids[target_id] != key:
-                        raise ValueError(f"ambiguous target ID in {member.ref.ref_id}: {target_id}")
-                    local_ids[target_id] = key
-                    if key in canonical_by_semantics:
-                        continue
-                    candidate = target_id
-                    if candidate in semantics_by_id:
-                        suffix = hashlib.sha256(key.encode()).hexdigest()[:16]
-                        candidate = f"{target_id}.{suffix}"
-                        while candidate in semantics_by_id or candidate in reserved_ids:
-                            candidate += "_"
-                    canonical_by_semantics[key] = candidate
-                    semantics_by_id[candidate] = key
-
-        mappings: dict[EdgePropertyMappingKey, Any] = {}
         members = []
         for member in group.members:
             properties = dict(member.content.properties)
-            targets = []
-            for value in properties.get("targets") or ():
-                if not isinstance(value, dict):
-                    targets.append(value)
-                    continue
-                target = dict(value)
-                old_id = target.get("id")
-                canonical_id = canonical_by_semantics.get(
-                    concept_target_semantic_key(target), old_id
-                )
-                if isinstance(old_id, str) and isinstance(canonical_id, str):
-                    mappings[
-                        edge_property_mapping_key(member.ref.ref_id, "target_id", old_id)
-                    ] = canonical_id
-                    target["id"] = canonical_id
-                targets.append(target)
             if "targets" in properties:
-                properties["targets"] = sorted(targets, key=concept_target_semantic_key)
+                # Outer order indexes target_expressions and optional edge target_id.
+                # Do not reorder or union groups without remapping those identities.
+                properties["targets"] = [
+                    sorted(set(target)) for target in properties["targets"]
+                ]
+            # Keep expressions as executable text. _predicate_key produces a
+            # comparison key, not a replacement serialized expression.
             members.append(
                 member.model_copy(
                     update={
-                        "content": member.content.model_copy(update={"properties": properties})
+                        "content": member.content.model_copy(
+                            update={"properties": properties}
+                        )
                     }
                 )
             )
         return GroupNormalizationResult(
-            group=group.model_copy(update={"members": tuple(members)}),
-            edge_property_mappings=mappings,
+            group=group.model_copy(update={"members": tuple(members)})
         )
 
 
@@ -144,38 +100,8 @@ def build_default_node_group_normalizer_registry() -> NodeGroupNormalizerRegistr
 
 
 def concept_target_semantic_key(target: Any) -> str:
-    if not isinstance(target, dict):
-        return _canonical(target)
-    semantic_targets = target.get("semantic_targets")
-    if semantic_targets:
-        stable = {
-            "binding_operator": target.get("binding_operator"),
-            "semantic_targets": sorted(
-                (
-                    {
-                        "relation": item.get("relation"),
-                        "node_id": item.get("node_id"),
-                    }
-                    for item in semantic_targets
-                    if isinstance(item, dict)
-                ),
-                key=lambda item: (str(item["relation"]), str(item["node_id"])),
-            ),
-        }
-        return _canonical(stable)
-
-    def clean(value: Any) -> Any:
-        if isinstance(value, dict):
-            return {
-                key: _predicate_key(child) if key == "sql_expression" else clean(child)
-                for key, child in value.items()
-                if key not in {"id", "predicate_id", "target_id"}
-            }
-        if isinstance(value, list):
-            return [clean(child) for child in value]
-        return value
-
-    return _canonical(clean(target))
+    """A grouped target contains joint physical IDs, never an old target record."""
+    return _canonical(sorted(set(target)) if isinstance(target, list) else target)
 
 
 def _predicate_key(sql: Any) -> Any:
@@ -188,9 +114,21 @@ def _predicate_key(sql: Any) -> Any:
             return sql
         tree = expressions[0]
         allowed = (
-            exp.And, exp.Or, exp.Paren, exp.EQ, exp.NEQ, exp.GT, exp.GTE,
-            exp.LT, exp.LTE, exp.Is, exp.Column, exp.Identifier, exp.Literal,
-            exp.Null, exp.Boolean,
+            exp.And,
+            exp.Or,
+            exp.Paren,
+            exp.EQ,
+            exp.NEQ,
+            exp.GT,
+            exp.GTE,
+            exp.LT,
+            exp.LTE,
+            exp.Is,
+            exp.Column,
+            exp.Identifier,
+            exp.Literal,
+            exp.Null,
+            exp.Boolean,
         )
         if any(type(node) not in allowed for node in tree.walk()):
             return sql

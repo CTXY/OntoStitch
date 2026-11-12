@@ -13,7 +13,10 @@ from cortex.capabilities.sql_training.contracts.semantic_mapping import (
     validate_semantic_mapping_schema_grounding,
 )
 from cortex.capabilities.sql_training.core.enums import NodeType
-from cortex.capabilities.sql_training.core.ids import make_node_id
+from cortex.capabilities.sql_training.core.ids import (
+    canonical_value_reference,
+    make_node_id,
+)
 from cortex.capabilities.sql_training.models import NodeAsset
 
 _SCHEMA_COLUMN_LINE = re.compile(r"(?m)^\s*-\s*([^\n:]+?)\s*:")
@@ -37,7 +40,14 @@ def validate_asset_batch_references(
     if len(batch_by_id) != len(batch):
         raise ValueError("extracted asset batch contains duplicate logical asset IDs")
 
-    physical_ids = physical_reference_catalog(table_schema)
+    physical_ids = physical_reference_catalog(
+        table_schema,
+        dimension_values=[
+            asset
+            for asset in [*working.values(), *batch]
+            if asset.node_type == NodeType.DIMENSION_VALUE
+        ],
+    )
     if not physical_ids and not table_schema:
         physical_ids.update(
             reference
@@ -75,28 +85,34 @@ def _validate_asset_references(
     physical_ids: set[str],
     table_schema: Any,
 ) -> None:
-    if asset.node_type == NodeType.SEMANTIC_MAPPING:
+    if asset.node_type in {NodeType.CONCEPT, NodeType.EVENT}:
         validate_semantic_mapping_candidate_contract(
             asset,
             table_schema=table_schema if isinstance(table_schema, dict) else {},
+            physical_catalog=physical_ids,
         )
         validate_semantic_mapping_schema_grounding(
             asset,
             table_schema=table_schema if isinstance(table_schema, dict) else {},
+            physical_catalog=physical_ids,
         )
         references = {
             reference
             for target in asset.properties.targets
-            for reference in target.references
+            for reference in target
         }
-        invalid = sorted(reference for reference in references if reference not in physical_ids)
+        invalid = sorted(
+            reference for reference in references if reference not in physical_ids
+        )
         if invalid:
-            raise ValueError(f"Concept references unresolved physical IDs: {invalid}")
+            raise ValueError(f"{asset.node_type.value.title()} references unresolved physical IDs: {invalid}")
         return
 
     if asset.node_type == NodeType.METRIC:
-        validate_metric_contract(asset, require_generation_plan=True, require_pattern=True)
-        references = set(asset.properties.references)
+        validate_metric_contract(
+            asset, require_generation_plan=False, require_pattern=True
+        )
+        references = set(asset.properties.expression.refs.values())
         unresolved = sorted(
             reference
             for reference in references
@@ -120,25 +136,6 @@ def _validate_asset_references(
         return
 
     if asset.node_type == NodeType.GENERATION_RULE:
-        if asset.id in asset.properties.references:
-            raise ValueError("Generation Rule cannot reference itself")
-        nested_rules = sorted(
-            reference
-            for reference in asset.properties.references
-            if reference.startswith("generation_rule.")
-        )
-        if nested_rules:
-            raise ValueError(
-                "Generation Rule cannot reference another Generation Rule: "
-                f"{nested_rules}"
-            )
-        unresolved = sorted(
-            reference
-            for reference in asset.properties.references
-            if reference not in set(visible_ids) and reference not in physical_ids
-        )
-        if unresolved:
-            raise ValueError(f"Generation Rule references unresolved IDs: {unresolved}")
         unresolved_trigger_columns = sorted(
             reference
             for reference in asset.properties.triggers.sql.columns
@@ -151,7 +148,11 @@ def _validate_asset_references(
             )
 
 
-def physical_reference_catalog(table_schema: Any) -> set[str]:
+def physical_reference_catalog(
+    table_schema: Any,
+    *,
+    dimension_values: Iterable[NodeAsset] = (),
+) -> set[str]:
     if not isinstance(table_schema, dict):
         return set()
     result: set[str] = set()
@@ -183,7 +184,22 @@ def physical_reference_catalog(table_schema: Any) -> set[str]:
             aliases[(table.casefold(), column.casefold())] = canonical
     # A canonical Dimension Value is valid when its owner Column is in the supplied catalog.
     # It is checked lazily because table_schema does not enumerate observed values.
-    return _PhysicalCatalog(result, column_aliases=aliases)
+    value_aliases: dict[str, str] = {}
+    for asset in dimension_values:
+        if asset.node_type != NodeType.DIMENSION_VALUE:
+            continue
+        owner = next(
+            ref for ref in asset.properties.references if ref.startswith("column.")
+        )
+        _, table, column = owner.split(".", 2)
+        for value in [asset.properties.value, *asset.aliases]:
+            reference = make_node_id(NodeType.DIMENSION_VALUE, table, column, value)
+            previous = value_aliases.get(reference)
+            if previous is not None and previous != asset.id:
+                raise ValueError("ambiguous verified Dimension Value alias")
+            value_aliases[reference] = asset.id
+        value_aliases[asset.id] = asset.id
+    return _PhysicalCatalog(result, column_aliases=aliases, value_aliases=value_aliases)
 
 
 class _PhysicalCatalog(set[str]):
@@ -192,9 +208,15 @@ class _PhysicalCatalog(set[str]):
         values: Iterable[str] = (),
         *,
         column_aliases: dict[tuple[str, str], str] | None = None,
+        value_aliases: dict[str, str] | None = None,
     ) -> None:
         super().__init__(values)
         self._column_aliases = column_aliases or {}
+        self._value_aliases = value_aliases or {}
+
+    @property
+    def verified_value_ids(self) -> frozenset[str]:
+        return frozenset(self._value_aliases.values())
 
     def __contains__(self, item: object) -> bool:
         return self.resolve(item) is not None
@@ -204,6 +226,8 @@ class _PhysicalCatalog(set[str]):
             return item if isinstance(item, str) else None
         if not isinstance(item, str):
             return None
+        if item in self._value_aliases:
+            return self._value_aliases[item]
         if item.startswith("column."):
             return self._resolve_column(item)
         if not item.startswith("dimension_value."):
@@ -216,19 +240,17 @@ class _PhysicalCatalog(set[str]):
         if owner is None:
             return None
         _, canonical_table, canonical_column = owner.split(".", 2)
-        return make_node_id(
-            NodeType.DIMENSION_VALUE,
-            canonical_table,
-            canonical_column,
-            value,
-        )
+        reference = canonical_value_reference(canonical_table, canonical_column, value)
+        return self._value_aliases.get(reference, reference)
 
     def _resolve_column(self, item: str) -> str | None:
         parts = item.split(".", 2)
         if len(parts) != 3 or not all(parts[1:]):
             return None
         _, table_name, column_name = parts
-        canonical = self._column_aliases.get((table_name.casefold(), column_name.casefold()))
+        canonical = self._column_aliases.get(
+            (table_name.casefold(), column_name.casefold())
+        )
         if canonical is not None:
             return canonical
         candidate = make_node_id(NodeType.COLUMN, table_name, column_name)
@@ -238,14 +260,15 @@ class _PhysicalCatalog(set[str]):
 
 
 def _asset_reference_values(asset: NodeAsset) -> set[str]:
-    if asset.node_type == NodeType.SEMANTIC_MAPPING:
+    if asset.node_type in {NodeType.CONCEPT, NodeType.EVENT}:
         return {
             reference
             for target in asset.properties.targets
-            for reference in target.references
+            for reference in target
         }
     references = set(getattr(asset.properties, "references", []))
     if asset.node_type == NodeType.METRIC:
+        references.update(asset.properties.expression.refs.values())
         references.update(
             reference
             for plan in asset.properties.sql_generation_plans

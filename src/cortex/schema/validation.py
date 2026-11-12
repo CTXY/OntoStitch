@@ -4,7 +4,14 @@ import hashlib
 import json
 from typing import Any
 
-from cortex.schema.graph import GraphSpace, GraphState, MergeStatus, SourceReference
+from cortex.schema.graph import (
+    GraphEdge,
+    GraphSpace,
+    GraphState,
+    MergeStatus,
+    SourceReference,
+    alternative_content,
+)
 from cortex.schema.models import FieldDefinition, IdentityPolicy, SchemaDefinition
 
 
@@ -28,7 +35,16 @@ def calculate_schema_hash(schema: SchemaDefinition) -> str:
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
-def validate_graph_space(graph: GraphSpace, schema: SchemaDefinition) -> None:
+def validate_graph_space(graph: GraphSpace, schema: SchemaDefinition, *, metadata_owner_ids=None) -> None:
+    from cortex.schema.relation_contracts import effective_edge_fields, effective_schema
+
+    schema = effective_schema(schema, graph)
+    from cortex.schema.relation_metadata import validate_relation_metadata
+
+    try:
+        validate_relation_metadata(graph, owner_ids=metadata_owner_ids)
+    except (ValueError, TypeError) as exc:
+        raise GraphSchemaError(str(exc)) from exc
     node_types = schema.node_type_index()
     edge_types = schema.edge_type_index()
     node_by_id = {node.id: node for node in graph.nodes}
@@ -36,21 +52,41 @@ def validate_graph_space(graph: GraphSpace, schema: SchemaDefinition) -> None:
     for node in graph.nodes:
         node_type = node_types.get(node.node_type)
         if node_type is None:
-            raise GraphSchemaError(f"node {node.id!r} uses unknown type {node.node_type!r}")
+            raise GraphSchemaError(
+                f"node {node.id!r} uses unknown type {node.node_type!r}"
+            )
         _validate_properties(
             node.properties,
-            schema.effective_node_fields(node_type.id),
+            {
+                key: field.model_copy(update={"required": False})
+                for key, field in schema.effective_node_fields(node_type.id).items()
+            }
+            if node.merge_status == MergeStatus.CONFLICT
+            else schema.effective_node_fields(node_type.id),
             f"node {node.id!r}",
         )
 
     for edge in graph.edges:
         edge_type = edge_types.get(edge.edge_type)
-        if edge_type is None:
-            raise GraphSchemaError(f"edge {edge.id!r} uses unknown type {edge.edge_type!r}")
+        if not isinstance(edge.edge_type, str) or not edge.edge_type.strip():
+            raise GraphSchemaError("relation name must be nonempty")
+        try:
+            json.dumps(edge.properties, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise GraphSchemaError(
+                "relation properties must be finite JSON values"
+            ) from exc
         source = node_by_id.get(edge.from_node_id)
         target = node_by_id.get(edge.to_node_id)
         if source is None or target is None:
             raise GraphSchemaError(f"edge {edge.id!r} references an unknown endpoint")
+        if not isinstance(edge.properties.get("description"), str) or not edge.properties["description"].strip():
+            raise GraphSchemaError(f"edge {edge.id!r} requires a nonempty description")
+        if any(k in edge.properties for k in ("qualifier", "qualifiers", "role", "condition")):
+            raise GraphSchemaError(f"edge {edge.id!r} must explain roles and conditions in description")
+        if edge_type is None:
+            continue
+        edge_fields = effective_edge_fields(schema, edge_type)
         if not any(
             schema.is_node_type_compatible(source.node_type, expected)
             for expected in edge_type.from_node_types
@@ -61,7 +97,65 @@ def validate_graph_space(graph: GraphSpace, schema: SchemaDefinition) -> None:
             for expected in edge_type.to_node_types
         ):
             raise GraphSchemaError(f"edge {edge.id!r} has an invalid target node type")
-        _validate_properties(edge.properties, edge_type.fields, f"edge {edge.id!r}")
+        _validate_properties(
+            {
+                k: v
+                for k, v in edge.properties.items()
+                if k not in {"target_id", "description", "alternative_ids"}
+                or k in edge_fields
+            },
+            edge_fields,
+            f"edge {edge.id!r}",
+        )
+        if edge.edge_type == "joins_with":
+            _validate_physical_join(edge, node_by_id)
+        if edge.edge_type == "is_a" and (
+            source.node_type != target.node_type
+        ):
+            raise GraphSchemaError(
+                f"edge {edge.id!r} must connect the same semantic kind; "
+                "classification and composition do not turn a Concept into an Event"
+            )
+        if edge.edge_type == "is_a" and source.id == target.id:
+            raise GraphSchemaError(f"edge {edge.id!r} requires distinct endpoints")
+        for key in ("role", "condition", "description"):
+            if key in edge.properties and (
+                not isinstance(edge.properties[key], str)
+                or not edge.properties[key].strip()
+            ):
+                raise GraphSchemaError(
+                    f"edge {edge.id!r} field {key!r} requires nonempty text"
+                )
+
+
+def _validate_physical_join(edge: GraphEdge, nodes: dict) -> None:
+    if edge.from_node_id == edge.to_node_id:
+        raise GraphSchemaError("joins_with requires distinct physical table endpoints")
+    pairs = edge.properties.get("column_pairs")
+    if not pairs:
+        raise GraphSchemaError("joins_with requires non-empty column_pairs")
+    seen = set()
+    for pair in pairs:
+        if set(pair) != {"from_column_ref", "to_column_ref"}:
+            raise GraphSchemaError("invalid joins_with column pair")
+        for key, table_id in (
+            ("from_column_ref", edge.from_node_id),
+            ("to_column_ref", edge.to_node_id),
+        ):
+            reference = pair[key]
+            column = nodes.get(reference) if isinstance(reference, str) else None
+            if (
+                column is None
+                or column.node_type != "column"
+                or column.properties.get("table_ref") != table_id
+            ):
+                raise GraphSchemaError(
+                    "join column must exist and belong to its table endpoint"
+                )
+        identity = (pair["from_column_ref"], pair["to_column_ref"])
+        if identity in seen:
+            raise GraphSchemaError("duplicate joins_with column pair")
+        seen.add(identity)
 
 
 def validate_graph_state(state: GraphState, schema: SchemaDefinition) -> None:
@@ -84,36 +178,68 @@ def validate_incoming_graph_state(
 ) -> None:
     """Validate an open incoming state whose endpoints may reference existing nodes."""
 
-    if state.node_conflicts:
-        raise InvalidGraphState("incoming node_conflicts must be empty")
+    if state.conflict_nodes:
+        raise InvalidGraphState("incoming conflict nodes must be empty")
+    from cortex.schema.relation_contracts import merge_relation_contracts
+
     overlay_nodes = (*(() if existing is None else existing.nodes), *state.graph.nodes)
-    overlay = GraphSpace(nodes=overlay_nodes, edges=state.graph.edges)
-    validate_graph_space(overlay, schema)
+    overlay = state.graph.model_copy(update={
+        "nodes": overlay_nodes,
+        "relation_contracts": merge_relation_contracts(
+            () if existing is None else existing.relation_contracts,
+            state.graph.relation_contracts,
+        ),
+    })
+    validate_graph_space(overlay, schema, metadata_owner_ids={node.id for node in state.graph.nodes})
 
 
 def _validate_conflicts(state: GraphState, schema: SchemaDefinition) -> None:
     nodes = {node.id: node for node in state.graph.nodes}
-    conflicts = {conflict.node_id: conflict for conflict in state.node_conflicts}
-    if len(conflicts) != len(state.node_conflicts):
-        raise InvalidGraphState("a node may have at most one conflict")
-    marked = {node.id for node in state.graph.nodes if node.merge_status == MergeStatus.CONFLICT}
+    conflicts = {node.id: node for node in state.conflict_nodes}
+    marked = {
+        node.id
+        for node in state.graph.nodes
+        if node.merge_status == MergeStatus.CONFLICT
+    }
     if marked != set(conflicts):
-        raise InvalidGraphState("node merge_status and node_conflicts must correspond exactly")
+        raise InvalidGraphState(
+            "node merge_status and inline conflict metadata must correspond exactly"
+        )
     for node_id, conflict in conflicts.items():
+        conflict.as_conflict()  # Validate the complete inline metadata contract.
         node = nodes.get(node_id)
         if node is None:
             raise InvalidGraphState(f"conflict references unknown node {node_id!r}")
         node_type = schema.node_type_index()[node.node_type]
+        for path in conflict.alternatives[0].overrides:
+            if (
+                path in {"name", "description", "aliases", "tags"}
+                and getattr(node, path)
+                != {"name": node.id, "description": None, "aliases": [], "tags": []}[
+                    path
+                ]
+            ):
+                raise InvalidGraphState(
+                    f"variable field {path!r} must use its empty display placeholder on the common node"
+                )
+            if path.startswith("properties.") and path.split(".")[1] in node.properties:
+                raise InvalidGraphState(
+                    f"variable field {path!r} must not also appear on the common node"
+                )
         expected_sources = _stable_sources(
-            source for alternative in conflict.alternatives for source in alternative.sources
+            source
+            for alternative in conflict.alternatives
+            for source in alternative.sources
         )
         if node.sources != expected_sources:
             raise InvalidGraphState(
                 f"conflict node {node_id!r} sources are not the alternatives union"
             )
-        canonical_exact = _identity_values(_node_content(node), node_type.identity_policy)
+        canonical_exact = _identity_values(
+            _node_content(node), node_type.identity_policy
+        )
         for alternative in conflict.alternatives:
-            content = alternative.content
+            content = alternative_content(node, alternative).model_dump(mode="json")
             required = {"name", "description", "aliases", "tags", "properties"}
             if set(content) != required:
                 raise InvalidGraphState(
@@ -142,7 +268,9 @@ def _node_content(node: Any) -> dict[str, Any]:
     }
 
 
-def _identity_values(content: dict[str, Any], policy: IdentityPolicy) -> tuple[Any, ...]:
+def _identity_values(
+    content: dict[str, Any], policy: IdentityPolicy
+) -> tuple[Any, ...]:
     values: list[Any] = []
     for path in policy.fields:
         if path.startswith("properties."):
@@ -158,7 +286,8 @@ def _stable_sources(sources: Any) -> tuple[SourceReference, ...]:
         for source in sources
     }
     return tuple(
-        by_key[key] for key in sorted(by_key, key=lambda item: tuple(x or "" for x in item))
+        by_key[key]
+        for key in sorted(by_key, key=lambda item: tuple(x or "" for x in item))
     )
 
 
@@ -169,15 +298,21 @@ def _validate_properties(
 ) -> None:
     unknown = set(properties) - set(fields)
     if unknown:
-        raise GraphSchemaError(f"{label} contains unknown fields: {', '.join(sorted(unknown))}")
+        raise GraphSchemaError(
+            f"{label} contains unknown fields: {', '.join(sorted(unknown))}"
+        )
     missing = [field_id for field_id, field in fields.items() if field.required]
     missing = [field_id for field_id in missing if field_id not in properties]
     if missing:
-        raise GraphSchemaError(f"{label} is missing required fields: {', '.join(sorted(missing))}")
+        raise GraphSchemaError(
+            f"{label} is missing required fields: {', '.join(sorted(missing))}"
+        )
     for field_id, value in properties.items():
         field = fields[field_id]
         if not _matches_type(value, field.type):
-            raise GraphSchemaError(f"{label} field {field_id!r} does not match type {field.type!r}")
+            raise GraphSchemaError(
+                f"{label} field {field_id!r} does not match type {field.type!r}"
+            )
         if field.enum is not None and value not in field.enum:
             raise GraphSchemaError(f"{label} field {field_id!r} is outside its enum")
 
@@ -189,7 +324,9 @@ def _matches_type(value: Any, expression: str) -> bool:
 def _matches_token(value: Any, token: str) -> bool:
     if token.endswith("[]"):
         item_type = token[:-2]
-        return isinstance(value, list) and all(_matches_token(item, item_type) for item in value)
+        return isinstance(value, list) and all(
+            _matches_token(item, item_type) for item in value
+        )
     if token == "string":
         return isinstance(value, str)
     if token == "number":

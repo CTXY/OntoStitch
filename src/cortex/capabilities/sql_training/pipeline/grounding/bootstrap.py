@@ -22,8 +22,7 @@ from cortex.capabilities.sql_training.contracts.semantic_mapping import (
 from cortex.capabilities.sql_training.core.enums import NodeType, SourceType
 from cortex.capabilities.sql_training.core.ids import make_node_id
 from cortex.capabilities.sql_training.extractors.sql_normalizer import (
-    build_column_table_map,
-    normalize_sql_aliases,
+    physical_column_sources,
 )
 from cortex.capabilities.sql_training.models import (
     ColumnProperties,
@@ -34,7 +33,12 @@ from cortex.capabilities.sql_training.models import (
 from cortex.capabilities.sql_training.runtime_config import CortexConfig
 from cortex.infrastructure.database import DatabaseConnector
 
-_SUPPORTED_PREDICATES = (expressions.EQ, expressions.NEQ, expressions.In, expressions.Like)
+_SUPPORTED_PREDICATES = (
+    expressions.EQ,
+    expressions.NEQ,
+    expressions.In,
+    expressions.Like,
+)
 
 
 @dataclass(frozen=True)
@@ -96,31 +100,24 @@ class TrainingDimensionValueBootstrap:
         if not column_by_ref:
             return DimensionValueBootstrapResult((), (), 0, 0, (), None)
 
-        column_table_map = build_column_table_map(
-            [
-                {
-                    "table_name": _column_table_name(asset, tables),
-                    "column_name": _column_name(asset),
-                }
-                for asset in columns
-            ]
-        )
-        physical_catalog = physical_reference_catalog(
-            _table_schema_from_columns(columns, tables)
-        )
+        table_columns = _table_schema_from_columns(columns, tables)
+        physical_catalog = physical_reference_catalog(table_columns)
         evidence = _collect_predicate_column_evidence(
             records,
             column_by_ref=column_by_ref,
             physical_catalog=physical_catalog,
-            column_table_map=column_table_map,
+            table_columns={table: set(names) for table, names in table_columns.items()},
             dialect=self.config.database.dialect,
         )
         selected_refs = tuple(sorted({item.column_ref for item in evidence}))
         if not selected_refs:
             manifest_path = self._write_manifest(run_id, evidence, [], [], [])
-            return DimensionValueBootstrapResult((), tuple(evidence), 0, 0, (), manifest_path)
+            return DimensionValueBootstrapResult(
+                (), tuple(evidence), 0, 0, (), manifest_path
+            )
         expanded_items: list[dict[str, Any]] = []
         skipped_unverified_literals: list[dict[str, Any]] = []
+        matches_by_literal: dict[tuple[str, str], list[Any]] = {}
         for item in evidence:
             column_asset = column_by_ref[item.column_ref]
             table_name = _column_table_name(column_asset, tables)
@@ -145,10 +142,15 @@ class TrainingDimensionValueBootstrap:
                 continue
             for value in item.literals:
                 if self.database is None:
-                    raise ValueError("Dimension Value bootstrap requires a database connection")
-                matches = self.database.find_exact_column_values(
-                    table_name, column_name, value
-                )
+                    raise ValueError(
+                        "Dimension Value bootstrap requires a database connection"
+                    )
+                key = (item.column_ref, value)
+                if key not in matches_by_literal:
+                    matches_by_literal[key] = self.database.find_exact_column_values(
+                        table_name, column_name, value
+                    )
+                matches = matches_by_literal[key]
                 if not matches:
                     skipped_unverified_literals.append(
                         {
@@ -171,12 +173,15 @@ class TrainingDimensionValueBootstrap:
                         "table_name": table_name,
                         "column_name": column_name,
                         "value": matches[0],
+                        "aliases": [value] if str(matches[0]) != value else [],
                         "source_type": "qa",
                         "source_id": item.source_id,
                     }
                 )
 
-        generated = _merge_dimension_values(build_dimension_value_assets(expanded_items))
+        generated = _merge_dimension_values(
+            build_dimension_value_assets(expanded_items)
+        )
         generated = [
             asset.model_copy(
                 update={
@@ -253,7 +258,7 @@ def _collect_predicate_column_evidence(
     *,
     column_by_ref: dict[str, NodeAsset],
     physical_catalog: Any,
-    column_table_map: dict[str, str],
+    table_columns: dict[str, set[str]],
     dialect: str,
 ) -> list[PredicateColumnEvidence]:
     evidence: list[PredicateColumnEvidence] = []
@@ -261,14 +266,9 @@ def _collect_predicate_column_evidence(
     for record in records:
         source_id = str(record.get("source_id") or "")
         sql = str(record.get("sql") or "")
-        normalized = normalize_sql_aliases(
-            sql,
-            column_table_map=column_table_map,
-            dialect=dialect,
-        )
         try:
-            tree = sqlglot.parse_one(normalized, dialect=dialect)
-        except Exception as exc:  # noqa: BLE001
+            tree = sqlglot.parse_one(sql, dialect=dialect)
+        except Exception as exc:
             raise ValueError(f"Failed to parse GT SQL for {source_id}: {exc}") from exc
         if tree is None:
             raise ValueError(f"Failed to parse GT SQL for {source_id}")
@@ -277,6 +277,7 @@ def _collect_predicate_column_evidence(
                 tree,
                 physical_catalog=physical_catalog,
             )
+        lineage = physical_column_sources(tree, table_columns=table_columns)
         for predicate in tree.walk():
             if not isinstance(predicate, _SUPPORTED_PREDICATES):
                 continue
@@ -287,12 +288,9 @@ def _collect_predicate_column_evidence(
             column, literals = _predicate_column_and_literals(predicate)
             if column is None or not literals:
                 continue
-            column_ref = _resolve_column_ref(
-                column,
-                column_by_ref=column_by_ref,
-                physical_catalog=physical_catalog,
-            )
-            if column_ref is None:
+            source = lineage.get(id(column))
+            column_ref = make_node_id(NodeType.COLUMN, *source) if source else None
+            if column_ref not in column_by_ref:
                 continue
             operator = _predicate_operator(predicate)
             key = (source_id, column_ref, operator, literals)
@@ -309,47 +307,22 @@ def _collect_predicate_column_evidence(
             )
     return sorted(
         evidence,
-        key=lambda item: (item.column_ref, item.source_id, item.operator, item.literals),
+        key=lambda item: (
+            item.column_ref,
+            item.source_id,
+            item.operator,
+            item.literals,
+        ),
     )
-
-
-def _resolve_column_ref(
-    column: expressions.Column,
-    *,
-    column_by_ref: dict[str, NodeAsset],
-    physical_catalog: Any,
-) -> str | None:
-    """Resolve qualified columns and unambiguous columns in their nearest SELECT scope."""
-
-    if column.table:
-        column_ref = make_node_id(NodeType.COLUMN, column.table, column.name)
-        resolved = _resolve_physical_ref(column_ref, physical_catalog)
-        return resolved if resolved in column_by_ref else None
-
-    select = column.find_ancestor(expressions.Select)
-    if select is None:
-        return None
-    candidates = {
-        resolved
-        for table in _scope_table_sources(select)
-        if (
-            resolved := _resolve_physical_ref(
-                make_node_id(NodeType.COLUMN, table.name, column.name),
-                physical_catalog,
-            )
-        )
-        in column_by_ref
-    }
-    if len(candidates) != 1:
-        return None
-    return candidates.pop()
 
 
 def _predicate_column_and_literals(
     predicate: expressions.Expression,
 ) -> tuple[expressions.Column | None, tuple[str, ...]]:
     if isinstance(predicate, expressions.Like):
-        column = predicate.this if isinstance(predicate.this, expressions.Column) else None
+        column = (
+            predicate.this if isinstance(predicate.this, expressions.Column) else None
+        )
         literal = predicate.expression
         if not isinstance(literal, expressions.Literal):
             return None, ()
@@ -359,7 +332,9 @@ def _predicate_column_and_literals(
         return column, (value,)
 
     if isinstance(predicate, expressions.In):
-        column = predicate.this if isinstance(predicate.this, expressions.Column) else None
+        column = (
+            predicate.this if isinstance(predicate.this, expressions.Column) else None
+        )
         literals = tuple(
             str(item.this)
             for item in predicate.expressions
@@ -386,26 +361,6 @@ def _predicate_operator(predicate: expressions.Expression) -> str:
     if isinstance(predicate, expressions.NEQ):
         return "!="
     return "="
-
-
-def _resolve_physical_ref(reference: str, physical_catalog: Any) -> str | None:
-    resolver = getattr(physical_catalog, "resolve", None)
-    if callable(resolver):
-        resolved = resolver(reference)
-        if isinstance(resolved, str):
-            return resolved
-    return reference if reference in physical_catalog else None
-
-
-def _scope_table_sources(select: expressions.Select) -> list[expressions.Table]:
-    sources: list[expressions.Table] = []
-    from_ = select.args.get("from_")
-    if from_ is not None and isinstance(from_.this, expressions.Table):
-        sources.append(from_.this)
-    for join in select.args.get("joins") or []:
-        if isinstance(join.this, expressions.Table):
-            sources.append(join.this)
-    return sources
 
 
 def _is_exact_like_literal(value: str) -> bool:
@@ -460,17 +415,6 @@ def _column_table_name(asset: NodeAsset, table_assets: list[NodeAsset]) -> str:
 
 
 def _merge_dimension_values(assets: list[NodeAsset]) -> list[NodeAsset]:
-    by_id: dict[str, NodeAsset] = {}
-    for asset in assets:
-        existing = by_id.get(asset.id)
-        if existing is None:
-            by_id[asset.id] = asset
-            continue
-        sources = {
-            (source.source_type.value, source.source_id): source
-            for source in [*existing.sources, *asset.sources]
-        }
-        by_id[asset.id] = asset.model_copy(
-            update={"sources": [sources[key] for key in sorted(sources)]}
-        )
-    return [by_id[asset_id] for asset_id in sorted(by_id)]
+    from cortex.capabilities.sql_training.graph.values import merge_verified_values
+
+    return merge_verified_values([], assets)

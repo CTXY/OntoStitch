@@ -8,7 +8,9 @@ from cortex.capabilities.sql_training.evaluation import evaluate
 from cortex.capabilities.sql_training.runtime_config import CortexConfig
 from cortex.capabilities.sql_training.training.trace import TrainTraceLogger
 from cortex.capabilities.sql_training.validation import build_generation_request
-from cortex.capabilities.sql_training.validation.in_process import OntologyGenerationError
+from cortex.capabilities.sql_training.validation.in_process import (
+    OntologyGenerationError,
+)
 from cortex.capabilities.sql_training.validation.models import GenerationResponse
 from cortex.infrastructure.database.execution import QueryExecutionResult, execute_query
 from cortex.schema import GraphSpace
@@ -278,6 +280,7 @@ def generate_sql(
             "raw_retrieved_asset_ids": list(retrieval.raw_retrieved_node_ids),
             "selected_asset_ids": list(retrieval.selected_node_ids),
             "matched_ontology": graph_nodes,
+            "context_edge_ids": [edge.id for edge in retrieval.subgraph.edges],
         }
     }
     observe_retrieval(intent_output, set(retrieval.selected_node_ids))

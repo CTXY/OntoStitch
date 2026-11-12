@@ -14,12 +14,14 @@ from cortex.capabilities.sql_training.error_analysis.models import (
     RepairSession,
     RepairType,
 )
-from cortex.capabilities.sql_training.error_analysis.workflow import ErrorAnalysisWorkflow
+from cortex.capabilities.sql_training.error_analysis.workflow import (
+    ErrorAnalysisWorkflow,
+)
 
 __all__ = [
-    "ErrorAnalysisWorkflow",
     "ConfirmedError",
     "ErrorAnalysisReport",
+    "ErrorAnalysisWorkflow",
     "ErrorCandidate",
     "RepairAblation",
     "RepairAblationProposal",

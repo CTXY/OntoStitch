@@ -16,8 +16,6 @@ def retrieve_cli() -> None:
     """Retrieve a database semantic subgraph."""
 
 
-
-
 @retrieve_cli.command("db")
 @click.argument("question")
 @click.option(
@@ -25,14 +23,21 @@ def retrieve_cli() -> None:
     "graph_source",
     required=True,
     type=click.Path(exists=True, readable=True, path_type=Path),
-    help="SQL Training run directory or GraphSpace JSON file.",
+    help="Run directory, inline graph JSON, or legacy graph JSON.",
+)
+@click.option(
+    "--run-id",
+    default=None,
+    help="Reuse the same ID to recover a durable retrieval run.",
 )
 @click.option("--dialect", default="mysql", show_default=True)
-@click.option("--initial-sql", default=None, help="Optional caller-supplied baseline SQL.")
+@click.option(
+    "--initial-sql", default=None, help="Optional caller-supplied baseline SQL."
+)
 @click.option(
     "--enable-clarification/--disable-clarification",
     default=None,
-    help="Override the configured clarification behavior.",
+    help="Deprecated compatibility option; user interaction belongs to online-context.",
 )
 @click.option(
     "--config",
@@ -44,25 +49,27 @@ def retrieve_cli() -> None:
 def retrieve_db_cli(
     question: str,
     graph_source: Path,
+    run_id: str | None,
     dialect: str,
     initial_sql: str | None,
     enable_clarification: bool | None,
     config_path: Path,
 ) -> None:
-    """Retrieve a database semantic subgraph from GraphSpace."""
+    """Retrieve a semantic subgraph while preserving complete conflict nodes."""
     try:
-        graph = FileSystemGraphSpaceLoader().load(graph_source)
+        graph = FileSystemGraphSpaceLoader().load_state(graph_source)
         runtime = build_retrieve_db_cli_runtime(config_path)
         result = asyncio.run(
             runtime.service.run(
                 question=question,
-                graph=graph,
+                run_id=run_id,
+                graph_state=graph,
                 dialect=dialect,
                 initial_sql=initial_sql,
                 enable_clarification=enable_clarification,
             )
         )
-        _publish_db(result.model_dump(mode="json"), runtime.result_recorder)
+        _publish_db(result.public_payload(), runtime.result_recorder)
     except click.ClickException:
         raise
     except Exception as exc:
@@ -103,12 +110,14 @@ def retrieve_db_resume_cli(
 ) -> None:
     """Resume a DB clarification without repeating signal extraction."""
     try:
-        graph = FileSystemGraphSpaceLoader().load(graph_source)
+        graph = FileSystemGraphSpaceLoader().load_state(graph_source)
         pending = _load_pending(pending_path)
         answers = _load_answers(answers_path)
         runtime = build_retrieve_db_cli_runtime(config_path)
-        result = asyncio.run(runtime.service.resume(graph=graph, pending=pending, answers=answers))
-        _publish_db(result.model_dump(mode="json"), runtime.result_recorder)
+        result = asyncio.run(
+            runtime.service.resume(graph=graph.graph, pending=pending, answers=answers)
+        )
+        _publish_db(result.public_payload(), runtime.result_recorder)
     except click.ClickException:
         raise
     except Exception as exc:
@@ -136,7 +145,7 @@ def _load_answers(path: Path) -> tuple[ClarificationAnswer, ...]:
     if isinstance(payload, dict):
         payload = payload.get("answers")
     if not isinstance(payload, list):
-        raise ValueError("retrieve DB clarification answers must be a JSON array")
+        raise TypeError("retrieve DB clarification answers must be a JSON array")
     return tuple(ClarificationAnswer.model_validate(item) for item in payload)
 
 

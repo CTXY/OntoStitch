@@ -4,7 +4,11 @@ from typing import Any
 
 from cortex.capabilities.sql_training.core.enums import NodeType, SourceType
 from cortex.capabilities.sql_training.core.ids import make_node_id
-from cortex.capabilities.sql_training.models import DimensionValueProperties, NodeAsset, Source
+from cortex.capabilities.sql_training.models import (
+    DimensionValueProperties,
+    NodeAsset,
+    Source,
+)
 
 
 def build_dimension_value_assets(items: list[dict[str, Any]]) -> list[NodeAsset]:
@@ -13,13 +17,14 @@ def build_dimension_value_assets(items: list[dict[str, Any]]) -> list[NodeAsset]
         table_name = item["table_name"]
         column_name = item["column_name"]
         value = item["value"]
-        id_value = item.get("id_value", value)
         column_ref = make_node_id(NodeType.COLUMN, table_name, column_name)
         assets.append(
             NodeAsset(
-                id=make_node_id(NodeType.DIMENSION_VALUE, table_name, column_name, id_value),
+                id=make_node_id(
+                    NodeType.DIMENSION_VALUE, table_name, column_name, value
+                ),
                 node_type=NodeType.DIMENSION_VALUE,
-                name=str(value),
+                name=str(value) if str(value).strip() else repr(value),
                 aliases=[str(alias) for alias in item.get("aliases", [])],
                 properties=DimensionValueProperties(
                     references=[column_ref],
@@ -27,7 +32,9 @@ def build_dimension_value_assets(items: list[dict[str, Any]]) -> list[NodeAsset]
                 ),
                 sources=[
                     Source(
-                        source_type=SourceType(item.get("source_type", SourceType.INFERRED)),
+                        source_type=SourceType(
+                            item.get("source_type", SourceType.INFERRED)
+                        ),
                         source_id=item.get("source_id"),
                     )
                 ],

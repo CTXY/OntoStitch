@@ -26,12 +26,13 @@ class ScanCatalogPipeline:
         catalog = self.database.introspect_catalog(
             include_tables=self.config.database.include_tables
         )
-        assets = build_catalog_assets(catalog.tables, catalog.columns, catalog.joins)
+        assets = build_catalog_assets(
+            catalog.tables, catalog.columns, catalog.joins,
+            description_directory=self.config.database.description_path,
+        )
         self.workspace.write_draft_assets(NodeType.TABLE, assets.tables)
         self.workspace.write_draft_assets(NodeType.COLUMN, assets.columns)
         self.workspace.write_catalog_edges(assets.join_edges)
-        # A prior workspace may contain the retired join-as-node artifact.
-        self.workspace.delete_draft_assets(NodeType.JOIN_PATH)
         return {
             "tables": len(assets.tables),
             "columns": len(assets.columns),

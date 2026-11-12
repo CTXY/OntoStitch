@@ -12,6 +12,7 @@ class TableProperties(NodeModel):
     table_schema: str | None = None
     important_columns: list[str] = Field(default_factory=list)
     primary_keys: list[str] = Field(default_factory=list)
+    unique_keys: list[list[str]] = Field(default_factory=list)
     foreign_keys: list[str] = Field(default_factory=list)
     available_time_columns: list[str] = Field(default_factory=list)
     default_time_column: str | None = None

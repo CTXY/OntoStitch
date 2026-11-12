@@ -1,75 +1,82 @@
-"""Explicit, payload-free LangSmith spans with local full-evidence references."""
+"""Domain inputs/outputs alongside native LangGraph, model and tool traces."""
 
-from __future__ import annotations
-
-import os
+import json
 from contextlib import contextmanager
+from pathlib import Path
 from time import perf_counter
 
-from langsmith import trace, tracing_context
+from langsmith import trace
 
-_ALLOWED = {
-    "case_id",
-    "round",
-    "iteration",
-    "revision",
-    "evidence_ref",
-    "tool",
-    "node_count",
-    "model_calls",
-    "tool_calls",
-    "status",
-    "error_type",
-    "duration_seconds",
-    "context_id",
-    "prompt_fingerprint",
-    "schema_version",
-    "mode",
-    "model",
-}
+from cortex.infrastructure.observability import native_tracing
 
 
-class SummaryTracer:
-    def __init__(self, *, client=None, enabled: bool | None = None):
-        self.client = client
-        self.enabled = (
-            os.getenv(
-                "LANGSMITH_TRACING", os.getenv("LANGCHAIN_TRACING_V2", "")
-            ).lower()
-            == "true"
-            if enabled is None
-            else enabled
-        )
+class ExtractTracer:
+    def __init__(self, *, client=None, enabled=None):
+        self.client, self.enabled = client, enabled
 
     @contextmanager
-    def span(self, name: str, **metadata):
+    def span(self, name, *, inputs=None, **metadata):
         started = perf_counter()
-        summary = {key: value for key, value in metadata.items() if key in _ALLOWED}
-        if not self.enabled:
-            with tracing_context(enabled=False):
-                yield summary
-            return
-        error = None
-        traceback = None
-        with tracing_context(enabled=True, client=self.client):  # noqa: SIM117 - keep tracing scope separate from the safe operation scope
-            with trace(
-                name, inputs={}, metadata=summary, run_type="chain", client=self.client
-            ) as run:
-                # Keep this explicit parent, but disable automatic child payloads.
-                with tracing_context(enabled=False):
-                    try:
-                        yield summary
-                    except BaseException as exc:  # noqa: BLE001 - rethrow after preventing raw exception tracing
-                        error, traceback = exc, exc.__traceback__
-                        summary.update(status="error", error_type=type(exc).__name__)
-                summary.setdefault("status", "ok")
-                summary["duration_seconds"] = perf_counter() - started
-                safe = {key: value for key, value in summary.items() if key in _ALLOWED}
-                run.metadata.update(safe)
-                run.end(
-                    outputs={"status": summary["status"]},
-                    error=summary.get("error_type") if error else None,
-                )
-        # The trace context never sees the original exception text (SQL/parameters).
-        if error is not None:
-            raise error.with_traceback(traceback)
+        report = dict(metadata)
+        with (
+            native_tracing(client=self.client, enabled=self.enabled),
+            trace(name, inputs=inputs or {}, metadata=metadata) as run,
+        ):
+            try:
+                yield report
+            except BaseException as exc:
+                report.update(status="error", error_type=type(exc).__name__)
+                raise
+            finally:
+                outputs = report.pop("outputs", None)
+                report.setdefault("status", "ok")
+                report["duration_seconds"] = perf_counter() - started
+                run.metadata.update(report)
+                run.end(outputs=outputs if outputs is not None else dict(report))
+
+
+def case_payload(runtime, state, *, stage=None):
+    """Hydrate only relevant immutable evidence; never copy it into checkpoints."""
+    payload = {"state": state.model_dump(mode="json")}
+    if stage is None:
+        payload["source"] = runtime.record
+    snapshot = runtime.graph.read(
+        state.accepted_revision
+        if stage in {"validate_final", "seal"}
+        else state.working_revision
+    )
+    payload["ontology"] = {
+        "revision": snapshot.revision,
+        "content_fingerprint": snapshot.content_fingerprint,
+        "semantic_nodes": [a.model_dump(mode="json") for a in snapshot.semantic_assets],
+        "physical_node_count": len(snapshot.physical_assets),
+    }
+    refs = {
+        "validation": state.validation_ref,
+        "diagnosis": state.diagnosis_ref,
+        "assessment": state.assessment_ref,
+        "episode": state.episode_result_ref,
+    }
+    selected = {
+        "direct": ["episode"],
+        "repair": ["episode"],
+        "diagnose": ["diagnosis"],
+        "assess": ["assessment"],
+        "accept": ["assessment"],
+        "select": ["assessment"],
+    }.get(
+        stage,
+        list(refs)[:3]
+        if stage is None
+        else (["validation"] if stage.startswith("validate") else []),
+    )
+    payload["evidence"] = {
+        k: runtime.evidence.read(refs[k])["payload"] for k in selected if refs[k]
+    }
+    if stage == "accept":
+        payload["evidence"]["acceptance"] = [
+            runtime.evidence.read(ref)["payload"] for ref in state.acceptance_refs[-1:]
+        ]
+    if stage == "seal" and state.result_ref:
+        payload["result"] = json.loads(Path(state.result_ref).read_text())
+    return payload

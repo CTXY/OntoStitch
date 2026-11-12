@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 
 from cortex.capabilities.sql_training.core.enums import (
@@ -13,7 +12,6 @@ from cortex.capabilities.sql_training.core.enums import (
 from cortex.capabilities.sql_training.core.ids import make_node_id
 from cortex.capabilities.sql_training.models import (
     ColumnProperties,
-    JoinCondition,
     NodeAsset,
     Source,
     TableProperties,
@@ -36,14 +34,15 @@ def build_catalog_assets(
     tables: list[TableProfile],
     columns: list[ColumnProfile],
     joins: list[JoinProfile] | None = None,
+    *,
+    description_directory=None,
 ) -> CatalogAssets:
     columns_by_table: dict[str, list[ColumnProfile]] = {}
     for column in columns:
         columns_by_table.setdefault(column.table_name, []).append(column)
 
     declared_joins = list(joins or [])
-    inferred_joins = _shared_column_joins(tables, columns, existing=declared_joins)
-    all_joins = declared_joins + inferred_joins
+    all_joins = declared_joins
     table_assets = [
         _table_asset(
             table,
@@ -52,9 +51,18 @@ def build_catalog_assets(
         )
         for table in tables
     ]
-    column_assets = [_column_asset(column) for column in columns]
-    join_edges = [_join_edge(join) for join in all_joins]
-    return CatalogAssets(tables=table_assets, columns=column_assets, join_edges=join_edges)
+    from cortex.capabilities.sql_training.builders.metadata import attach_column_metadata
+
+    column_assets = attach_column_metadata(
+        [_column_asset(column) for column in columns],
+        {t.id: t.properties.table_name for t in table_assets},
+        description_directory,
+    )
+    table_by_name = {table.table_name: table for table in tables}
+    join_edges = [_join_edge(join, table_by_name) for join in all_joins]
+    return CatalogAssets(
+        tables=table_assets, columns=column_assets, join_edges=join_edges
+    )
 
 
 def _table_asset(
@@ -76,6 +84,7 @@ def _table_asset(
             table_name=table.table_name,
             table_schema=table_schema,
             primary_keys=table.primary_keys,
+            unique_keys=table.unique_keys,
             foreign_keys=table.foreign_keys,
             important_columns=[],
             available_time_columns=_time_columns(columns),
@@ -92,9 +101,13 @@ def _render_table_schema(
 ) -> str:
     pk_columns = set(table.primary_keys)
     fk_targets = _fk_targets_by_column(table.table_name, declared_joins)
-    lines = [_render_column_schema_line(column, pk_columns, fk_targets) for column in columns]
+    lines = [
+        _render_column_schema_line(column, pk_columns, fk_targets) for column in columns
+    ]
 
-    relationship_lines = _foreign_key_relationship_lines(table.table_name, declared_joins)
+    relationship_lines = _foreign_key_relationship_lines(
+        table.table_name, declared_joins
+    )
     if relationship_lines:
         lines.extend(["", "# Foreign key relationships"])
         lines.extend(f"- {line}" for line in relationship_lines)
@@ -111,7 +124,9 @@ def _render_column_schema_line(
         tags.append("PK")
     tags.extend(f"FK -> {target}" for target in fk_targets.get(column.column_name, []))
     tag_suffix = f" [{' ; '.join(tags)}]" if tags else ""
-    description = " ".join(part for part in (column.data_type or "", column.comment or "") if part)
+    description = " ".join(
+        part for part in (column.data_type or "", column.comment or "") if part
+    )
     if description:
         return f"- {column.column_name}: {description}{tag_suffix}"
     return f"- {column.column_name}:{tag_suffix}"
@@ -126,7 +141,9 @@ def _fk_targets_by_column(
         if join.from_table != table_name:
             continue
         for left_column, right_column in join.column_pairs:
-            targets.setdefault(left_column, []).append(f"{join.to_table}.{right_column}")
+            targets.setdefault(left_column, []).append(
+                f"{join.to_table}.{right_column}"
+            )
     return {column: list(dict.fromkeys(values)) for column, values in targets.items()}
 
 
@@ -139,7 +156,9 @@ def _foreign_key_relationship_lines(
         if join.from_table != table_name and join.to_table != table_name:
             continue
         for left_column, right_column in join.column_pairs:
-            lines.append(f"{join.from_table}.{left_column} = {join.to_table}.{right_column}")
+            lines.append(
+                f"{join.from_table}.{left_column} = {join.to_table}.{right_column}"
+            )
     return list(dict.fromkeys(lines))
 
 
@@ -170,85 +189,40 @@ def _column_asset(column: ColumnProfile) -> NodeAsset:
     )
 
 
-def _join_edge(join: JoinProfile) -> GraphEdge:
-    from_table_ref = make_node_id(NodeType.TABLE, join.from_table)
-    to_table_ref = make_node_id(NodeType.TABLE, join.to_table)
-    join_name = f"{join.from_table}.{join.to_table}"
-    edge_key = f"joins_with:{join_name}:{join.column_pairs!r}"
-    edge_id = f"edge_{hashlib.sha256(edge_key.encode()).hexdigest()[:24]}"
-    return GraphEdge(
-        id=edge_id,
-        edge_type="joins_with",
-        from_node_id=from_table_ref,
-        to_node_id=to_table_ref,
-        properties={
-            "default_join_type": "LEFT",
-            "conditions": [
-                JoinCondition(
-                    left_column_ref=make_node_id(NodeType.COLUMN, join.from_table, left),
-                    right_column_ref=make_node_id(NodeType.COLUMN, join.to_table, right),
-                    operator="=",
-                ).model_dump(mode="json")
-                for left, right in join.column_pairs
-            ],
-        },
-        sources=(
-            SourceReference(
-                source_id=join.constraint_name or join_name,
-                locator=SourceType.DATABASE.value,
-            ),
-        ),
+def _join_edge(join: JoinProfile, tables: dict[str, TableProfile]) -> GraphEdge:
+    from cortex.capabilities.sql_training.graph.join_edges import (
+        constraint_cardinality,
+        gold_join_edge,
     )
 
-
-def _shared_column_joins(
-    tables: list[TableProfile],
-    columns: list[ColumnProfile],
-    *,
-    existing: list[JoinProfile],
-) -> list[JoinProfile]:
-    existing_pairs = {(join.from_table, join.to_table) for join in existing}
-    columns_by_table: dict[str, set[str]] = {}
-    for column in columns:
-        columns_by_table.setdefault(column.table_name, set()).add(column.column_name)
-
-    inferred: list[JoinProfile] = []
-    sorted_tables = sorted(table.table_name for table in tables)
-    for left_index, left_table in enumerate(sorted_tables):
-        for right_table in sorted_tables[left_index + 1 :]:
-            if (left_table, right_table) in existing_pairs or (
-                right_table,
-                left_table,
-            ) in existing_pairs:
-                continue
-            shared = sorted(
-                _joinable_shared_columns(
-                    columns_by_table[left_table] & columns_by_table[right_table]
-                )
-            )
-            if not shared:
-                continue
-            inferred.append(
-                JoinProfile(
-                    from_table=left_table,
-                    to_table=right_table,
-                    column_pairs=[(column_name, column_name) for column_name in shared],
-                    constraint_name=f"inferred_shared_columns:{left_table}:{right_table}",
-                )
-            )
-    return inferred
-
-
-def _joinable_shared_columns(column_names: set[str]) -> set[str]:
-    ignored = {"created_at", "updated_at", "dt", "date", "biz_date", "calmonth"}
-    return {
-        name
-        for name in column_names
-        if name not in ignored
-        and (
-            name.endswith("_id") or name.endswith("_no") or name.endswith("_name") or "key" in name
-        )
-    }
+    edge = gold_join_edge(
+        from_table=join.from_table,
+        to_table=join.to_table,
+        column_pairs=join.column_pairs,
+        source_id="catalog",
+    )
+    left, right = tables[join.from_table], tables[join.to_table]
+    cardinality = constraint_cardinality(
+        {pair[0] for pair in join.column_pairs},
+        {pair[1] for pair in join.column_pairs},
+        [left.primary_keys, *left.unique_keys],
+        [right.primary_keys, *right.unique_keys],
+    )
+    properties = dict(edge.properties)
+    if cardinality:
+        properties["cardinality"] = cardinality
+    return edge.model_copy(
+        update={
+            "properties": properties,
+            "sources": (
+                SourceReference(
+                    source_id=join.constraint_name
+                    or f"{join.from_table}.{join.to_table}",
+                    locator=SourceType.DATABASE.value,
+                ),
+            ),
+        }
+    )
 
 
 def _time_columns(columns: list[ColumnProfile]) -> list[str]:
@@ -260,7 +234,10 @@ def _time_columns(columns: list[ColumnProfile]) -> list[str]:
 
 
 def _sample_values(column: ColumnProfile) -> list[object]:
-    return [_truncate_sample_value(value) for value in column.sample_values[:_SAMPLE_VALUE_LIMIT]]
+    return [
+        _truncate_sample_value(value)
+        for value in column.sample_values[:_SAMPLE_VALUE_LIMIT]
+    ]
 
 
 def _truncate_sample_value(value: object) -> object:
@@ -287,7 +264,8 @@ def _infer_semantic_role(column: ColumnProfile) -> SemanticRole:
     if any(token in name for token in ("flag", "is_", "status", "enabled")):
         return SemanticRole.FLAG
     if any(
-        token in data_type for token in ("int", "decimal", "numeric", "float", "double", "real")
+        token in data_type
+        for token in ("int", "decimal", "numeric", "float", "double", "real")
     ):
         return SemanticRole.MEASURE
     if any(token in data_type for token in ("char", "text", "string")):
@@ -305,7 +283,8 @@ def _infer_unit(column: ColumnProfile) -> UnitType:
     if any(token in name for token in ("rate", "ratio", "percent", "pct")):
         return UnitType.PERCENT
     if any(
-        token in data_type for token in ("int", "decimal", "numeric", "float", "double", "real")
+        token in data_type
+        for token in ("int", "decimal", "numeric", "float", "double", "real")
     ):
         return UnitType.NUMBER
     return UnitType.NONE

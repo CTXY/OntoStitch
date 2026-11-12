@@ -11,8 +11,11 @@ from typing import Any
 from pydantic import BaseModel
 
 from cortex.capabilities.sql_training.artifacts import write_jsonl
-from cortex.capabilities.sql_training.artifacts.workspace import serialize_asset_envelope
+from cortex.capabilities.sql_training.artifacts.workspace import (
+    serialize_asset_envelope,
+)
 from cortex.capabilities.sql_training.models import NodeAsset
+from cortex.infrastructure.progress import emit_progress
 
 _SECRET_KEYS = frozenset(
     {
@@ -68,6 +71,7 @@ class TrainTraceLogger:
                 "status": _trace_status(sanitized_output),
             }
             write_jsonl(self.path, [row], append=True)
+        emit_progress("case_step", source_id=source_id, step=step)
         self._print(row)
 
     def _print(self, row: dict[str, Any]) -> None:

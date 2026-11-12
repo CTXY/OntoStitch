@@ -51,7 +51,12 @@ def make_rule(name="count", action="Count the requested records.", references=()
                 "condition": "The request asks for a count.",
                 "action": action,
                 "reason": "Counting returns the number of records.",
-                "references": list(references),
+                "operation_intents": ["count_aggregation"],
             },
         }
     )
+
+
+def seed_accepted(store, snapshot=None):
+    """Seed a prior accepted snapshot for low-level graph tests, not a training API."""
+    store.restore(store.working_revision, (snapshot or store.working).revision)

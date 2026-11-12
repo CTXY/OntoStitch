@@ -4,6 +4,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote, unquote
 
 from cortex.capabilities.sql_training.core.enums import NodeType
 
@@ -32,10 +33,38 @@ def parse_node_id(value: str) -> NodeId:
 
 def make_node_id(node_type: NodeType | str, *parts: Any) -> str:
     normalized_type = NodeType(node_type)
-    name = ".".join(stable_slug(part) for part in parts if _has_node_id_part(part))
+    if normalized_type == NodeType.DIMENSION_VALUE:
+        if len(parts) != 3 or parts[2] is None:
+            raise ValueError(
+                "Dimension Value identity requires table, column and value"
+            )
+        # Preserve the existing lexical value identity without lossy slugging.
+        value = encode_dimension_value(parts[2])
+        name = f"{stable_slug(parts[0])}.{stable_slug(parts[1])}.{value}"
+    else:
+        name = ".".join(stable_slug(part) for part in parts if _has_node_id_part(part))
     if not name:
         raise ValueError("NODE ID requires at least one non-empty name part")
     return str(NodeId(type=normalized_type, name=name))
+
+
+def encode_dimension_value(value: Any) -> str:
+    """Reversible UTF-8 component; ~ denotes empty, reserved hashes stay distinct."""
+    encoded = quote(str(value), safe="-_").replace(".", "%2E").replace("~", "%7E")
+    if re.fullmatch(r"v_[0-9a-f]{64}", encoded):
+        encoded = "%76" + encoded[1:]
+    return encoded or "~"
+
+
+def decode_dimension_value(value: str) -> str:
+    return "" if value == "~" else unquote(value, encoding="utf-8", errors="strict")
+
+
+def canonical_value_reference(table: str, column: str, component: str) -> str:
+    """Normalize encoded references, preserving legacy opaque IDs on reads."""
+    if re.fullmatch(r"v_[0-9a-f]{64}", component):
+        return f"dimension_value.{stable_slug(table)}.{stable_slug(column)}.{component}"
+    return make_node_id(NodeType.DIMENSION_VALUE, table, column, decode_dimension_value(component))
 
 
 def make_generation_rule_id(
@@ -49,7 +78,9 @@ def make_generation_rule_id(
     rule_name_text = re.sub(r"\s+", " ", str(rule_name or "").strip())
     if not rule_name_text:
         raise ValueError("Generation Rule CREATE requires a stable behavior name")
-    return make_node_id(NodeType.GENERATION_RULE, stable_slug(rule_name_text, with_hash=True))
+    return make_node_id(
+        NodeType.GENERATION_RULE, stable_slug(rule_name_text, with_hash=True)
+    )
 
 
 def stable_slug(text: Any, *, max_length: int = 120, with_hash: bool = False) -> str:
@@ -88,7 +119,9 @@ def normalize_ref(value: Any, *, expected_type: NodeType | str | None = None) ->
     text = value.strip()
     parsed = parse_node_id(text)
     if expected_type is not None and parsed.type != NodeType(expected_type):
-        raise ValueError(f"reference {text!r} must be a {NodeType(expected_type).value} reference")
+        raise ValueError(
+            f"reference {text!r} must be a {NodeType(expected_type).value} reference"
+        )
     return text
 
 

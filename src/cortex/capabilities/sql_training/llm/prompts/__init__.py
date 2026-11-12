@@ -3,7 +3,16 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from cortex.schema.ontology_asset_definitions import (
+from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
+    COMPOSITION_RULE,
+    CONCEPT_DEFINITION,
+    CONCEPT_MATCHING_EXAMPLE,
+    COUNT_SEMANTICS_RULE,
+    EVENT_BINDING_RULE,
+    EVENT_DEFINITION,
+    METRIC_ATOMICITY,
+    RELATION_SCOPE_RULE,
+    RULE_ATOMICITY,
     AssetContractSection,
     render_ontology_asset_contract,
 )
@@ -14,7 +23,12 @@ _PROMPT_FILES = {
     "learning_direct": "learning/direct.md",
     "learning_repair": "learning/repair.md",
     "learning_assessment": "learning/assessment.md",
-    "gold_join_edges": "gold_join_edges.md",
+    "learning_type_event": "learning/types/event.md",
+    "learning_type_concept": "learning/types/concept.md",
+    "learning_type_metric": "learning/types/metric.md",
+    "learning_type_generation_rule": "learning/types/generation_rule.md",
+    "learning_values": "learning/values.md",
+    "learning_relations": "learning/relations.md",
     "error_analysis_minimal_repair_action": "error_analysis_minimal_repair_action.md",
     "error_analysis_minimal_repair_ablation": "error_analysis_minimal_repair_ablation.md",
     "error_analysis_minimal_repair_joint_ablation": (
@@ -49,6 +63,15 @@ def load_prompt(name: str) -> str:
     except KeyError as exc:
         raise ValueError(f"Unknown prompt: {name}") from exc
     prompt = (_PROMPT_DIR / filename).read_text(encoding="utf-8").strip()
+    prompt = prompt.replace("{metric_atomicity}", METRIC_ATOMICITY)
+    prompt = prompt.replace("{concept_definition}", CONCEPT_DEFINITION)
+    prompt = prompt.replace("{concept_matching_example}", CONCEPT_MATCHING_EXAMPLE)
+    prompt = prompt.replace("{rule_atomicity}", RULE_ATOMICITY)
+    prompt = prompt.replace("{event_definition}", EVENT_DEFINITION)
+    prompt = prompt.replace("{event_binding_rule}", EVENT_BINDING_RULE)
+    prompt = prompt.replace("{relation_scope_rule}", RELATION_SCOPE_RULE)
+    prompt = prompt.replace("{composition_rule}", COMPOSITION_RULE)
+    prompt = prompt.replace("{count_semantics_rule}", COUNT_SEMANTICS_RULE)
     prefixes: list[str] = []
     if sections := _PROMPT_CONTRACT_SECTIONS.get(name):
         contract = render_ontology_asset_contract(sections).strip()
@@ -67,9 +90,6 @@ def load_prompt(name: str) -> str:
     if prefixes:
         prefix = "\n\n".join(prefixes)
         prompt = f"{prefix}\n\n{prompt}"
-    if name == "learning_system":
-        rules = (_PROMPT_DIR / "shared_learning_rules.md").read_text(encoding="utf-8")
-        prompt += "\n\n" + rules.strip()
     return prompt
 
 

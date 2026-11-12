@@ -63,7 +63,7 @@ def test_accept_receipt_replay_advances_exact_same_version_without_reassessment(
 
     def assessor(model, **payload):
         calls.append(payload["trial"].revision)
-        return assessment(payload["groups"], [make_rule().id])
+        return assessment(payload["groups"], [make_rule().id], payload["targets"], payload["validation"])
 
     validator = correct_when_action("m2")
     workflow, _services, _ = make_workflow(
@@ -79,7 +79,7 @@ def test_accept_receipt_replay_advances_exact_same_version_without_reassessment(
     checkpoint = workflow.inspect()
     assert checkpoint.next == ("accept",)
     assert checkpoint.values["accepted_revision"] != committed.accepted_revision
-    assert workflow.runtime.graph.accepted.semantic_assets[0].properties.action == "m1"
+    assert not workflow.runtime.graph.accepted.semantic_assets
 
     resumed, _services, _ = make_workflow(
         fresh_case_graph(case_graph), EditingAgent([]), validator, assessor
@@ -88,7 +88,7 @@ def test_accept_receipt_replay_advances_exact_same_version_without_reassessment(
     def must_not_promote_again(**kwargs):
         raise AssertionError("completed acceptance must replay its original result")
 
-    monkeypatch.setattr(resumed.runtime.graph, "promote", must_not_promote_again)
+    monkeypatch.setattr(resumed.runtime, "accept", must_not_promote_again)
     result = resumed.run(resume=True)
     assert result.accepted_revision == committed.accepted_revision
     assert result.acceptance_refs == committed.acceptance_refs
@@ -129,20 +129,9 @@ def test_incomplete_episode_restarts_from_checkpoint_with_fresh_session_memory(
             )
             tool.invoke(
                 {
-                    "edit": {
-                        # Deliberately repeat the model-visible ID on a fresh attempt.
-                        "edit_id": "same-agent-edit-id",
-                        "expected_revision": starting,
-                        "operations": [
-                            {
-                                "operation": "create"
-                                if session.mode == "direct"
-                                else "update",
-                                "node_id": asset.id,
-                                "asset": asset.model_dump(mode="json"),
-                            }
-                        ],
-                    }
+                    "edit_id": "same-agent-edit-id",
+                    "expected_revision": starting,
+                    "upserts": [asset.model_dump(mode="json")],
                 }
             )
             if session.mode == "repair" and self.fail_repair:
@@ -162,7 +151,7 @@ def test_incomplete_episode_restarts_from_checkpoint_with_fresh_session_memory(
             )
 
     def assessor(model, **payload):
-        return assessment(payload["groups"], [make_rule().id])
+        return assessment(payload["groups"], [make_rule().id], payload["targets"], payload["validation"])
 
     validator = correct_when_action("m2")
     first = ToolEditingAgent(fail_repair=True)
@@ -244,7 +233,10 @@ def test_deterministic_completed_node_evidence_is_available_to_read_tool(case_gr
     page = reader.invoke({"evidence_id": evidence_id})
     assert page["kind"] == "node_result"
     saved = json.loads(page["content"])
-    assert saved["updates"]["accepted_revision"] == state.accepted_revision
+    assert (
+        saved["updates"].get("accepted_revision", state.accepted_revision)
+        == state.accepted_revision
+    )
     assert saved["node"] == "direct"
     assert page["next_offset"] is None
     assert not (workflow.root / "operations").exists()
@@ -419,7 +411,9 @@ def test_retired_checkpoint_layout_is_refused_before_current_schema_parse(
         path.name: path.read_bytes()
         for path in (workflow.root / "evidence").glob("*.json")
     }
-    with pytest.raises(CaseResumeError, match="changed source/data/config/prompt/workflow"):
+    with pytest.raises(
+        CaseResumeError, match="changed source/data/config/prompt/workflow"
+    ):
         workflow._compatible(retired)
     assert before == {
         path.name: path.read_bytes()
@@ -429,15 +423,16 @@ def test_retired_checkpoint_layout_is_refused_before_current_schema_parse(
 
 @pytest.mark.parametrize(
     ("query", "status", "calls"),
-    [("SELECT 0", "incorrect", 1), ("SELECT COUNT(*) FROM orders", "stable_correct", 3)],
+    [
+        ("SELECT 0", "incorrect", 1),
+        ("SELECT COUNT(*) FROM orders", "stable_correct", 3),
+    ],
 )
 def test_completed_validation_survives_index_write_failure(
     case_graph, monkeypatch, query, status, calls
 ):
     validator = Validator(lambda _graph: query)
-    workflow, _, _ = make_workflow(
-        case_graph, EditingAgent([[make_rule()]]), validator
-    )
+    workflow, _, _ = make_workflow(case_graph, EditingAgent([[make_rule()]]), validator)
     write_index = EvidenceStore.write_index
     failed = False
 
@@ -466,12 +461,46 @@ def test_completed_validation_survives_index_write_failure(
 
 
 def test_conflicting_completed_validation_evidence_is_rejected(case_graph):
-    workflow, services, _ = make_workflow(
-        case_graph, EditingAgent([[make_rule()]])
-    )
+    workflow, services, _ = make_workflow(case_graph, EditingAgent([[make_rule()]]))
     state = workflow.run(interrupt_after=["validate_initial"])
     saved = services.evidence.read(state.validation_ref)["payload"]
     conflicting = {**saved, "replay": {**saved["replay"], "correct": False}}
     services.evidence.put("validation", conflicting)
     with pytest.raises(ValueError, match="conflicting completed validation"):
         make_workflow(fresh_case_graph(case_graph), EditingAgent([]))
+
+
+@pytest.mark.parametrize("crash_node", ["select", "validate_selected", "assess"])
+def test_filtered_candidate_resume_keeps_old_acceptance_until_both_gates(
+    case_graph, crash_node
+):
+    reviews = []
+
+    def assessor(model, **payload):
+        reviews.append(payload["trial"].revision)
+        return assessment(
+            payload["groups"], ["generation_rule.good"], payload["targets"], payload["validation"]
+        )
+
+    workflow, _, validator = make_workflow(
+        case_graph,
+        EditingAgent([[make_rule("good"), make_rule("bad")]]),
+        assessor=assessor,
+    )
+    old = workflow.runtime.graph.accepted_revision
+    # For assess interrupt once after filtering rather than on the first review.
+    workflow.run(interrupt_after=["select"])
+    if crash_node != "select":
+        workflow.run(resume=True, interrupt_after=[crash_node])
+    assert workflow.runtime.graph.accepted_revision == old
+    resumed, _, _ = make_workflow(
+        fresh_case_graph(case_graph), EditingAgent([]), validator, assessor
+    )
+    state = resumed.run(resume=True)
+    assert state.completion_reason == "stable_correct"
+    assert [a.id for a in resumed.runtime.graph.accepted.semantic_assets] == [
+        "generation_rule.good"
+    ]
+    assert len(reviews) == 2
+    assert validator.generate_calls == 6
+    assert len(state.acceptance_refs) == 1

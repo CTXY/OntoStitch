@@ -8,7 +8,7 @@ from typing import Any
 import click
 
 from cortex.application.online_context import InteractionAnswer, OnlineContextPending
-from cortex.bootstrap import build_online_context_service
+from cortex.bootstrap import build_online_context_service, build_simulated_user_agent
 from cortex.config import load_config
 from cortex.infrastructure.online_context import (
     DatabaseDescriptionLoader,
@@ -30,7 +30,19 @@ def online_context_cli() -> None:
     type=click.Path(exists=True, readable=True, path_type=Path),
     help="SQL Training run directory or graph_state.json file.",
 )
-@click.option("--initial-sql", default=None, help="Optional caller-supplied candidate SQL.")
+@click.option(
+    "--initial-sql", default=None, help="Optional caller-supplied candidate SQL."
+)
+@click.option(
+    "--gold-sql",
+    default=None,
+    help="Evaluation only: simulate clarification answers from reference SQL.",
+)
+@click.option(
+    "--run-id",
+    default=None,
+    help="Stable alphanumeric session ID for retrying failed runs.",
+)
 @click.option(
     "--question-budget",
     type=click.IntRange(min=0),
@@ -71,6 +83,8 @@ def online_context_run_cli(
     question: str,
     graph_state_source: Path,
     initial_sql: str | None,
+    gold_sql: str | None,
+    run_id: str | None,
     question_budget: int | None,
     column_context_dir: Path | None,
     output_path: Path | None,
@@ -79,6 +93,8 @@ def online_context_run_cli(
 ) -> None:
     """Run Online Context for one natural-language question."""
     try:
+        if gold_sql is not None and not gold_sql.strip():
+            raise ValueError("--gold-sql must not be empty")
         config = load_config(config_path)
         graph_state = FileSystemGraphStateLoader().load(graph_state_source)
         column_context = (
@@ -97,23 +113,35 @@ def online_context_run_cli(
             config=config,
             trace_sink=trace_sink,
         )
-        result = asyncio.run(
-            service.run(
+        simulator = (
+            build_simulated_user_agent(config_path, config=config)
+            if gold_sql is not None
+            else None
+        )
+        result, rounds = asyncio.run(
+            _run_online(
+                service=service,
+                simulator=simulator,
+                gold_sql=gold_sql,
                 question=question,
                 graph_state=graph_state,
                 dialect=_dialect_from_config(config),
                 initial_sql=initial_sql,
                 column_context=column_context,
                 question_budget=question_budget,
+                run_id=run_id,
             )
         )
-        payload = _public_payload(result.model_dump(mode="json"))
+        payload = _public_payload(result.public_payload())
+        if simulator is not None:
+            payload["simulation"] = {"interaction_rounds": rounds}
         _write_optional(trace_output_path, {"traces": traces})
         _publish(payload, output_path)
     except click.ClickException:
         raise
     except Exception as exc:
-        raise click.ClickException(str(exc)) from exc
+        notes = getattr(exc, "__notes__", ())
+        raise click.ClickException("\n".join((str(exc), *notes))) from exc
 
 
 @online_context_cli.command("resume")
@@ -172,11 +200,43 @@ def online_context_resume_cli(
                 answers=answers,
             )
         )
-        _publish(_public_payload(result.model_dump(mode="json")), output_path)
+        _publish(_public_payload(result.public_payload()), output_path)
     except click.ClickException:
         raise
     except Exception as exc:
-        raise click.ClickException(str(exc)) from exc
+        notes = getattr(exc, "__notes__", ())
+        raise click.ClickException("\n".join((str(exc), *notes))) from exc
+
+
+async def _run_online(*, service, simulator=None, gold_sql=None, **request):
+    """Gold is visible only to the simulator after a real clarification exists."""
+    current = await service.run(**request)
+    rounds = []
+    prior_questions, prior_answers = [], []
+    while simulator is not None and current.pending is not None:
+        questions = current.interaction_questions
+        answers = await simulator.answer_round(
+            question=request["question"],
+            gold_sql=gold_sql,
+            interaction_questions=questions,
+            prior_questions=tuple(prior_questions),
+            prior_answers=tuple(prior_answers),
+            dialect=request["dialect"],
+        )
+        rounds.append(
+            {
+                "questions": [item.model_dump(mode="json") for item in questions],
+                "answers": [item.model_dump(mode="json") for item in answers],
+            }
+        )
+        prior_questions.extend(questions)
+        prior_answers.extend(answers)
+        current = await service.resume(
+            graph_state=request["graph_state"],
+            pending=current.pending,
+            answers=answers,
+        )
+    return current, rounds
 
 
 def _dialect_from_config(config) -> str:
@@ -190,8 +250,16 @@ def _public_payload(result: dict[str, Any]) -> dict[str, Any]:
             "status": "needs_user_input",
             "interaction_questions": result.get("interaction_questions", []),
             "pending": result["pending"],
+            "run_id": result.get("run_id"),
+            "relevant_graph": result.get("relevant_graph"),
         }
-    payload = {"status": result["status"]}
+    payload = {
+        "status": result["status"],
+        "run_id": result.get("run_id"),
+        "relevant_graph": result.get("relevant_graph"),
+        "unresolved_choice_point_ids": result.get("unresolved_choice_point_ids", []),
+        "projection_trace": result.get("projection_trace", []),
+    }
     guidance = result.get("downstream_guidance")
     if guidance is not None:
         public_guidance = {"guidance_content": guidance.get("guidance_content", "")}
@@ -206,7 +274,9 @@ def _load_pending(path: Path) -> OnlineContextPending:
     if isinstance(payload, dict) and "pending" in payload:
         payload = payload["pending"]
     if payload is None:
-        raise ValueError(f"online context result does not contain pending state: {path}")
+        raise ValueError(
+            f"online context result does not contain pending state: {path}"
+        )
     return OnlineContextPending.model_validate(payload)
 
 
@@ -215,7 +285,7 @@ def _load_answers(path: Path) -> tuple[InteractionAnswer, ...]:
     if isinstance(payload, dict):
         payload = payload.get("answers")
     if not isinstance(payload, list):
-        raise ValueError("online context answers must be a JSON array")
+        raise TypeError("online context answers must be a JSON array")
     return tuple(InteractionAnswer.model_validate(item) for item in payload)
 
 

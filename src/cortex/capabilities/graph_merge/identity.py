@@ -163,32 +163,36 @@ def _names(content: NodeContent) -> tuple[str, ...]:
 
 def _ngrams(value: str) -> set[str]:
     return {
-        value[index : index + size] for size in (2, 3) for index in range(len(value) - size + 1)
+        value[index : index + size]
+        for size in (2, 3)
+        for index in range(len(value) - size + 1)
     }
 
 
 def _implementation_tokens(content: NodeContent) -> set[str]:
     keys = (
+        "targets",
+        "target_expressions",
         "expression",
         "filters",
         "references",
         "dependencies",
-        "aggregation_policy",
-        "calculation_policy",
         "unit",
         "grain",
         "condition",
         "action",
-        "operation_intent",
+        "operation_intents",
         "triggers",
     )
-    return {
+    tokens = {
         normalize_identity_text(
             json.dumps(content.properties[key], ensure_ascii=False, sort_keys=True)
         )
         for key in keys
-        if key in content.properties and content.properties[key] not in (None, "", [], {})
+        if key in content.properties
+        and content.properties[key] not in (None, "", [], {})
     }
+    return tokens
 
 
 class IdentityGrouper:
@@ -207,7 +211,9 @@ class IdentityGrouper:
         self.evidence_resolver = evidence_resolver
         self.trace_sink = trace_sink
         self.candidate_top_k = candidate_top_k
-        self.implementation_registry = implementation_registry or IdentityImplementationRegistry()
+        self.implementation_registry = (
+            implementation_registry or IdentityImplementationRegistry()
+        )
         self.cross_type_resolver = cross_type_resolver
         self.embeddings = embeddings
 
@@ -217,7 +223,10 @@ class IdentityGrouper:
         incoming: tuple[GraphNode, ...],
         node_types: dict[str, NodeType],
         effective_fields_by_type: Mapping[str, frozenset[str]] | None = None,
+        *,
+        existing_alternatives=None,
     ) -> IdentityGroupingResult:
+        existing_alternatives = existing_alternatives or {}
         replacements, replacement_diagnostics = self._cross_type_replacements(
             existing, incoming
         )
@@ -227,15 +236,18 @@ class IdentityGrouper:
                 group_id=f"existing:{node.id}",
                 node_type=node.node_type,
                 existing_node_id=node.id,
-                members=(_representation(node, "existing_node"),),
+                members=tuple(existing_alternatives.get(node.id, ()))
+                or (_representation(node, "existing_node"),),
             )
             for node in sorted(existing, key=lambda item: (item.node_type, item.id))
-            if RepresentationRef(origin="existing_node", ref_id=node.id) not in discarded
+            if RepresentationRef(origin="existing_node", ref_id=node.id)
+            not in discarded
         }
         queries = {
             node.id: _representation(node, "incoming_node")
             for node in sorted(incoming, key=lambda item: (item.node_type, item.id))
-            if RepresentationRef(origin="incoming_node", ref_id=node.id) not in discarded
+            if RepresentationRef(origin="incoming_node", ref_id=node.id)
+            not in discarded
         }
         diagnostics: list[str] = list(replacement_diagnostics)
         while queries:
@@ -243,7 +255,9 @@ class IdentityGrouper:
             seed = queries[seed_id]
             policy = node_types[seed.node_type].identity_policy
             if policy.mode == IdentityMode.EXACT:
-                selected_entry, selected_queries = self._select_exact(seed, groups, queries, policy)
+                selected_entry, selected_queries = self._select_exact(
+                    seed, groups, queries, policy
+                )
             else:
                 selected_entry, selected_queries, diagnostic = self._select_semantic(
                     seed,
@@ -259,7 +273,9 @@ class IdentityGrouper:
                 if diagnostic:
                     diagnostics.append(diagnostic)
             member_ids = {seed_id, *selected_queries}
-            members = tuple(queries.pop(item) for item in sorted(member_ids) if item in queries)
+            members = tuple(
+                queries.pop(item) for item in sorted(member_ids) if item in queries
+            )
             if selected_entry is None:
                 group_id = f"provisional:{seed_id}"
                 groups[group_id] = FinalNodeGroup(
@@ -281,6 +297,23 @@ class IdentityGrouper:
                     )
                 )
                 groups[selected_entry] = target.model_copy(update={"members": combined})
+        originals = {node.id: node for node in existing}
+        for group_id, group in groups.items():
+            if group.existing_node_id in existing_alternatives:
+                groups[group_id] = group.model_copy(
+                    update={
+                        "members": (
+                            _representation(
+                                originals[group.existing_node_id], "existing_node"
+                            ),
+                            *(
+                                m
+                                for m in group.members
+                                if m.ref.origin == "incoming_node"
+                            ),
+                        )
+                    }
+                )
         return IdentityGroupingResult(
             groups=tuple(sorted(groups.values(), key=lambda item: item.group_id)),
             cross_type_replacements=replacements,
@@ -292,7 +325,10 @@ class IdentityGrouper:
             return (), ()
         representations = tuple(
             _representation(node, origin)
-            for origin, nodes in (("existing_node", existing), ("incoming_node", incoming))
+            for origin, nodes in (
+                ("existing_node", existing),
+                ("incoming_node", incoming),
+            )
             for node in nodes
             if node.node_type in {"concept", "metric"}
         )
@@ -316,7 +352,7 @@ class IdentityGrouper:
             return (), ()
         try:
             resolution = self.cross_type_resolver.resolve(candidates)
-        except Exception:
+        except Exception:  # noqa: BLE001 - optional identity decisions fail closed
             return (), ("MODEL_FAILURE",)
         by_id = {item.pair_id: item for item in candidates}
         decisions = {item.pair_id: item for item in resolution.decisions}
@@ -337,7 +373,9 @@ class IdentityGrouper:
         involved = [ref for pair in proposed for ref in pair]
         if len(involved) != len(set(involved)):
             return (), ("CROSS_TYPE_AMBIGUOUS",)
-        return tuple(sorted(proposed, key=lambda item: (item[0].origin, item[0].ref_id))), ()
+        return tuple(
+            sorted(proposed, key=lambda item: (item[0].origin, item[0].ref_id))
+        ), ()
 
     @staticmethod
     def _select_exact(seed, groups, queries, policy):
@@ -346,7 +384,10 @@ class IdentityGrouper:
             group_id
             for group_id, group in groups.items()
             if group.node_type == seed.node_type
-            and any(exact_identity_key(member.content, policy) == key for member in group.members)
+            and any(
+                exact_identity_key(member.content, policy) == key
+                for member in group.members
+            )
         ]
         if len(entries) > 1:
             return None, ()
@@ -368,7 +409,9 @@ class IdentityGrouper:
         for group_id, group in groups.items():
             if group.node_type != seed.node_type:
                 continue
-            channel = _candidate_channel(seed.content, *(item.content for item in group.members))
+            channel = _candidate_channel(
+                seed.content, *(item.content for item in group.members)
+            )
             if channel:
                 entry_channels.setdefault(channel, []).append((group_id, group))
         query_channels: dict[str, list[tuple[str, NodeRepresentation]]] = {}
@@ -379,7 +422,8 @@ class IdentityGrouper:
             if channel:
                 query_channels.setdefault(channel, []).append((query_id, query))
         entries = tuple(
-            item[1] for item in _diverse_candidates(entry_channels, self.candidate_top_k)
+            item[1]
+            for item in _diverse_candidates(entry_channels, self.candidate_top_k)
         )
         query_items = _diverse_candidates(query_channels, self.candidate_top_k)
         if self.trace_sink is not None:
@@ -444,11 +488,10 @@ class IdentityGrouper:
         query_candidates: list[tuple[str, NodeRepresentation, tuple[str, ...]]] = []
         candidate_texts: list[str] = []
 
-        def compatible_texts(*contents: NodeContent) -> tuple[str, ...]:
+        def decision_texts(*contents: NodeContent) -> tuple[str, ...]:
             texts = tuple(
                 text
                 for content in contents
-                if _compatible_operation_intent(seed.content, content)
                 for text in (_condition_action_text(content),)
                 if text
             )
@@ -458,13 +501,13 @@ class IdentityGrouper:
         for group_id, group in groups.items():
             if group.node_type != seed.node_type:
                 continue
-            texts = compatible_texts(*(item.content for item in group.members))
+            texts = decision_texts(*(item.content for item in group.members))
             if texts:
                 entry_candidates.append((group_id, group, texts))
         for query_id, query in queries.items():
             if query_id == seed.ref.ref_id or query.node_type != seed.node_type:
                 continue
-            texts = compatible_texts(query.content)
+            texts = decision_texts(query.content)
             if texts:
                 query_candidates.append((query_id, query, texts))
 
@@ -545,7 +588,7 @@ class IdentityGrouper:
             return {}
         try:
             vectors = self.embeddings.embed_documents(list(unique_texts))
-        except Exception:  # noqa: BLE001 - embedding retrieval is an optional route.
+        except Exception:  # noqa: BLE001 - optional identity decisions fail closed  # noqa: BLE001 - embedding retrieval is an optional route.
             return {}
         if len(vectors) != len(unique_texts):
             return {}
@@ -558,23 +601,16 @@ class IdentityGrouper:
         self, seed, seed_view, entry_views, query_views, policy
     ):
         try:
-            selection = self.resolver.resolve(seed_view, entry_views, query_views, policy)
-        except Exception:
+            selection = self.resolver.resolve(
+                seed_view, entry_views, query_views, policy
+            )
+        except Exception:  # noqa: BLE001 - optional identity decisions fail closed
             return None, (), "MODEL_FAILURE"
         allowed_entries = {item.entry_id for item in entry_views}
         allowed_queries = {item.query_id for item in query_views}
         try:
             selection.validate_candidates(allowed_entries, allowed_queries)
         except ValueError:
-            return None, (), "INVALID_SELECTION"
-        if seed.node_type == "generation_rule" and (
-            selection.selected_entry_id is not None
-            and _reason_declares_complementary(selection.reason)
-            or any(
-                item.verdict == "same" and _reason_declares_complementary(item.reason)
-                for item in selection.query_verdicts
-            )
-        ):
             return None, (), "INVALID_SELECTION"
         selected_queries = tuple(
             item.query_id for item in selection.query_verdicts if item.verdict == "same"
@@ -587,19 +623,50 @@ class IdentityGrouper:
         policy: IdentityPolicy,
         effective_fields: frozenset[str],
     ) -> IdentityRepresentationView:
+        implementation = self.implementation_registry.build(
+            representation, effective_fields
+        )
+        if self.evidence_resolver is not None and representation.sources:
+            try:
+                evidence = self.evidence_resolver.resolve(representation.sources)
+            except Exception:  # noqa: BLE001 - unavailable evidence never proves identity
+                evidence = ()
+            remaining = 8_000
+            items = []
+            for item in evidence:
+                if item.source not in representation.sources or remaining <= 0:
+                    continue
+                serialized = json.dumps(item.content, ensure_ascii=False)
+                items.append(
+                    {
+                        "id": item.id,
+                        "content_excerpt": serialized[:remaining],
+                        "truncated": len(serialized) > remaining,
+                    }
+                )
+                remaining -= len(serialized)
+                if len(items) == 4:
+                    break
+            implementation["source_evidence"] = items
+            implementation["evidence_scope"] = (
+                "At most four source excerpts and 8000 content characters; "
+                "omitted or truncated evidence is not proof of absence."
+            )
         return IdentityRepresentationView(
             ref=representation.ref,
             sources=representation.sources,
             identity_fields=identity_values(representation.content, policy),
-            key_implementation=self.implementation_registry.build(
-                representation, effective_fields
-            ),
+            key_implementation=implementation,
         )
 
 
 def _concept_implementation(representation: NodeRepresentation) -> dict[str, Any]:
     properties = representation.content.properties
-    return {key: properties[key] for key in ("targets",) if key in properties}
+    return {
+        key: properties[key]
+        for key in ("targets", "target_expressions")
+        if key in properties
+    }
 
 
 def _metric_implementation(representation: NodeRepresentation) -> dict[str, Any]:
@@ -613,22 +680,11 @@ def _metric_implementation(representation: NodeRepresentation) -> dict[str, Any]
                 "pattern",
                 "unit",
                 "grain",
-                "aggregation_policy",
-                "calculation_policy",
+                "sql_generation_plans",
             )
             if key in properties
         },
     }
-    plans = properties.get("sql_generation_plans")
-    if plans:
-        implementation["sql_generation_plans"] = [
-            {
-                key: plan[key]
-                for key in ("id", "application")
-                if isinstance(plan, dict) and key in plan
-            }
-            for plan in plans
-        ]
     return implementation
 
 
@@ -639,7 +695,7 @@ def _generation_rule_implementation(
     return {
         key: properties[key]
         for key in (
-            "operation_intent",
+            "operation_intents",
             "condition",
             "action",
             "reason",
@@ -650,20 +706,10 @@ def _generation_rule_implementation(
     }
 
 
-def _reason_declares_complementary(reason: str) -> bool:
-    normalized = unicodedata.normalize("NFKC", reason).casefold()
-    return "complementary" in normalized or "互补" in normalized
-
-
-def _cross_type_pair_id(concept_ref: RepresentationRef, metric_ref: RepresentationRef) -> str:
-    return ":".join(
-        (
-            concept_ref.origin,
-            concept_ref.ref_id,
-            metric_ref.origin,
-            metric_ref.ref_id,
-        )
-    )
+def _cross_type_pair_id(
+    concept_ref: RepresentationRef, metric_ref: RepresentationRef
+) -> str:
+    return f"{concept_ref.origin}:{concept_ref.ref_id}:{metric_ref.origin}:{metric_ref.ref_id}"
 
 
 _CHANNELS = ("exact", "cross_exact", "containment", "ngram", "implementation")
@@ -690,7 +736,9 @@ def _candidate_channel(
         elif set(seed_names) & set(names):
             channel = "cross_exact"
         elif "containment" in allowed_channels and any(
-            len(a) >= 2 and len(b) >= 2 and (a in b or b in a) for a in seed_names for b in names
+            len(a) >= 2 and len(b) >= 2 and (a in b or b in a)
+            for a in seed_names
+            for b in names
         ):
             channel = "containment"
         elif "ngram" in allowed_channels and any(
@@ -715,18 +763,6 @@ def _condition_action_text(content: NodeContent) -> str:
         str(value).strip()
         for value in (condition, action)
         if value not in (None, "", [], {})
-    )
-
-
-def _compatible_operation_intent(seed: NodeContent, candidate: NodeContent) -> bool:
-    seed_intent = seed.properties.get("operation_intent")
-    candidate_intent = candidate.properties.get("operation_intent")
-    return not (
-        isinstance(seed_intent, str)
-        and seed_intent
-        and isinstance(candidate_intent, str)
-        and candidate_intent
-        and seed_intent != candidate_intent
     )
 
 
@@ -788,9 +824,12 @@ def _cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
     return sum(a * b for a, b in zip(left, right, strict=True)) / denominator
 
 
-def _diverse_candidates(channels: dict[str, list[tuple]], top_k: int) -> tuple[tuple, ...]:
+def _diverse_candidates(
+    channels: dict[str, list[tuple]], top_k: int
+) -> tuple[tuple, ...]:
     queues = {
-        channel: sorted(items, key=lambda item: item[0]) for channel, items in channels.items()
+        channel: sorted(items, key=lambda item: item[0])
+        for channel, items in channels.items()
     }
     result: list[tuple] = []
     seen: set[str] = set()

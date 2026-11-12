@@ -1,11 +1,11 @@
-"""Immutable authoring snapshots; GraphSpace is a projection, never the edit source."""
+"""Immutable node definitions and explicit relations with a validated graph projection."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import Field
@@ -19,15 +19,24 @@ from cortex.capabilities.sql_training.contracts.references import (
     validate_asset_batch_references,
 )
 from cortex.capabilities.sql_training.core.enums import NodeType
-from cortex.capabilities.sql_training.graph.adapter import NodeGraphAdapter
+from cortex.capabilities.sql_training.graph.nodes import build_graph, build_node
 from cortex.capabilities.sql_training.models import NodeAsset
 from cortex.capabilities.sql_training.models.base import NodeModel
-from cortex.schema import GraphEdge, GraphSpace, SchemaDefinition
+from cortex.schema import (
+    GraphEdge,
+    GraphNode,
+    GraphSpace,
+    GraphState,
+    SchemaDefinition,
+)
+from cortex.schema.relation_contracts import merge_relation_contracts
+from cortex.schema.relationships import is_dependency_edge
 
 SEMANTIC_TYPES = frozenset(
-    {NodeType.CONCEPT, NodeType.METRIC, NodeType.GENERATION_RULE}
+    {NodeType.CONCEPT, NodeType.EVENT, NodeType.METRIC, NodeType.GENERATION_RULE}
 )
 PHYSICAL_TYPES = frozenset({NodeType.TABLE, NodeType.COLUMN, NodeType.DIMENSION_VALUE})
+EDITABLE_TYPES = SEMANTIC_TYPES | {NodeType.DIMENSION_VALUE}
 
 
 def fingerprint(value: Any) -> str:
@@ -43,12 +52,20 @@ def fingerprint(value: Any) -> str:
 
 
 class GraphSnapshot(NodeModel):
+    format_version: Literal["inline-node-conflicts-v1"] = "inline-node-conflicts-v1"
     revision: str
     parent_revision: str | None = None
     schema_version: str
     content_fingerprint: str
     assets: list[NodeAsset]
     catalog_edges: list[GraphEdge] = Field(default_factory=list)
+    explicit_edges: list[GraphEdge] = Field(default_factory=list)
+    graph: GraphSpace
+    graph_fingerprint: str
+
+    @property
+    def conflict_nodes(self) -> tuple[GraphNode, ...]:
+        return tuple(node for node in self.graph.nodes if node.alternatives)
 
     @property
     def semantic_assets(self) -> list[NodeAsset]:
@@ -64,6 +81,14 @@ class GraphSnapshot(NodeModel):
             a.model_copy(deep=True)
             for a in self.assets
             if a.node_type in PHYSICAL_TYPES
+        ]
+
+    @property
+    def editable_assets(self) -> list[NodeAsset]:
+        return [
+            a.model_copy(deep=True)
+            for a in self.assets
+            if a.node_type in EDITABLE_TYPES
         ]
 
 
@@ -98,6 +123,8 @@ class GraphStore:
     ) -> GraphSnapshot:
         if self.working_revision:
             raise ValueError("graph store is already initialized")
+        if any(a.node_type not in PHYSICAL_TYPES for a in assets):
+            raise ValueError("case initialization accepts physical facts only")
         self._catalog_edges = list(catalog_edges)
         snapshot = self.save(assets, parent_revision=None)
         self._physical = {a.id: a for a in snapshot.physical_assets}
@@ -110,13 +137,39 @@ class GraphStore:
         payload = read_json(self.root / f"{revision}.json")
         if payload is None:
             raise ValueError(f"unknown graph revision: {revision}")
+        if payload.get("format_version") != "inline-node-conflicts-v1":
+            raise ValueError("snapshot graph format changed; start a new training case")
         snapshot = GraphSnapshot.model_validate(payload)
         if snapshot.schema_version != self.schema_version:
             raise ValueError("snapshot ontology schema version changed")
         if snapshot.content_fingerprint != self._content_hash(
-            snapshot.assets, snapshot.catalog_edges
+            snapshot.assets,
+            snapshot.catalog_edges,
+            snapshot.explicit_edges,
+            snapshot.graph,
         ):
             raise ValueError("snapshot content fingerprint mismatch")
+        if snapshot.graph_fingerprint != fingerprint(
+            snapshot.graph.model_dump(mode="json")
+        ):
+            raise ValueError("snapshot graph fingerprint mismatch")
+        from cortex.application.ontology_graph import GraphManager
+
+        GraphManager(self.schema).validate_state(
+            GraphState(graph=snapshot.graph)
+        )
+        conflict_ids = {c.id for c in snapshot.conflict_nodes}
+        if {n.id: n for n in snapshot.graph.nodes if n.id not in conflict_ids} != {
+            a.id: build_node(a) for a in snapshot.assets
+        }:
+            raise ValueError("snapshot nodes disagree with asset definitions")
+        saved_relations = {
+            e.id: e for e in (*snapshot.catalog_edges, *snapshot.explicit_edges)
+        }
+        if saved_relations != {
+            e.id: e for e in snapshot.graph.edges if e.reference_origin != "default"
+        }:
+            raise ValueError("snapshot relations disagree with authored relations")
         return snapshot
 
     @property
@@ -140,12 +193,28 @@ class GraphStore:
             accepted_revision,
         )
 
+    def manager(self, revision: str | None = None):
+        from cortex.application.ontology_graph import GraphManager
+
+        selected = revision or self.working_revision
+        return GraphManager(
+            self.schema,
+            GraphState(
+                graph=self.read(selected).graph,
+            ),
+            revision=selected,
+        )
+
     def validation_graph(self, revision: str) -> GraphSpace:
         snap = self.read(revision)
-        return self.validate(snap.assets, snap.catalog_edges)
+        return snap.graph.model_copy(deep=True)
 
     def validate(
-        self, assets: list[NodeAsset], catalog_edges: list[GraphEdge]
+        self,
+        assets: list[NodeAsset],
+        catalog_edges: list[GraphEdge],
+        explicit_edges: list[GraphEdge] | None = None,
+        state: GraphState | None = None,
     ) -> GraphSpace:
         # model_copy(update=...) bypasses validation; always parse the complete boundary.
         assets = [NodeAsset.model_validate(a.model_dump(mode="json")) for a in assets]
@@ -159,9 +228,51 @@ class GraphStore:
         ):
             raise ValueError("case graph requires all configured Tables and Columns")
         semantic = [a for a in assets if a.node_type in SEMANTIC_TYPES]
-        validate_asset_batch_references(
-            semantic, working_assets=[], table_schema=table_schema(assets)
-        )
+        if state is not None:
+            from cortex.application.ontology_graph import GraphManager
+
+            by_node = {n.id: n for n in state.graph.nodes}
+            for conflict in state.conflict_nodes:
+                owner = by_node[conflict.id]
+                for alternative in conflict.alternatives:
+                    content = GraphManager.resolve_alternative(owner, alternative)
+                    semantic.append(
+                        semantic_asset(
+                            owner.model_copy(
+                                update={
+                                    **content.model_dump(mode="json"),
+                                    "sources": alternative.sources,
+                                }
+                            )
+                        )
+                    )
+        if state is None:
+            validate_asset_batch_references(
+                semantic,
+                working_assets=[a for a in assets if a.node_type in PHYSICAL_TYPES],
+                table_schema=table_schema(assets),
+            )
+        else:
+            # Validate each authored branch without treating mutually exclusive
+            # candidates as duplicate nodes or deriving a second dependency graph.
+            from cortex.capabilities.sql_training.contracts.references import (
+                _validate_asset_references,
+                physical_reference_catalog,
+            )
+
+            physical_ids = physical_reference_catalog(
+                table_schema(assets),
+                dimension_values=[
+                    a for a in assets if a.node_type == NodeType.DIMENSION_VALUE
+                ],
+            )
+            for asset in semantic:
+                _validate_asset_references(
+                    asset,
+                    visible_ids={n.id for n in state.graph.nodes},
+                    physical_ids=physical_ids,
+                    table_schema=table_schema(assets),
+                )
         missing = sorted(
             {
                 ref
@@ -172,30 +283,103 @@ class GraphStore:
         )
         if missing:
             raise ValueError(f"unverified Dimension Value references: {missing}")
-        graph, warnings = NodeGraphAdapter(self.workspace).to_authoring_graph(
-            self.schema,
-            assets=assets,
-            catalog_edges=catalog_edges,
+        if state is not None:
+            from cortex.application.ontology_graph import GraphManager
+
+            GraphManager(self.schema).validate_state(state)
+            return state.graph
+        graph = build_graph(
+            assets, catalog_edges, self.schema, explicit_edges=explicit_edges or []
         )
-        if warnings:
-            raise ValueError(f"incomplete graph projection: {list(warnings)}")
         return graph
 
     def save(
-        self, assets: list[NodeAsset], *, parent_revision: str | None
+        self,
+        assets: list[NodeAsset],
+        *,
+        parent_revision: str | None,
+        explicit_edges: list[GraphEdge] | None = None,
+        state: GraphState | None = None,
     ) -> GraphSnapshot:
+        parent = self.read(parent_revision) if parent_revision else None
+        if explicit_edges is None:
+            explicit_edges = (
+                self.read(parent_revision).explicit_edges if parent_revision else []
+            )
+        explicit_edges = sorted(
+            [
+                GraphEdge.model_validate(e.model_dump(mode="json"))
+                for e in explicit_edges
+            ],
+            key=lambda e: e.id,
+        )
+        from cortex.application.ontology_graph import GraphManager
+
+        if state is None and parent and (parent.conflict_nodes or parent.graph.relation_contracts):
+            conflict_ids = {c.id for c in parent.conflict_nodes}
+            if conflict_ids & {a.id for a in assets}:
+                raise ValueError(
+                    "Conflict nodes must be changed through set_conflict or resolve_conflict"
+                )
+            state, _ = GraphManager(self.schema).prepare_state(
+                GraphState(
+                    graph=GraphSpace(
+                        nodes=tuple(build_node(a) for a in assets)
+                        + tuple(n for n in parent.graph.nodes if n.id in conflict_ids),
+                        edges=(*explicit_edges, *self._catalog_edges),
+                        relation_contracts=parent.graph.relation_contracts,
+                    ),
+                )
+            )
+        if state is not None:
+            state = GraphManager(self.schema).validate_state(state)
+            conflict_ids = {c.id for c in state.conflict_nodes}
+            by_asset = {a.id: a for a in assets}
+            for node in state.graph.nodes:
+                if node.id in conflict_ids:
+                    by_asset.pop(node.id, None)
+                elif node.id not in by_asset or build_node(by_asset[node.id]) != node:
+                    by_asset[node.id] = semantic_asset(node)
+            assets = list(by_asset.values())
         normalized = [
             NodeAsset.model_validate(a.model_dump(mode="json")) for a in assets
         ]
         normalized.sort(key=lambda a: a.id)
-        self.validate(normalized, self._catalog_edges)
+        if state is not None:
+            by_asset = {a.id: a for a in normalized}
+            state = state.model_copy(
+                update={
+                    "graph": GraphSpace(
+                        nodes=tuple(
+                            build_node(by_asset[n.id]) if n.id in by_asset else n
+                            for n in state.graph.nodes
+                        ),
+                        edges=state.graph.edges,
+                        relation_contracts=state.graph.relation_contracts,
+                    )
+                }
+            )
+        graph = self.validate(
+            normalized, self._catalog_edges, explicit_edges, state=state
+        )
+        # Persist canonical overrides (including inferred scope) and discard stale
+        # overrides removed with their anchor. Reads never reconstruct relations.
+        explicit_ids = {e.id for e in explicit_edges}
+        explicit_edges = sorted(
+            [e for e in graph.edges if e.id in explicit_ids], key=lambda e: e.id
+        )
         snap = GraphSnapshot(
             revision=uuid4().hex,
             parent_revision=parent_revision,
             schema_version=self.schema_version,
-            content_fingerprint=self._content_hash(normalized, self._catalog_edges),
+            content_fingerprint=self._content_hash(
+                normalized, self._catalog_edges, explicit_edges, graph
+            ),
             assets=normalized,
             catalog_edges=self._catalog_edges,
+            explicit_edges=explicit_edges,
+            graph=graph,
+            graph_fingerprint=fingerprint(graph.model_dump(mode="json")),
         )
         write_json_atomic(
             self.root / f"{snap.revision}.json", snap.model_dump(mode="json")
@@ -208,60 +392,124 @@ class GraphStore:
         self.working_revision = snap.revision
         return snap
 
-    def retain_direct(self) -> None:
-        self.accepted_revision = self.working_revision
-
-    def promote(
+    def select(
         self,
         *,
         assessed_revision: str,
         accepted_before: str,
         member_ids: list[str],
-        publish: bool = True,
     ) -> GraphSnapshot:
+        """Build a filtered candidate without advancing either graph head."""
         if self.accepted_revision != accepted_before:
             raise ValueError("assessment accepted_revision_before is stale")
         if not member_ids:
             return self.accepted
         assessed, old = self.read(assessed_revision), self.accepted
-        proposed = {a.id: a for a in assessed.semantic_assets}
-        previous = {a.id: a for a in old.semantic_assets}
-        changed = set(semantic_diff(old, assessed))
+        proposed = {a.id: a for a in assessed.editable_assets}
+        previous = {a.id: a for a in old.editable_assets}
+        changed = set(graph_diff(old, assessed))
         selected = set(member_ids)
         if not selected <= changed:
             raise ValueError(
                 "acceptance members must belong to the assessed tentative diff"
             )
-        for node_id in selected:
-            if node_id not in proposed:
+        for affected in relation_contract_change_groups(old, assessed):
+            if selected & affected and not affected <= selected:
+                raise ValueError("acceptance must include every edge affected by a relation contract change")
+        old_edges = {e.id: e for e in old.explicit_edges}
+        proposed_edges = {e.id: e for e in assessed.explicit_edges}
+        editable_kinds = {kind.value for kind in EDITABLE_TYPES}
+        proposed_nodes = {
+            n.id: n for n in assessed.graph.nodes if n.node_type in editable_kinds
+        }
+        old_nodes = {n.id: n for n in old.graph.nodes if n.node_type in editable_kinds}
+        node_members = selected & (old_nodes.keys() | proposed_nodes.keys())
+        for node_id in node_members:
+            if node_id not in proposed_nodes:
                 raise ValueError("retained semantic deletion is not supported")
-            if (set(proposed[node_id].references()) & changed) - selected:
+            if (
+                {
+                    e.to_node_id
+                    for e in assessed.graph.edges
+                    if e.from_node_id == node_id and is_dependency_edge(e)
+                }
+                & changed
+            ) - selected:
                 raise ValueError(
                     "accepted group depends on unaccepted tentative content"
                 )
-        previous.update({key: proposed[key] for key in selected})
-        snap = self.save(
-            [*previous.values(), *self._physical.values()],
-            parent_revision=accepted_before,
+        for key in node_members:
+            previous.pop(key, None)
+            if key in proposed:
+                previous[key] = proposed[key]
+        conflicts = {
+            c.id: c for c in old.conflict_nodes if c.id not in node_members
+        }
+        conflicts.update(
+            {c.id: c for c in assessed.conflict_nodes if c.id in node_members}
         )
-        if publish:
-            self.accepted_revision = snap.revision
+        common = {**old_nodes, **{key: proposed_nodes[key] for key in node_members}}
+
+        for edge_id in selected - node_members:
+            if edge_id in proposed_edges:
+                old_edges[edge_id] = proposed_edges[edge_id]
+            else:
+                old_edges.pop(edge_id, None)
+        for edge in old_edges.values():
+            if (
+                edge.id in selected
+                and ({edge.from_node_id, edge.to_node_id} & changed) - selected
+            ):
+                raise ValueError(
+                    "accepted relation depends on unaccepted tentative content"
+                )
+        assets = [
+            *previous.values(),
+            *[a for a in old.assets if a.node_type not in EDITABLE_TYPES],
+        ]
+        from cortex.application.ontology_graph import GraphManager
+
+        approved_contracts = []
+        for contract in assessed.graph.relation_contracts:
+            affected = {
+                edge.id for edge in (*old.explicit_edges, *assessed.explicit_edges)
+                if edge.edge_type == contract.id
+            }
+            if affected and affected <= selected:
+                approved_contracts.append(contract)
+        state, _ = GraphManager(self.schema).prepare_state(
+            GraphState(
+                graph=GraphSpace(
+                    nodes=tuple(build_node(a) for a in assets)
+                    + tuple(common[key] for key in conflicts),
+                    edges=(*old_edges.values(), *self._catalog_edges),
+                    relation_contracts=merge_relation_contracts(
+                        old.graph.relation_contracts,
+                        approved_contracts,
+                    ),
+                ),
+            )
+        )
+        snap = self.save(
+            assets,
+            parent_revision=accepted_before,
+            explicit_edges=list(old_edges.values()),
+            state=state,
+        )
         return snap
 
     def retain(self) -> GraphSnapshot:
-        assets = [*self.accepted.semantic_assets, *self._physical.values()]
-        if (
-            self._content_hash(assets, self._catalog_edges)
-            == self.accepted.content_fingerprint
-        ):
-            snap = self.accepted
-        else:
-            snap = self.save(assets, parent_revision=self.accepted_revision)
-            self.accepted_revision = snap.revision
+        snap = self.accepted
         self.working_revision = snap.revision
         return snap
 
-    def _content_hash(self, assets: list[NodeAsset], edges: list[GraphEdge]) -> str:
+    def _content_hash(
+        self,
+        assets: list[NodeAsset],
+        edges: list[GraphEdge],
+        explicit_edges=(),
+        graph: GraphSpace | None = None,
+    ) -> str:
         return fingerprint(
             {
                 "assets": [
@@ -271,14 +519,73 @@ class GraphStore:
                 "edges": [
                     e.model_dump(mode="json") for e in sorted(edges, key=lambda e: e.id)
                 ],
+                "explicit_edges": [
+                    e.model_dump(mode="json")
+                    for e in sorted(explicit_edges or [], key=lambda e: e.id)
+                ],
                 "schema": self.schema_version,
+                "graph": graph.model_dump(mode="json") if graph is not None else None,
             }
         )
 
 
-def semantic_diff(before: GraphSnapshot, after: GraphSnapshot) -> list[str]:
-    old = {a.id: a.model_dump(mode="json") for a in before.semantic_assets}
-    new = {a.id: a.model_dump(mode="json") for a in after.semantic_assets}
-    return sorted(
+def graph_diff(before: GraphSnapshot, after: GraphSnapshot) -> list[str]:
+    old = snapshot_items(before)
+    new = snapshot_items(after)
+    old.update({e.id: e.model_dump(mode="json") for e in before.explicit_edges})
+    new.update({e.id: e.model_dump(mode="json") for e in after.explicit_edges})
+    changed = {
         key for key in old.keys() | new.keys() if old.get(key) != new.get(key)
+    }
+    # Registering a legacy predicate changes the meaning/validation of its edges,
+    # even when their serialized content is unchanged. Review the existing edge units.
+    for affected in relation_contract_change_groups(before, after):
+        changed.update(affected)
+    return sorted(changed)
+
+
+def relation_contract_change_groups(before: GraphSnapshot, after: GraphSnapshot) -> list[set[str]]:
+    """A contract change affects all its edge instances, even on disconnected nodes."""
+    old = {contract.id: contract for contract in before.graph.relation_contracts}
+    new = {contract.id: contract for contract in after.graph.relation_contracts}
+    return [
+        {edge.id for edge in (*before.explicit_edges, *after.explicit_edges)
+         if edge.edge_type == kind}
+        for kind in sorted(old.keys() | new.keys()) if old.get(kind) != new.get(kind)
+    ]
+
+
+def snapshot_items(snapshot):
+    """One diff/review item per editable owner, including its compact candidates."""
+    items = {a.id: a.model_dump(mode="json") for a in snapshot.editable_assets}
+    nodes = {n.id: n for n in snapshot.graph.nodes}
+    for conflict in snapshot.conflict_nodes:
+        items[conflict.id] = {
+            "node": nodes[conflict.id].model_dump(mode="json"),
+        }
+    return items
+
+
+def semantic_asset(node):
+    """Rebuild the existing authoring envelope after resolving a semantic candidate."""
+    from cortex.capabilities.sql_training.core.enums import SourceType
+    from cortex.capabilities.sql_training.models import Source
+
+    if node.node_type not in {kind.value for kind in SEMANTIC_TYPES}:
+        raise ValueError("A formal physical node cannot be supplied as a semantic edit")
+    properties = dict(node.properties)
+    properties.pop("definition", None)
+    properties = {key: value for key, value in properties.items() if value is not None}
+    return NodeAsset(
+        id=node.id,
+        node_type=node.node_type,
+        name=node.name,
+        description=node.description or node.properties.get("definition"),
+        aliases=list(node.aliases),
+        tags=list(node.tags),
+        properties=properties,
+        sources=[
+            Source(source_type=SourceType.QA, source_id=s.case_id or s.source_id)
+            for s in node.sources
+        ],
     )

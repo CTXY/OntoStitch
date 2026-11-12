@@ -12,8 +12,7 @@ from cortex.capabilities.sql_training.builders import build_dimension_value_asse
 from cortex.capabilities.sql_training.core.enums import NodeType
 from cortex.capabilities.sql_training.core.ids import make_node_id
 from cortex.capabilities.sql_training.extractors.sql_normalizer import (
-    build_column_table_map,
-    normalize_sql_aliases,
+    physical_column_sources,
 )
 from cortex.capabilities.sql_training.models import (
     ColumnProperties,
@@ -73,34 +72,27 @@ def analyze_referenced_string_columns(
     dialect: str,
 ) -> tuple[tuple[ReferencedStringColumn, ...], tuple[SqlColumnReference, ...]]:
     column_by_ref = {asset.id: asset for asset in column_assets}
-    column_table_map = build_column_table_map(
-        [
-            {
-                "table_name": _column_table_name(asset, table_assets),
-                "column_name": _column_name(asset),
-            }
-            for asset in column_assets
-        ]
-    )
+    table_columns: dict[str, set[str]] = {}
+    for asset in column_assets:
+        table_columns.setdefault(_column_table_name(asset, table_assets), set()).add(
+            _column_name(asset)
+        )
     sources_by_ref: dict[str, set[str]] = {}
     ledger: list[SqlColumnReference] = []
     for record in records:
         source_id = str(record.get("source_id") or "")
         sql = str(record.get("sql") or "")
         try:
-            normalized = normalize_sql_aliases(
-                sql,
-                column_table_map=column_table_map,
-                dialect=dialect,
-            )
-            tree = sqlglot.parse_one(normalized, dialect=dialect)
-        except Exception as exc:  # noqa: BLE001
+            tree = sqlglot.parse_one(sql, dialect=dialect)
+        except (sqlglot.errors.ParseError, ValueError) as exc:
             raise ValueError(f"Failed to parse SQL for {source_id}: {exc}") from exc
         if tree is None:
             raise ValueError(f"Failed to parse SQL for {source_id}")
+        lineage = physical_column_sources(tree, table_columns=table_columns)
         for column in tree.find_all(expressions.Column):
             raw_reference = column.sql(dialect=dialect)
-            column_ref = _resolve_column(column, column_by_ref)
+            source = lineage.get(id(column))
+            column_ref = make_node_id(NodeType.COLUMN, *source) if source else None
             if column_ref is None:
                 ledger.append(
                     SqlColumnReference(
@@ -173,8 +165,14 @@ class ReferencedDimensionValueExpander:
     def _expand_column(
         self, column: ReferencedStringColumn
     ) -> tuple[list[NodeAsset], DimensionValueColumnResult]:
-        initial = self.database.column_value_stats(column.table_name, column.column_name)
-        ratio = initial.distinct_count / initial.non_empty_count if initial.non_empty_count else 0.0
+        initial = self.database.column_value_stats(
+            column.table_name, column.column_name
+        )
+        ratio = (
+            initial.distinct_count / initial.non_empty_count
+            if initial.non_empty_count
+            else 0.0
+        )
         if initial.non_empty_count == 0:
             return [], _result(column, "EMPTY", initial.non_empty_count, 0, ratio)
         if (
@@ -250,23 +248,6 @@ class ReferencedDimensionValueExpander:
         )
 
 
-def _resolve_column(
-    column: expressions.Column, column_by_ref: dict[str, NodeAsset]
-) -> str | None:
-    if column.table:
-        column_ref = make_node_id(NodeType.COLUMN, column.table, column.name)
-        return column_ref if column_ref in column_by_ref else None
-    select = column.find_ancestor(expressions.Select)
-    if select is None:
-        return None
-    candidates = {
-        make_node_id(NodeType.COLUMN, table.name, column.name)
-        for table in select.find_all(expressions.Table)
-        if make_node_id(NodeType.COLUMN, table.name, column.name) in column_by_ref
-    }
-    return candidates.pop() if len(candidates) == 1 else None
-
-
 def _usage(column: expressions.Column) -> str:
     parent = column.parent
     while parent is not None:
@@ -313,7 +294,9 @@ def _result(
     )
 
 
-def _high_reason(count: int, ratio: float, expander: ReferencedDimensionValueExpander) -> str:
+def _high_reason(
+    count: int, ratio: float, expander: ReferencedDimensionValueExpander
+) -> str:
     reasons = []
     if count > expander.max_distinct_values:
         reasons.append("DISTINCT_COUNT_EXCEEDED")
@@ -323,7 +306,9 @@ def _high_reason(count: int, ratio: float, expander: ReferencedDimensionValueExp
 
 
 def _is_string_type(data_type: str | None) -> bool:
-    return any(marker in str(data_type or "").casefold() for marker in _STRING_TYPE_MARKERS)
+    return any(
+        marker in str(data_type or "").casefold() for marker in _STRING_TYPE_MARKERS
+    )
 
 
 def _column_name(asset: NodeAsset) -> str:

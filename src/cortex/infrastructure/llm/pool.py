@@ -85,6 +85,9 @@ class ThreadedChatModel(BaseChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
         return self._model._generate(messages, stop=stop, **kwargs)
 
+    def _get_ls_params(self, stop=None, **kwargs):
+        return self._model._get_ls_params(stop=stop, **kwargs)
+
     def bind_tools(self, tools, *, tool_choice=None, **kwargs: Any):
         # Ask the provider to normalize tool schemas, but bind the resulting kwargs
         # to this adapter so synchronous scheduling is never bypassed.
@@ -161,6 +164,9 @@ class PooledChatModel(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         return "cortex-key-pool"
+
+    def _get_ls_params(self, stop=None, **kwargs):
+        return self._models[0]._get_ls_params(stop=stop, **kwargs)
 
     def bind_tools(self, tools, *, tool_choice=None, **kwargs: Any):
         bound = self._models[0].bind_tools(tools, tool_choice=tool_choice, **kwargs)

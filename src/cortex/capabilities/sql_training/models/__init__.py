@@ -1,7 +1,13 @@
 from cortex.capabilities.sql_training.models.asset import NodeAsset, NodeProperties
 from cortex.capabilities.sql_training.models.base import Source
-from cortex.capabilities.sql_training.models.column import ColumnProperties, ColumnStatistics
-from cortex.capabilities.sql_training.models.dimension_value import DimensionValueProperties
+from cortex.capabilities.sql_training.models.column import (
+    ColumnProperties,
+    ColumnStatistics,
+)
+from cortex.capabilities.sql_training.models.dimension_value import (
+    DimensionValueProperties,
+)
+from cortex.capabilities.sql_training.models.event import EventProperties
 from cortex.capabilities.sql_training.models.example import ExampleProperties
 from cortex.capabilities.sql_training.models.generation_rule import (
     GenerationRuleProperties,
@@ -9,49 +15,33 @@ from cortex.capabilities.sql_training.models.generation_rule import (
     QuestionTrigger,
     SqlTrigger,
 )
-from cortex.capabilities.sql_training.models.join_path import JoinCondition, JoinPathProperties
 from cortex.capabilities.sql_training.models.metric import (
     MetricExpression,
     MetricProperties,
     SQLGenerationPlan,
 )
-from cortex.capabilities.sql_training.models.relationships import (
-    MapsToColumn,
-    MapsToValue,
-)
 from cortex.capabilities.sql_training.models.semantic_mapping import (
     ConceptProperties,
     SemanticMappingTarget,
-    backfill_filter_ids,
-    semantic_filter_leaves,
-    semantic_filter_refs,
-    stable_mapping_id,
 )
 from cortex.capabilities.sql_training.models.table import TableProperties
 
 __all__ = [
     "ColumnProperties",
     "ColumnStatistics",
+    "ConceptProperties",
     "DimensionValueProperties",
+    "EventProperties",
     "ExampleProperties",
     "GenerationRuleProperties",
     "GenerationRuleTriggers",
-    "JoinCondition",
-    "JoinPathProperties",
-    "MetricProperties",
     "MetricExpression",
-    "MapsToColumn",
-    "MapsToValue",
-    "SQLGenerationPlan",
+    "MetricProperties",
     "NodeAsset",
     "NodeProperties",
     "QuestionTrigger",
-    "ConceptProperties",
+    "SQLGenerationPlan",
     "SemanticMappingTarget",
-    "backfill_filter_ids",
-    "semantic_filter_leaves",
-    "semantic_filter_refs",
-    "stable_mapping_id",
     "Source",
     "SqlTrigger",
     "TableProperties",

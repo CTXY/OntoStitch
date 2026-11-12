@@ -1,18 +1,11 @@
 # GenerationRule requirements for integration
 
-A Rule owns one independently reusable SQL-generation decision, not every operation in a source
-query. condition states the situation recognizable before the decision; action states the complete
-behavior. Names, triggers and operation_intent help interpretation but do not determine identity or
-prove applicability. It does not redefine Concept bindings or Metric formulas.
+A Rule owns one independently reusable SQL-generation decision, not every operation in a source query. condition states the situation recognizable before the decision; action states the complete behavior. Names, triggers and operation_intent help interpretation but do not determine identity or prove applicability. It does not redefine Concept bindings or Metric formulas.
 
-Preserve the rule's owned operands, population, row grain, NULL/DISTINCT behavior and result policy.
-Different COUNT operands cannot be replaced by an unbound target ID. A ranking-only rule may consume
-an established key, but cannot lose a source-owned calculation through vague delegation. Raw monthly
-rows are not per-customer aggregates without evidence; preserve repeated entity rows. If raw and
-grouped branches coexist, give separate SQL patterns or explicitly qualify GROUP BY as grouped-only.
+Explain the actual requested result/intermediate obligation, affected subjects and roles, and implementation differences using the source question/SQL. Independent obligations must not be merged merely because they co-occur. For one obligation, determine whether different actions are equivalent implementations, source-supported conditional branches, confirmed competitors, or unresolved for insufficient evidence. Different action text is not proof of conflict. For COUNT versus COUNT DISTINCT inspect the counted subject, input row grain and supported uniqueness; do not invent uniqueness or silently correct the gold behavior. Conditions must be recognizable business/request circumstances, never source/case IDs. Every branch must retain its complete action and applicable references; do not make all branch dependencies universally required.
 
-Retain necessary business-to-physical mappings and references; remove a concrete example dependency
-only when a meaningful generalized input replaces its role. Required/avoided behavior already owned
-by a source must survive, but do not invent a contrast merely to fill a field. Facts override false
-explanatory prose: RANK skips rank numbers after ties; DENSE_RANK does not. Across sources preserve
-aggregation-before-composition where required, rather than introducing detail-row fan-out joins.
+Preserve the rule's owned operands, population, row grain, NULL/DISTINCT behavior and result policy. Different COUNT operands cannot be replaced by an unbound target ID. A ranking-only rule may consume an established key, but cannot lose a source-owned calculation through vague delegation. Raw monthly rows are not per-customer aggregates without evidence; preserve repeated entity rows. If raw and grouped branches coexist, give separate SQL patterns or explicitly qualify GROUP BY as grouped-only.
+
+Retain necessary business-to-physical mappings and references; remove a concrete example dependency only when a meaningful generalized input replaces its role. Required/avoided behavior already owned by a source must survive, but do not invent a contrast merely to fill a field. Facts override false explanatory prose: RANK skips rank numbers after ties; DENSE_RANK does not. Across sources preserve aggregation-before-composition where required, rather than introducing detail-row fan-out joins.
+
+For joins, distinguish association keys from row-retention policy. Do not make INNER JOIN unconditional merely because source SQL uses it. If the action requires INNER JOIN, the condition must establish that matching related records are required; requests retaining unmatched entities are outside that condition. A physical JOIN edge establishes connectivity, not a mandatory query join type. Do not introduce uniqueness, DISTINCT or counting policies from association alone.

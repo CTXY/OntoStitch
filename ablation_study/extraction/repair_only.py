@@ -105,7 +105,10 @@ def run_repair_only(spec: dict, root: Path, workspace: Path):
         native_result = existing[record["source_id"]]
         native_case = native_result.parent.parent
         raw = read_json(native_result)
-        rows = [serialize_asset_envelope(a) for a in load_case_assets(raw, case_root=native_case)]
+        rows = [
+            serialize_asset_envelope(a)
+            for a in load_case_assets(raw, case_root=native_case)
+        ]
         info = read_json(native_case / "case.json")
         provenance = {
             "native_case": str(native_case),
@@ -119,7 +122,8 @@ def run_repair_only(spec: dict, root: Path, workspace: Path):
             "max_rounds": 1,
             "max_iterations": 1,
         }
-        assets = validate_assets(rows, Path(spec["physical_workspace"]))
+        from cortex.schema import GraphEdge
+        assets = validate_assets(rows, Path(spec["physical_workspace"]), explicit_edges=[GraphEdge.model_validate(e) for e in raw.get("draft_edges", ())])
         cases.append(
             write_case(
                 root,
@@ -129,6 +133,7 @@ def run_repair_only(spec: dict, root: Path, workspace: Path):
                 result=raw,
                 provenance=provenance,
                 case_index=case_index,
+                physical_workspace=Path(spec["physical_workspace"]),
             )
         )
         print(

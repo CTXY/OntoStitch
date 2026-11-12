@@ -1,0 +1,18 @@
+{
+  "financial": {
+    "source": "financial/merged_graph/graph_state.json",
+    "source_sha256": "b27eb1142c38e7a479c426ad6d45c44c7334c0a9f84b403756a59c4d3fab66fc",
+    "schema_hash": "sha256:fd5136f4081aadd0636013a401059641db149ae0ed6f634039b66ca606de74f0",
+    "nodes": 245,
+    "edges": 339,
+    "conflicts": 4
+  },
+  "thrombosis_prediction": {
+    "source": "thrombosis_prediction/merged_graph/graph_state.json",
+    "source_sha256": "449d47aefd2ca6d3d96f6469ede7023dc454c510e61af29708dabf0a7e94e376",
+    "schema_hash": "sha256:fd5136f4081aadd0636013a401059641db149ae0ed6f634039b66ca606de74f0",
+    "nodes": 284,
+    "edges": 381,
+    "conflicts": 4
+  }
+}

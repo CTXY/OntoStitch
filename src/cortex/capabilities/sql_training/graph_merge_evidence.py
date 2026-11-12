@@ -19,13 +19,18 @@ class SqlTrainingGraphMergeEvidenceResolver:
 
     def resolve(self, sources: tuple[SourceReference, ...]) -> tuple[EvidenceItem, ...]:
         evidence = []
+        repository = (
+            self.repository.snapshot()
+            if hasattr(self.repository, "snapshot")
+            else self.repository
+        )
         for source in sources:
-            row = self.repository.get(source.source_id)
+            row = repository.get(source.source_id)
             if row is None:
                 continue
             content = {
                 key: row[key]
-                for key in ("question", "sql", "revision", "validation")
+                for key in ("question", "sql", "evidence", "revision", "validation")
                 if key in row and row[key] is not None
             }
             evidence.append(
@@ -49,14 +54,19 @@ class MappingEvidenceRepository:
 
 class WorkspaceEvidenceRepository:
     def __init__(self, workspace):
-        self.rows = {
-            str(row["source_id"]): row
-            for row in workspace.read_source_evidence()
-            if row.get("source_id")
-        }
+        self.workspace = workspace
+
+    def snapshot(self):
+        return MappingEvidenceRepository(
+            {
+                str(row["source_id"]): row
+                for row in self.workspace.read_source_evidence()
+                if row.get("source_id")
+            }
+        )
 
     def get(self, source_id: str) -> Mapping[str, Any] | None:
-        return self.rows.get(source_id)
+        return self.snapshot().get(source_id)
 
 
 __all__ = [

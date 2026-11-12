@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from cortex.config.models import LLMConfig, LLMProfileName
+from cortex.infrastructure.llm.deepseek import DeepSeekChatOpenAI
 
 
 class LLMError(RuntimeError):
@@ -45,14 +48,22 @@ def create_chat_model(
     if missing:
         raise LLMConfigurationError(f"Missing required LLM configuration: {', '.join(missing)}")
 
-    return ChatOpenAI(
+    chat_class = DeepSeekChatOpenAI if urlparse(base_url).hostname == "api.deepseek.com" and resolved.enable_thinking else ChatOpenAI
+    return chat_class(
         model=model,
         api_key=api_key,
         base_url=base_url,
         temperature=resolved.temperature,
         timeout=resolved.timeout,
         max_retries=resolved.max_retries,
-        extra_body={"enable_thinking": resolved.enable_thinking},
+        reasoning_effort=resolved.reasoning_effort,
+        extra_body=(
+            ({"thinking": {"type": "enabled" if resolved.enable_thinking else "disabled"}}
+             if urlparse(base_url).hostname == "api.deepseek.com"
+             else {"enable_thinking": resolved.enable_thinking})
+            if resolved.enable_thinking is not None
+            else None
+        ),
     )
 
 

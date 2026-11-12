@@ -17,7 +17,6 @@ class LLMProvider(Protocol):
 class NodeLLMProvider:
     def __init__(self, llm: BaseChatModel):
         self.client = llm
-        self.supports_join_edge_extraction = callable(getattr(llm, "invoke", None))
 
     def extract_assets(
         self,
@@ -30,14 +29,6 @@ class NodeLLMProvider:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("LLM extraction context requires a non-empty prompt")
         prompt_name = context.get("prompt_name")
-        if prompt_name == "gold_join_edges":
-            from cortex.capabilities.sql_training.extractors.gold_join_edges import (
-                extract_gold_join_proposals,
-            )
-
-            return extract_gold_join_proposals(
-                self.client, record, prompt, trace_capture=context.get("trace_capture")
-            )
         if prompt_name in {
             "error_analysis_minimal_repair_action",
             "error_analysis_minimal_repair_ablation",

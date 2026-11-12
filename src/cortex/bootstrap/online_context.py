@@ -11,16 +11,13 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from cortex.application.online_context import OnlineContextService
+from cortex.bootstrap.retrieve_db import build_retrieve_db_service
 from cortex.capabilities.online_context.discovery.organizer import LlmChoiceOrganizer
 from cortex.capabilities.online_context.engine import OnlineContextCapability
-from cortex.capabilities.online_context.interaction.simulated_user import SimulatedUserAgent
-from cortex.capabilities.online_context.output.guidance import GuidanceAgent
-from cortex.capabilities.online_context.retrieval.recall import TypedRecall
-from cortex.capabilities.online_context.retrieval.selection import LlmRelevanceSelector
-from cortex.capabilities.query_signals import (
-    GraphPhysicalSchemaRenderer,
-    InitialSqlGenerator,
+from cortex.capabilities.online_context.interaction.simulated_user import (
+    SimulatedUserAgent,
 )
+from cortex.capabilities.online_context.output.guidance import GuidanceAgent
 from cortex.config import CortexConfig, load_config
 from cortex.infrastructure.llm import (
     DocumentVectorCache,
@@ -46,6 +43,7 @@ def build_online_context_service(
     config: CortexConfig | None = None,
     llm: BaseChatModel | None = None,
     trace_sink=None,
+    on_retrieved=None,
     document_vector_cache: DocumentVectorCache | None = None,
     embedding_identity: EmbeddingSpaceIdentity | None = None,
     embeddings: Embeddings | None | object = _UNSET,
@@ -58,21 +56,29 @@ def build_online_context_service(
         else embeddings
     )
     engine = OnlineContextCapability(
-        relevance_selector=LlmRelevanceSelector(model),
-        choice_organizer=LlmChoiceOrganizer(model, trace_sink=trace_sink, audit_slots=True),
-        question_budget=resolved.services.online_context.question_budget,
-        guidance_synthesizer=GuidanceAgent(model),
-        initial_sql_generator=InitialSqlGenerator(model),
-        schema_renderer=GraphPhysicalSchemaRenderer(),
-        typed_recall=TypedRecall(
-            resolved_embeddings,
-            {
-                kind: getattr(resolved.services.online_context, kind + "_limit")
-                for kind in ("concept", "metric", "generation_rule", "column", "dimension_value")
-            },
-            document_cache=document_vector_cache,
+        on_retrieved=on_retrieved,
+        ontology_schema=load_root_schema(resolved.root_schema.external_path),
+        retrieval_service=build_retrieve_db_service(
+            config=resolved,
+            llm=llm,
+            embeddings=resolved_embeddings,
+            document_vector_cache=document_vector_cache,
             embedding_identity=embedding_identity,
         ),
+        checkpoint_path=resolved.services.online_context.checkpoint_path,
+        questions_per_round=resolved.services.online_context.questions_per_round,
+        context_settings={
+            "model": resolved.llm.model,
+            "online_profile": resolved.llm.profiles.online_context.model_dump(
+                mode="json"
+            ),
+            "retrieval": resolved.services.retrieve_db.model_dump(mode="json"),
+        },
+        choice_organizer=LlmChoiceOrganizer(
+            model, trace_sink=trace_sink, audit_slots=True
+        ),
+        question_budget=resolved.services.online_context.question_budget,
+        guidance_synthesizer=GuidanceAgent(model),
         query_example_index=load_query_example_index(
             resolved.services.online_context.query_example_source_root
         ),
@@ -124,7 +130,9 @@ class OnlineContextEvaluationPool:
         async with self._condition:
             while not self._available:
                 if self._active == 0:
-                    raise LLMInvocationError("All evaluation credential workers are disabled")
+                    raise LLMInvocationError(
+                        "All evaluation credential workers are disabled"
+                    )
                 await self._condition.wait()
             worker = self._available.pop()
         worker.traces.clear()
@@ -201,7 +209,9 @@ def build_online_context_evaluation_pool(
                         {"stage": stage, "payload": payload}
                     ),
                     document_vector_cache=(
-                        document_vector_cache if embedding_identity is not None else None
+                        document_vector_cache
+                        if embedding_identity is not None
+                        else None
                     ),
                     embedding_identity=embedding_identity,
                     embeddings=worker_embeddings,

@@ -67,12 +67,16 @@ class GuidanceAgent:
     ) -> GuidanceSynthesis:
         if not choice_points:
             return GuidanceSynthesis(guidance_content="", interaction_guidance=())
-        expected_answer_ids = {f"question:{point.choice_point_id}" for point in choice_points}
+        expected_answer_ids = {
+            f"question:{point.choice_point_id}" for point in choice_points
+        }
         if (
             len(answers) != len(expected_answer_ids)
             or {item.question_id for item in answers} != expected_answer_ids
         ):
-            raise ValueError("guidance answers must cover every choice point exactly once")
+            raise ValueError(
+                "guidance answers must cover every choice point exactly once"
+            )
         payload = {
             "question": question,
             "dialect": dialect,
@@ -86,7 +90,9 @@ class GuidanceAgent:
             human_payload=payload,
         )
         expected_slot_ids = tuple(point.choice_point_id for point in choice_points)
-        actual_slot_ids = tuple(item.choice_point_id for item in result.guidance_by_slot)
+        actual_slot_ids = tuple(
+            item.choice_point_id for item in result.guidance_by_slot
+        )
         if actual_slot_ids != expected_slot_ids:
             raise ValueError("guidance must cover every Slot exactly once and in order")
         point_by_id = {item.choice_point_id: item for item in choice_points}
@@ -119,7 +125,11 @@ class GuidanceAgent:
                     decision_question=point.decision_question,
                     should_be=content,
                     must_not_be=(),
-                    source=("user_choice" if answer.selected_option_ids else "user_explanation"),
+                    source=(
+                        "user_choice"
+                        if answer.selected_option_ids
+                        else "user_explanation"
+                    ),
                 )
             )
         return GuidanceSynthesis(

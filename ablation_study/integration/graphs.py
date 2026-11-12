@@ -8,13 +8,11 @@ import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
+from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.edges import remap_property_node_ids
-from cortex.capabilities.sql_training.artifacts import Workspace
-from cortex.capabilities.sql_training.core.enums import NodeType
-from cortex.capabilities.sql_training.graph.adapter import NodeGraphAdapter
-from cortex.capabilities.sql_training.graph.relationships import compile_relationships
+from cortex.capabilities.sql_training.graph.nodes import build_node
 from cortex.capabilities.sql_training.models import NodeAsset
-from cortex.schema import GraphSpace, GraphState, load_root_schema, validate_graph_state
+from cortex.schema import GraphSpace, GraphState, load_root_schema
 
 SEMANTIC = {"concept", "metric", "generation_rule"}
 ARMS = ("without_integration", "naive_name_merge")
@@ -26,7 +24,9 @@ def normalized_name(value: str) -> str:
 
 def fingerprint(value) -> str:
     return hashlib.sha256(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
     ).hexdigest()
 
 
@@ -45,7 +45,9 @@ def write(path: Path, value) -> None:
     temporary.replace(path)
 
 
-def scoped_assets(cases: list[tuple[str, list[dict]]]) -> tuple[list[NodeAsset], list[dict]]:
+def scoped_assets(
+    cases: list[tuple[str, list[dict]]],
+) -> tuple[list[NodeAsset], list[dict]]:
     """Rewrite every case occurrence, including nested refs; reject ambiguous external refs."""
     maps = {}
     occurrences = defaultdict(list)
@@ -56,7 +58,9 @@ def scoped_assets(cases: list[tuple[str, list[dict]]]) -> tuple[list[NodeAsset],
         for row in rows:
             if row["node_type"] not in SEMANTIC or row["id"] in local:
                 raise ValueError(f"invalid or duplicate semantic asset in {case_id}")
-            scoped = f"{row['node_type']}.source.{fingerprint([case_id, row['id']])[:24]}"
+            scoped = (
+                f"{row['node_type']}.source.{fingerprint([case_id, row['id']])[:24]}"
+            )
             local[row["id"]] = scoped
             occurrences[row["id"]].append(scoped)
         maps[case_id] = local
@@ -70,11 +74,15 @@ def scoped_assets(cases: list[tuple[str, list[dict]]]) -> tuple[list[NodeAsset],
                 if ref.split(".", 1)[0] in SEMANTIC and ref not in mapping:
                     choices = occurrences.get(ref, [])
                     if len(choices) != 1:
-                        raise ValueError(f"ambiguous/missing semantic reference {case_id}: {ref}")
+                        raise ValueError(
+                            f"ambiguous/missing semantic reference {case_id}: {ref}"
+                        )
                     mapping[ref] = choices[0]
             payload = parsed.model_dump(mode="json")
             payload["id"] = local[row["id"]]
-            payload["properties"] = remap_property_node_ids(payload["properties"], mapping)
+            payload["properties"] = remap_property_node_ids(
+                payload["properties"], mapping
+            )
             asset = NodeAsset.model_validate(payload)
             assets.append(asset)
             audit.append(
@@ -96,14 +104,18 @@ def build_graph(
 ) -> tuple[GraphState, dict]:
     if arm not in ARMS:
         raise ValueError(arm)
-    if physical.node_conflicts or any(n.node_type in SEMANTIC for n in physical.graph.nodes):
+    if physical.conflict_nodes or any(
+        n.node_type in SEMANTIC for n in physical.graph.nodes
+    ):
         raise ValueError("physical snapshot contains semantic content or conflicts")
     assets, audit = scoped_assets(cases)
     audit_by_id = {row["scoped_id"]: row for row in audit}
     groups = defaultdict(list)
     for asset in assets:
         key = (asset.node_type.value, normalized_name(asset.name))
-        groups[key if arm == "naive_name_merge" and key[1] else (asset.id, "")].append(asset)
+        groups[key if arm == "naive_name_merge" and key[1] else (asset.id, "")].append(
+            asset
+        )
     mappings, selected, representatives = {}, [], []
     for key, members in sorted(groups.items()):
         members.sort(
@@ -134,8 +146,7 @@ def build_graph(
         payload["id"] = canonical
         payload["properties"] = remap_property_node_ids(payload["properties"], mappings)
         kept.append(NodeAsset.model_validate(payload))
-    adapter = NodeGraphAdapter(Workspace(Path(".")))
-    nodes = [adapter._node(asset, asset.id) for asset in kept]
+    nodes = [build_node(asset) for asset in kept]
     # Case source is authoritative and retained only for the chosen representative.
     from cortex.schema import SourceReference
 
@@ -154,22 +165,12 @@ def build_graph(
             }
         )
     all_nodes = (*physical.graph.nodes, *nodes)
-    ids = {n.id: n.id for n in all_nodes}
-    types = {n.id: NodeType(n.node_type) for n in all_nodes}
-    asset_index = {a.id: a for a in kept}
-    edges = list(physical.graph.edges)
-    for asset in kept:
-        missing = set(asset.references()) - ids.keys()
-        if missing:
-            raise ValueError(f"missing references for {asset.id}: {sorted(missing)}")
-        result = compile_relationships(
-            asset, endpoint_ids=ids, endpoint_types=types, assets=asset_index
-        )
-        if result.diagnostics:
-            raise ValueError(result.diagnostics)
-        edges.extend(result.outgoing_edges)
-    state = GraphState(graph=GraphSpace(nodes=all_nodes, edges=tuple(edges)), node_conflicts=())
-    validate_graph_state(state, load_root_schema())
+    state, _ = GraphManager(load_root_schema()).prepare_state(
+        GraphState(
+            graph=GraphSpace(nodes=all_nodes, edges=physical.graph.edges),
+        ),
+    )
+    edges = state.graph.edges
     return state, {
         "arm": arm,
         "input_cases": len(cases),

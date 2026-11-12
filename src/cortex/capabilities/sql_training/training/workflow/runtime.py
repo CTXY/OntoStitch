@@ -5,7 +5,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langsmith import tracing_context
 
 from cortex.capabilities.sql_training.graph.snapshots import fingerprint
 from cortex.capabilities.sql_training.training.workflow.graph import build_case_graph
@@ -14,6 +13,7 @@ from cortex.capabilities.sql_training.training.workflow.state import (
     WORKFLOW_VERSION,
     CaseState,
 )
+from cortex.infrastructure.observability import native_tracing
 
 
 class CaseResumeError(ValueError):
@@ -44,9 +44,18 @@ class CaseWorkflow:
         self.checkpoint_path = self.root / "checkpoints.sqlite"
         self.thread_id = "case-" + fingerprint(self.runtime.record["source_id"])
         self.config = {
+            "run_name": "extract.case_graph",
+            "metadata": {
+                "case_id": str(self.runtime.record["source_id"]),
+                "context_id": self.runtime.services.context_id,
+            },
             "configurable": {"thread_id": self.thread_id},
+            # Framework safety bound, not an extra Learning budget. Each filtering
+            # pass removes at least one tentative semantic change (50 per edit).
             "recursion_limit": 20
-            + self.runtime.max_rounds * (8 * self.runtime.max_iterations + 6),
+            + self.runtime.max_rounds
+            * (self.runtime.max_iterations + 1)
+            * (12 + 4 * 50 * self.runtime.services.config.train.agent_max_steps),
         }
         self.state = None
 
@@ -59,7 +68,7 @@ class CaseWorkflow:
             or values.get("case_id") != str(self.runtime.record["source_id"])
         ):
             raise CaseResumeError(
-                "cannot resume a case with changed source/data/config/prompt/workflow"
+                "cannot resume a case with changed source/data/config/prompt/workflow or graph format; start a new training case"
             )
         return CaseState.model_validate(values)
 
@@ -102,7 +111,7 @@ class CaseWorkflow:
                 )
                 inputs = self.state.model_dump(mode="json")
             try:
-                with tracing_context(enabled=False):
+                with native_tracing():
                     graph.invoke(
                         inputs,
                         self.config,

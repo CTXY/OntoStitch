@@ -10,10 +10,12 @@ from typing import Any
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
 from cortex.bootstrap.knowledge import build_sql_training_evaluation_physical_graph
 from cortex.capabilities.graph_merge.edges import remap_property_node_ids
+from cortex.capabilities.graph_merge.integration.context import remap_node
+from cortex.capabilities.graph_merge.integration.contracts import isolate_contracts
 from cortex.capabilities.sql_training.artifacts.cases import load_case_assets
-from cortex.capabilities.sql_training.graph.adapter import NodeGraphAdapter
-from cortex.capabilities.sql_training.graph.case import project_case_edges
+from cortex.capabilities.sql_training.graph.case import project_case_graph
 from cortex.capabilities.sql_training.graph.join_edges import merge_join_edges
+from cortex.capabilities.sql_training.graph.nodes import build_graph
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,
     SqlTrainingGraphMergeEvidenceResolver,
@@ -31,6 +33,8 @@ from cortex.schema import (
     load_root_schema,
     validate_graph_state,
 )
+from cortex.schema.models import EdgeType
+from cortex.schema.relation_contracts import merge_relation_contracts
 
 
 def evaluate_merge_bundle(
@@ -41,16 +45,17 @@ def evaluate_merge_bundle(
     case_ids: tuple[str, ...] | None = None,
     existing_state_path: str | Path | None = None,
     physical_state_path: str | Path | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run Graph Merge once over a bundle against the configured database catalog."""
 
     root = Path(workspace).resolve()
-    cases = _load_cases(root, case_ids=case_ids)
     schema = load_root_schema()
     artifact_dir = Path(output_dir or root / "merge_live_review").resolve()
     artifact_dir.mkdir(parents=True, exist_ok=True)
     trace_path = artifact_dir / "llm_traces.jsonl"
-    trace_path.unlink(missing_ok=True)
+    if run_id is None:
+        trace_path.unlink(missing_ok=True)
     if existing_state_path is not None and physical_state_path is not None:
         raise ValueError(
             "existing_state_path and physical_state_path are mutually exclusive"
@@ -102,6 +107,7 @@ def evaluate_merge_bundle(
         **physical_manifest,
         "bundle_catalog_edges": len(catalog_edges),
     }
+    cases = _load_cases(root, case_ids=case_ids, physical_graph=physical_graph)
     required_physical_graph = _with_referenced_dimension_values(physical_graph, cases)
     existing = (
         _augment_existing_physical_graph(
@@ -109,13 +115,13 @@ def evaluate_merge_bundle(
             required_physical_graph,
         )
         if baseline is not None
-        else GraphState(graph=required_physical_graph, node_conflicts=())
+        else GraphState(graph=required_physical_graph)
     )
     incoming = _combined_incoming_state(cases, existing)
     input_nodes = len(incoming.graph.nodes)
     input_edges = len(incoming.graph.edges)
     input_source_ids = {case_id for case_id, _ in cases}
-    result = operator.merge(existing, incoming, schema)
+    result = operator.merge(existing, incoming, schema, run_id=run_id)
     state = result.state
     diagnostic_details = [item.model_dump(mode="json") for item in result.diagnostics]
     validate_graph_state(state, schema)
@@ -128,19 +134,13 @@ def evaluate_merge_bundle(
     }
     report = {
         "evaluation_mode": "live_llm",
+        "merge_run_id": result.run_id,
         "acceptance_scope": "regression",
         "semantic_pipeline": {
-            "identity": type(operator.identity_grouper.resolver).__name__,
-            "reconcile": type(operator.node_reconciler.reconciler).__name__,
-            "fact_fuse": type(
-                operator.node_reconciler.fact_fuser_registry.default
-            ).__name__,
-            "generalize": type(operator.node_reconciler.generalizer).__name__,
-            "coverage_verifier": type(
-                operator.node_reconciler.generalization_verifier
-            ).__name__,
-            "branch": type(operator.node_reconciler.branch_selector).__name__,
-            "concept_mine": type(operator.graph_miner).__name__,
+            "engine": type(operator).__name__,
+            "phases": ["retrieve", "identity", "integrate", "assess", "commit"],
+            "workflow": "langgraph",
+            "checkpoint": "sqlite",
         },
         "cases": len(cases),
         "incremental_existing_graph": existing_state_path is not None,
@@ -153,13 +153,16 @@ def evaluate_merge_bundle(
         "input_edges": input_edges,
         "canonical_nodes": len(state.graph.nodes),
         "canonical_edges": len(state.graph.edges),
-        "conflicts": len(state.node_conflicts),
+        "conflicts": len(state.conflict_nodes),
         "diagnostics": len(diagnostic_details),
         "diagnostic_details": diagnostic_details,
         "source_preservation": len(input_source_ids & output_source_ids)
         / len(input_source_ids),
         "invalid_final_state": 0,
-        "state": state.model_dump(mode="json"),
+        "state": state.graph.model_dump(mode="json"),
+        "node_mappings": [m.model_dump(mode="json") for m in result.node_mappings],
+        "edge_mappings": [m.model_dump(mode="json") for m in result.edge_mappings],
+        "rewrites": [r.model_dump(mode="json") for r in result.rewrites],
     }
     _publish_artifacts(root, artifact_dir, trace_path, state, report, schema)
     return report
@@ -182,7 +185,6 @@ def _publish_artifacts(root, artifact_dir, trace_path, state, report, schema) ->
             state.graph,
             schema,
             title="Graph Merge · Live LLM",
-            node_conflicts=state.node_conflicts,
         ),
         encoding="utf-8",
     )
@@ -200,9 +202,26 @@ def _publish_artifacts(root, artifact_dir, trace_path, state, report, schema) ->
 
 
 def _load_cases(
-    root: Path, *, case_ids: tuple[str, ...] | None = None
+    root: Path,
+    *,
+    case_ids: tuple[str, ...] | None = None,
+    physical_graph: GraphSpace | None = None,
 ) -> tuple[tuple[str, GraphSpace], ...]:
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    from cortex.capabilities.sql_training.artifacts import Workspace
+    from cortex.capabilities.sql_training.core.enums import NodeType
+
+    if physical_graph is None:
+        physical = Workspace(Path(manifest["physical_workspace"]))
+        physical_graph = build_graph(
+            [
+                a
+                for kind in (NodeType.TABLE, NodeType.COLUMN, NodeType.DIMENSION_VALUE)
+                for a in physical.read_draft_assets(kind)
+            ],
+            physical.read_catalog_edges(),
+            load_root_schema(),
+        )
     selected = set(case_ids or ())
     cases = []
     for entry in manifest["cases"]:
@@ -216,14 +235,18 @@ def _load_cases(
         if result["source_id"] != case_id:
             raise ValueError(f"case result source does not match collection: {case_id}")
         assets = load_case_assets(result, case_root=case_root)
-        nodes = tuple(NodeGraphAdapter.project_asset_node(asset) for asset in assets)
-        edges = project_case_edges(assets)
+        from cortex.schema import GraphEdge
+        fragment = project_case_graph(assets, physical_graph=physical_graph,
+                                      explicit_edges=[GraphEdge.model_validate(e) for e in result.get("draft_edges", ())],
+                                      relation_contracts=[EdgeType.model_validate(c) for c in result.get("relation_contracts", ())])
+        nodes, edges = fragment.nodes, fragment.edges
         cases.append(
             (
                 case_id,
                 GraphSpace(
                     nodes=tuple(_tag_case(node, case_id) for node in nodes),
                     edges=tuple(_tag_case(edge, case_id) for edge in edges),
+                    relation_contracts=fragment.relation_contracts,
                 ),
             )
         )
@@ -261,6 +284,7 @@ def _with_catalog_edges(
     return GraphSpace(
         nodes=physical_graph.nodes,
         edges=(*passthrough_edges, *merged_join_edges),
+        relation_contracts=physical_graph.relation_contracts,
     )
 
 
@@ -347,7 +371,7 @@ def _with_referenced_dimension_values(
 def _load_existing_state(path: Path) -> GraphState:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if "graph" not in payload:
-        payload = {"graph": payload, "node_conflicts": []}
+        payload = {"graph": payload}
     return GraphState.model_validate(payload)
 
 
@@ -375,8 +399,7 @@ def _augment_existing_physical_graph(
         ),
     )
     return GraphState(
-        graph=GraphSpace(nodes=nodes, edges=edges),
-        node_conflicts=existing.node_conflicts,
+        graph=GraphSpace(nodes=nodes, edges=edges, relation_contracts=merge_relation_contracts(existing.graph.relation_contracts, required_physical_graph.relation_contracts)),
     )
 
 
@@ -389,7 +412,7 @@ def _physical_subgraph(graph: GraphSpace) -> GraphSpace:
         for edge in graph.edges
         if edge.from_node_id in node_ids and edge.to_node_id in node_ids
     )
-    return GraphSpace(nodes=nodes, edges=edges)
+    return graph.model_copy(update={"nodes": nodes, "edges": edges})
 
 
 def _reused_physical_manifest(graph: GraphSpace) -> dict[str, object]:
@@ -406,20 +429,14 @@ def _reused_physical_manifest(graph: GraphSpace) -> dict[str, object]:
     }
 
 
-def _physical_references(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return (
-            {value}
-            if value.startswith(("table.", "column.", "dimension_value."))
-            else set()
-        )
-    if isinstance(value, dict):
-        return {
-            item for child in value.values() for item in _physical_references(child)
-        }
-    if isinstance(value, list | tuple):
-        return {item for child in value for item in _physical_references(child)}
-    return set()
+def _physical_references(properties: dict) -> set[str]:
+    from cortex.schema.references import property_reference_ids
+
+    return {
+        ref
+        for ref in property_reference_ids(properties)
+        if ref.startswith(("table.", "column.", "dimension_value."))
+    }
 
 
 def _audit_final_physical_graph(
@@ -438,7 +455,9 @@ def _audit_final_physical_graph(
     }
     owners: dict[str, list[str]] = {node_id: [] for node_id in value_nodes}
     for edge in graph.edges:
-        if edge.edge_type == "value_of" and edge.from_node_id in owners:
+        if edge.from_node_id in owners and (
+            edge.edge_type == "value_of" or edge.reference_origin is not None
+        ):
             owners[edge.from_node_id].append(edge.to_node_id)
     invalid_value_owners = sorted(
         node_id
@@ -478,15 +497,9 @@ def _collision_safe_state(
             prefix=f"incoming.{node.node_type}",
             occupied=occupied_nodes | set(node_mapping.values()),
         )
-    nodes = tuple(
-        node.model_copy(
-            update={
-                "id": node_mapping[node.id],
-                "properties": remap_property_node_ids(node.properties, node_mapping),
-            }
-        )
-        for node in graph.nodes
-    )
+    contracts, predicates = isolate_contracts(existing.graph.relation_contracts,
+                                              graph.relation_contracts, load_root_schema().edge_type_index())
+    edge_mapping = {}
     edges = []
     occupied_edges = {edge.id for edge in existing.graph.edges}
     for edge in graph.edges:
@@ -495,19 +508,25 @@ def _collision_safe_state(
             prefix="incoming.edge",
             occupied=occupied_edges | {item.id for item in edges},
         )
+        edge_mapping[edge.id] = edge_id
         edges.append(
             edge.model_copy(
                 update={
                     "id": edge_id,
+                    "edge_type": predicates.get(edge.edge_type, edge.edge_type),
                     "from_node_id": node_mapping.get(
                         edge.from_node_id, edge.from_node_id
                     ),
                     "to_node_id": node_mapping.get(edge.to_node_id, edge.to_node_id),
+                    "properties": remap_property_node_ids(
+                        edge.properties, node_mapping
+                    ),
                 }
             )
         )
     return GraphState(
-        graph=GraphSpace(nodes=nodes, edges=tuple(edges)), node_conflicts=()
+        graph=GraphSpace(nodes=tuple(remap_node(n, node_mapping, edge_mapping) for n in graph.nodes),
+                         edges=tuple(edges), relation_contracts=contracts)
     )
 
 
@@ -538,11 +557,11 @@ def _combined_incoming_state(
             graph=GraphSpace(
                 nodes=(*occupied.graph.nodes, *case_state.graph.nodes),
                 edges=(*occupied.graph.edges, *case_state.graph.edges),
+                relation_contracts=merge_relation_contracts(occupied.graph.relation_contracts, case_state.graph.relation_contracts),
             ),
-            node_conflicts=(),
         )
     return GraphState(
-        graph=GraphSpace(nodes=tuple(nodes), edges=tuple(edges)), node_conflicts=()
+        graph=GraphSpace(nodes=tuple(nodes), edges=tuple(edges), relation_contracts=occupied.graph.relation_contracts)
     )
 
 
@@ -573,6 +592,7 @@ def main() -> None:
         help="Reuse only the physical catalog from a prior GraphState without ontology nodes",
     )
     parser.add_argument("--config", type=Path, default=Path("configs/cortex.yaml"))
+    parser.add_argument("--run-id", help="Resume the same checkpointed merge run")
     parser.add_argument(
         "--cases",
         help="Comma-separated case IDs for a focused single-invocation regression run",
@@ -588,6 +608,7 @@ def main() -> None:
         case_ids=case_ids or None,
         existing_state_path=args.existing_state,
         physical_state_path=args.physical_state,
+        run_id=args.run_id,
     )
     print(
         json.dumps(

@@ -4,27 +4,22 @@ from __future__ import annotations
 
 from typing import Any
 
-import sqlglot
-from sqlglot import expressions as exp
-
 from cortex.capabilities.sql_training.core.enums import NodeType
+from cortex.capabilities.sql_training.core.ids import make_node_id
 from cortex.capabilities.sql_training.extractors.sql_normalizer import (
-    build_column_table_map,
     collect_physical_column_references,
-    normalize_sql_aliases,
 )
 from cortex.capabilities.sql_training.graph.join_edges import (
-    build_gold_join_edges_from_llm_proposals,
+    constraint_cardinality,
+    extract_gold_join_edges,
     join_edge_key,
     merge_join_edges,
     pure_routing_paths,
 )
-from cortex.capabilities.sql_training.llm.prompts import load_prompt
 from cortex.capabilities.sql_training.pipeline.grounding.bootstrap import (
     TrainingDimensionValueBootstrap,
 )
 from cortex.capabilities.sql_training.training.trace import (
-    TracingLLMProvider,
     TrainTraceLogger,
 )
 from cortex.schema import GraphEdge
@@ -34,17 +29,27 @@ class PhysicalPreparation:
     def __init__(self, config, workspace, database, existing_join_edges=()):
         self.config, self.workspace, self.database = config, workspace, database
         self._existing_join_edges = existing_join_edges
+        self._columns = workspace.read_draft_assets(NodeType.COLUMN)
+        self._tables = workspace.read_draft_assets(NodeType.TABLE)
+        self._table_names = {
+            table.id: table.properties.table_name for table in self._tables
+        }
+        self._table_columns: dict[str, set[str]] = {}
+        for column in self._columns:
+            owner = next(
+                ref for ref in column.properties.references if ref.startswith("table.")
+            )
+            self._table_columns.setdefault(self._table_names[owner], set()).add(
+                column.properties.column_name
+            )
 
-    def add_gold_column_metadata(self, record: dict[str, Any]) -> dict[str, Any]:
-        """Attach compact metadata for Columns actually used by the Gold SQL."""
-
-        columns = self.workspace.read_draft_assets(NodeType.COLUMN)
-        metadata_by_ref = {
+        columns = self._columns
+        self._metadata_by_ref = {
             asset.id: {
                 "column": asset.properties.column_name,
                 "table": next(
                     (
-                        reference.removeprefix("table.")
+                        self._table_names.get(reference)
                         for reference in asset.properties.references
                         if reference.startswith("table.")
                     ),
@@ -52,6 +57,7 @@ class PhysicalPreparation:
                 ),
                 "data_type": asset.properties.data_type,
                 "description": asset.description,
+                "source_metadata": asset.properties.source_metadata,
                 "sample_values": list(asset.properties.sample_values),
                 "nullable": asset.properties.nullable,
                 "semantic_role": (
@@ -67,22 +73,16 @@ class PhysicalPreparation:
             }
             for asset in columns
         }
-        column_rows = [
-            {
-                "column_name": asset.properties.column_name,
-                "table_name": metadata_by_ref[asset.id]["table"],
-            }
-            for asset in columns
-        ]
-        normalized_sql = normalize_sql_aliases(
-            str(record["sql"]),
-            column_table_map=build_column_table_map(column_rows),
-            dialect=self.config.database.dialect,
-        )
+
+    def add_gold_column_metadata(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Attach compact metadata for Columns actually used by the Gold SQL."""
+
+        metadata_by_ref = self._metadata_by_ref
         gold_refs = collect_physical_column_references(
-            normalized_sql,
+            str(record["sql"]),
             available_column_refs=set(metadata_by_ref),
             dialect=self.config.database.dialect,
+            table_columns=self._table_columns,
         )
         return {
             **record,
@@ -109,92 +109,66 @@ class PhysicalPreparation:
     def prepare_gold_join_edges(
         self,
         records: list[dict[str, Any]],
-        provider: TracingLLMProvider,
         trace_logger: TrainTraceLogger,
     ) -> None:
-        if not getattr(provider.provider, "supports_join_edge_extraction", False):
-            return
-        table_columns: dict[str, set[str]] = {}
-        for asset in self.workspace.read_draft_assets(NodeType.COLUMN):
-            for reference in asset.properties.references:
-                if reference.startswith("table."):
-                    table_columns.setdefault(
-                        reference.removeprefix("table."), set()
-                    ).add(asset.properties.column_name)
+        table_columns = self._table_columns
         existing = merge_join_edges(
             self._existing_join_edges,
             self.workspace.read_catalog_edges(),
         )
-        proposed_edges: list[GraphEdge] = []
+        extracted_edges: list[GraphEdge] = []
         case_edges: list[list[GraphEdge]] = []
+        tables = {table.id: table.properties for table in self._tables}
         for index, record in enumerate(records, start=1):
             source_id = str(record["source_id"])
-            tree = sqlglot.parse_one(record["sql"], read=self.config.database.dialect)
-            has_relation = any(tree.find_all(exp.Join)) or any(
-                isinstance(eq.left, exp.Column)
-                and isinstance(eq.right, exp.Column)
-                and eq.left.table
-                and eq.right.table
-                and eq.left.table != eq.right.table
-                for eq in tree.find_all(exp.EQ)
-            )
-            if not has_relation:
-                case_edges.append([])
-                continue
-            provider.set_context(
+            skipped = []
+            edges = extract_gold_join_edges(
+                sql=str(record["sql"]),
+                dialect=self.config.database.dialect,
                 source_id=source_id,
-                case_index=index,
-                phase="gold_join_edge_preparation",
-            )
-            proposals = provider.extract_assets(
-                {
-                    "source_id": source_id,
-                    "sql": record["sql"],
-                    "database_dialect": self.config.database.dialect,
-                    "table_columns": {
-                        table: sorted(columns)
-                        for table, columns in table_columns.items()
-                    },
-                },
-                context={
-                    "prompt_name": "gold_join_edges",
-                    "prompt": load_prompt("gold_join_edges"),
-                },
-            )
-            proposals, dropped_proposals = _drop_self_gold_join_proposals(
-                proposals,
                 table_columns=table_columns,
+                skipped=skipped,
             )
-            if dropped_proposals:
-                trace_logger.log(
-                    source_id=source_id,
-                    case_index=index,
-                    step="gold_join_edges_dropped",
-                    phase="gold_join_edge_preparation",
-                    output={"dropped": dropped_proposals},
-                    summary={
-                        "dropped_count": len(dropped_proposals),
-                        "reasons": sorted(
-                            {str(item["reason"]) for item in dropped_proposals}
-                        ),
-                    },
+            constrained = []
+            for edge in edges:
+                left, right = tables[edge.from_node_id], tables[edge.to_node_id]
+                left_refs = {
+                    pair["from_column_ref"] for pair in edge.properties["column_pairs"]
+                }
+                right_refs = {
+                    pair["to_column_ref"] for pair in edge.properties["column_pairs"]
+                }
+                cardinality = constraint_cardinality(
+                    left_refs,
+                    right_refs,
+                    [
+                        [make_node_id(NodeType.COLUMN, left.table_name, c) for c in key]
+                        for key in [left.primary_keys, *left.unique_keys]
+                    ],
+                    [
+                        [
+                            make_node_id(NodeType.COLUMN, right.table_name, c)
+                            for c in key
+                        ]
+                        for key in [right.primary_keys, *right.unique_keys]
+                    ],
                 )
-            edges = build_gold_join_edges_from_llm_proposals(
-                proposals=proposals,
-                source_id=source_id,
-                table_columns=table_columns,
-            )
-            proposed_edges.extend(edges)
+                properties = dict(edge.properties)
+                if cardinality:
+                    properties["cardinality"] = cardinality
+                constrained.append(edge.model_copy(update={"properties": properties}))
+            edges = constrained
+            extracted_edges.extend(edges)
             case_edges.append(edges)
             trace_logger.log(
                 source_id=source_id,
                 case_index=index,
                 step="gold_join_edges_validated",
                 phase="gold_join_edge_preparation",
-                output={"edge_ids": [edge.id for edge in edges]},
-                summary={"edge_count": len(edges)},
+                output={"edge_ids": [edge.id for edge in edges], "skipped": skipped},
+                summary={"edge_count": len(edges), "skipped_count": len(skipped)},
             )
-        merged = merge_join_edges(existing, proposed_edges)
+        merged = merge_join_edges(existing, extracted_edges)
         merged_by_key = {join_edge_key(edge): edge for edge in merged}
         for record, extracted in zip(records, case_edges, strict=True):
             canonical_edges = [merged_by_key[join_edge_key(edge)] for edge in extracted]
@@ -211,8 +185,12 @@ class PhysicalPreparation:
                 {
                     "edge_id": edge.id,
                     "tables": [edge.from_node_id, edge.to_node_id],
-                    "join_type": edge.properties.get("default_join_type"),
-                    "conditions": edge.properties.get("conditions"),
+                    "column_pairs": edge.properties["column_pairs"],
+                    **(
+                        {"cardinality": edge.properties["cardinality"]}
+                        if "cardinality" in edge.properties
+                        else {}
+                    ),
                 }
                 for edge in merged
                 if frozenset({edge.from_node_id, edge.to_node_id}) in endpoint_pairs
@@ -225,39 +203,7 @@ class PhysicalPreparation:
             output={"edge_ids": [edge.id for edge in merged]},
             summary={
                 "catalog_edge_count": len(existing),
-                "gold_proposal_count": len(proposed_edges),
+                "gold_edge_count": len(extracted_edges),
                 "merged_edge_count": len(merged),
             },
         )
-
-
-def _drop_self_gold_join_proposals(
-    proposals: list[Any],
-    *,
-    table_columns: dict[str, set[str]],
-) -> tuple[list[Any], list[dict[str, Any]]]:
-    """Drop LLM self-relationship proposals while keeping other validation strict."""
-
-    canonical_tables = {str(table).lower(): str(table) for table in table_columns}
-    filtered: list[Any] = []
-    dropped: list[dict[str, Any]] = []
-    for index, proposal in enumerate(proposals):
-        if not isinstance(proposal, dict):
-            filtered.append(proposal)
-            continue
-        from_table = canonical_tables.get(str(proposal.get("from_table") or "").lower())
-        to_table = canonical_tables.get(str(proposal.get("to_table") or "").lower())
-        if from_table is not None and from_table == to_table:
-            dropped.append(
-                {
-                    "index": index,
-                    "reason": "self_relationship",
-                    "from_table": from_table,
-                    "to_table": to_table,
-                    "evidence_fragment": proposal.get("evidence_fragment"),
-                    "sql_construct_type": proposal.get("sql_construct_type"),
-                }
-            )
-            continue
-        filtered.append(proposal)
-    return filtered, dropped

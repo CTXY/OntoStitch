@@ -70,4 +70,5 @@ def _sqlite_database_path(database_url: str | None) -> Path:
     database = url.database
     if not database or database == ":memory:":
         raise ValueError("SQLite bootstrap requires a file database URL, not sqlite:///:memory:")
-    return Path(database)
+    from urllib.parse import unquote
+    return Path(unquote(database.removeprefix("file:")))

@@ -1,0 +1,434 @@
+[
+  {
+    "id": "aligns_with",
+    "name": "聚合结果对齐",
+    "description": "起点 Table 与终点 Table 必须先各自聚合，再按声明的共同粒度对齐结果；该关系不表示原始明细记录可以直接连接。",
+    "from_node_types": [
+      "table"
+    ],
+    "to_node_types": [
+      "table"
+    ],
+    "fields": {
+      "default_join_type": {
+        "type": "string",
+        "required": true,
+        "description": "两侧聚合结果完成粒度对齐时使用的默认 Join 类型。",
+        "enum": [
+          "INNER",
+          "LEFT",
+          "RIGHT",
+          "FULL",
+          "SEMI",
+          "ANTI",
+          "CROSS"
+        ],
+        "default": null
+      },
+      "conditions": {
+        "type": "object[]",
+        "required": true,
+        "description": "两侧独立聚合后用于结果对齐的粒度字段和比较条件。",
+        "enum": null,
+        "default": null
+      },
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "按 from_node_types 指向 to_node_types 解释；不根据名称或路径自动推断逆关系、传递、等价、基数或继承。",
+    "evidence_requirement": "依据数据库结构、业务定义或 case 证据确认此关系及范围；description 说明具体含义和必要限制，不能用当前样本巧合替代普遍定义。",
+    "identity_fields": []
+  },
+  {
+    "id": "computed_from",
+    "name": "指标固定物理依赖",
+    "description": "起点 Metric 的定义不可替换地依赖终点 Column。",
+    "from_node_types": [
+      "metric"
+    ],
+    "to_node_types": [
+      "column"
+    ],
+    "fields": {
+      "constraint": {
+        "type": "string",
+        "required": true,
+        "description": "替换该字段会改变指标定义的原因。",
+        "enum": null,
+        "default": null
+      },
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "按 from_node_types 指向 to_node_types 解释；不根据名称或路径自动推断逆关系、传递、等价、基数或继承。",
+    "evidence_requirement": "依据数据库结构、业务定义或 case 证据确认此关系及范围；description 说明具体含义和必要限制，不能用当前样本巧合替代普遍定义。",
+    "identity_fields": []
+  },
+  {
+    "id": "analyzable_by",
+    "name": "可分析维度",
+    "description": "起点 Metric 可以按照终点 Column 进行分组、切片或时间分析；该关系不表示指标表达式直接引用该字段。",
+    "from_node_types": [
+      "metric"
+    ],
+    "to_node_types": [
+      "column"
+    ],
+    "fields": {
+      "is_default_time": {
+        "type": "boolean",
+        "required": false,
+        "description": "该字段是否为此指标进行默认时间分析时使用的时间列。",
+        "enum": null,
+        "default": false
+      },
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "按 from_node_types 指向 to_node_types 解释；不根据名称或路径自动推断逆关系、传递、等价、基数或继承。",
+    "evidence_requirement": "依据数据库结构、业务定义或 case 证据确认此关系及范围；description 说明具体含义和必要限制，不能用当前样本巧合替代普遍定义。",
+    "identity_fields": []
+  },
+  {
+    "id": "filters_on",
+    "name": "固定字段过滤",
+    "description": "起点 Metric 或 Concept 的稳定业务口径要求对终点 Column 施加固定过滤；不记录用户查询运行时临时输入的过滤条件。",
+    "from_node_types": [
+      "metric",
+      "concept"
+    ],
+    "to_node_types": [
+      "column"
+    ],
+    "fields": {
+      "operator": {
+        "type": "string",
+        "required": true,
+        "description": "生成字段过滤表达式时使用的规范比较操作符。",
+        "enum": [
+          "=",
+          "!=",
+          ">",
+          ">=",
+          "<",
+          "<=",
+          "IN",
+          "NOT_IN",
+          "BETWEEN",
+          "LIKE",
+          "IS_NULL",
+          "IS_NOT_NULL"
+        ],
+        "default": null
+      },
+      "values": {
+        "type": "array",
+        "required": true,
+        "description": "与操作符配套的规范过滤值；空值判断操作符可使用空数组。",
+        "enum": null,
+        "default": null
+      },
+      "target_id": {
+        "type": "string",
+        "required": false,
+        "description": "Concept 多目标映射中该过滤所属的稳定 target ID。",
+        "enum": null,
+        "default": null
+      },
+      "predicate_id": {
+        "type": "string",
+        "required": false,
+        "description": "过滤谓词在训练 revision 中的稳定 ID。",
+        "enum": null,
+        "default": null
+      },
+      "value_refs": {
+        "type": "string[]",
+        "required": false,
+        "description": "过滤值对应的 DimensionValue 节点引用。",
+        "enum": null,
+        "default": null
+      },
+      "pattern": {
+        "type": "string",
+        "required": false,
+        "description": "LIKE 等模式匹配谓词使用的规范模式。",
+        "enum": null,
+        "default": null
+      },
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "按 from_node_types 指向 to_node_types 解释；不根据名称或路径自动推断逆关系、传递、等价、基数或继承。",
+    "evidence_requirement": "依据数据库结构、业务定义或 case 证据确认此关系及范围；description 说明具体含义和必要限制，不能用当前样本巧合替代普遍定义。",
+    "identity_fields": []
+  },
+  {
+    "id": "expands_to",
+    "name": "概念展开",
+    "description": "起点 Concept 可以直接展开为终点 Metric 或更具体的 Concept，用于把抽象用户意图转换为可查询语义；只保存直接展开关系。",
+    "from_node_types": [
+      "concept"
+    ],
+    "to_node_types": [
+      "metric",
+      "concept"
+    ],
+    "fields": {
+      "target_id": {
+        "type": "string",
+        "required": false,
+        "description": "Concept 多目标映射中的稳定 target ID。",
+        "enum": null,
+        "default": null
+      },
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "按 from_node_types 指向 to_node_types 解释；不根据名称或路径自动推断逆关系、传递、等价、基数或继承。",
+    "evidence_requirement": "依据数据库结构、业务定义或 case 证据确认此关系及范围；description 说明具体含义和必要限制，不能用当前样本巧合替代普遍定义。",
+    "identity_fields": []
+  },
+  {
+    "id": "related_to",
+    "name": "弱关联",
+    "description": "两个 Concept 之间有证据支持的稳定弱关联；存在明确关系时应使用更具体的关系。",
+    "from_node_types": [
+      "concept"
+    ],
+    "to_node_types": [
+      "concept"
+    ],
+    "fields": {
+      "reason": {
+        "type": "string",
+        "required": false,
+        "description": "建立关联的证据，以及无法使用更具体 EdgeType 的原因。",
+        "enum": null,
+        "default": null
+      },
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "按 from_node_types 指向 to_node_types 解释；不根据名称或路径自动推断逆关系、传递、等价、基数或继承。",
+    "evidence_requirement": "依据数据库结构、业务定义或 case 证据确认此关系及范围；description 说明具体含义和必要限制，不能用当前样本巧合替代普遍定义。",
+    "identity_fields": []
+  },
+  {
+    "id": "has_participant",
+    "name": "事件参与对象",
+    "description": "事件与参与对象的一般联系。description 必须说明具体角色；角色不同应优先使用 opens、paid_from、paid_to 等有证据的业务谓词，不强制统一使用本关系。",
+    "from_node_types": [
+      "event"
+    ],
+    "to_node_types": [
+      "concept"
+    ],
+    "fields": {
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "按 from_node_types 指向 to_node_types 解释；不根据名称或路径自动推断逆关系、传递、等价、基数或继承。",
+    "evidence_requirement": "需由案例含义或可用说明资料支持；SQL 结构与物理共现本身不足以证明业务事实。",
+    "identity_fields": []
+  },
+  {
+    "id": "measures",
+    "name": "指标统计对象",
+    "description": "指标指向其业务统计对象或被度量含义；不能替代完整公式、粒度或总体定义。",
+    "from_node_types": [
+      "metric"
+    ],
+    "to_node_types": [
+      "concept"
+    ],
+    "fields": {
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "按 from_node_types 指向 to_node_types 解释；不根据名称或路径自动推断逆关系、传递、等价、基数或继承。",
+    "evidence_requirement": "需由案例含义或可用说明资料支持；SQL 结构与物理共现本身不足以证明业务事实。",
+    "identity_fields": []
+  },
+  {
+    "id": "concerns_event",
+    "name": "指标涉及事件",
+    "description": "指标与相关业务发生类型的联系；不单独确定次数、时间、过滤或计算实现。",
+    "from_node_types": [
+      "metric"
+    ],
+    "to_node_types": [
+      "event"
+    ],
+    "fields": {
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "按 from_node_types 指向 to_node_types 解释；不根据名称或路径自动推断逆关系、传递、等价、基数或继承。",
+    "evidence_requirement": "需由案例含义或可用说明资料支持；SQL 结构与物理共现本身不足以证明业务事实。",
+    "identity_fields": []
+  },
+  {
+    "id": "part_of",
+    "name": "业务组成",
+    "description": "部分指向整体，仅 Concept→Concept 或 Event→Event；不表示分类或必然执行。",
+    "from_node_types": [
+      "concept",
+      "event"
+    ],
+    "to_node_types": [
+      "concept",
+      "event"
+    ],
+    "fields": {
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "部分 → 整体",
+    "evidence_requirement": "需由案例含义或可用说明资料支持；SQL 结构与物理共现本身不足以证明业务事实。",
+    "identity_fields": []
+  },
+  {
+    "id": "has_stage",
+    "name": "业务发生阶段",
+    "description": "较粗粒度业务发生指向其有依据的内部阶段；组成不自动表示顺序、必选步骤或完整流程。",
+    "from_node_types": [
+      "event"
+    ],
+    "to_node_types": [
+      "event"
+    ],
+    "fields": {
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "整体发生 → 阶段",
+    "evidence_requirement": "需由案例含义或可用说明资料支持；SQL 结构与物理共现本身不足以证明业务事实。",
+    "identity_fields": []
+  },
+  {
+    "id": "precedes",
+    "name": "业务先后",
+    "description": "前一业务发生类型指向后一类型；必要的适用条件随边保存，不能据此推断因果、必然执行或完整流程。",
+    "from_node_types": [
+      "event"
+    ],
+    "to_node_types": [
+      "event"
+    ],
+    "fields": {
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "解释当前两个节点间的具体业务或物理联系、角色、依据以及必要的适用范围与限制；不能只重复谓词名称。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "较早发生 → 较晚发生",
+    "evidence_requirement": "需由案例含义或可用说明资料支持；SQL 结构与物理共现本身不足以证明业务事实。",
+    "identity_fields": []
+  },
+  {
+    "id": "has_attribute",
+    "name": "业务属性",
+    "description": "对象或事件类型指向受证据支持的属性角色 Concept；默认仅声明类型级对应，不声明实例存在性、全称性、基数或数据库记录完整性。条件与缺值限制写入 description。",
+    "from_node_types": [
+      "concept",
+      "event"
+    ],
+    "to_node_types": [
+      "concept"
+    ],
+    "fields": {
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "当前两个节点的具体语义联系、条件及推断限制。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "起点 → 终点",
+    "evidence_requirement": "由 case 含义、说明或数据探索支持，不以字段共现推断。",
+    "identity_fields": []
+  },
+  {
+    "id": "category_of",
+    "name": "维度类别",
+    "description": "维度中的类别或取值意义 Concept 指向该维度 Concept；源不能仅因使用同一编码就表示满足条件的对象群体。不是子类关系、对象归属或物理 value_of。",
+    "from_node_types": [
+      "concept"
+    ],
+    "to_node_types": [
+      "concept"
+    ],
+    "fields": {
+      "description": {
+        "type": "string",
+        "required": true,
+        "description": "当前两个节点的具体语义联系、条件及推断限制。",
+        "enum": null,
+        "default": null
+      }
+    },
+    "direction_semantics": "category Concept → attribute/dimension Concept",
+    "evidence_requirement": "The meaning and encoding must establish the category and its owning dimension; shared physical inputs alone are insufficient.",
+    "identity_fields": []
+  }
+]

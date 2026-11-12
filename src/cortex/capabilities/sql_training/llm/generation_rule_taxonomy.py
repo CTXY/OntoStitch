@@ -34,8 +34,8 @@ DEFAULT_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
             GenerationRuleReferenceImplementation(
                 "join_through_routing_table",
                 (
-                    "<left> JOIN <routing> ON <first_key_equality> "
-                    "JOIN <right> ON <second_key_equality>",
+                    ("<left> JOIN <routing> ON <first_key_equality> "
+                     "JOIN <right> ON <second_key_equality>"),
                 ),
                 "Connect the requested entities by the relationship recorded in the third table.",
             ),
@@ -43,6 +43,17 @@ DEFAULT_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
                 "direct_join_with_different_keys",
                 ("<left> JOIN <right> ON <different_relationship_key>",),
                 "May connect a different population or relationship even for the same endpoints.",
+            ),
+        ),
+    ),
+    GenerationRuleTaxonomyItem(
+        intent_class="population_average_comparison",
+        description="Compare an already-complete stored meaning or Metric with its average over the same requested population; keep averaging and comparison in the Rule, not a helper Metric.",
+        reference_implementations=(
+            GenerationRuleReferenceImplementation(
+                "population_average_threshold",
+                ("<value> > (SELECT AVG(<value>) FROM <source> WHERE <population_filter>)",),
+                "Compute the average over the requested population before testing each row against it; equivalent CTE or window implementations are allowed.",
             ),
         ),
     ),
@@ -178,14 +189,73 @@ DEFAULT_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
 )
 
 
+# Additional decision intents share the same admission standard in Direct and Repair.
+ADDITIONAL_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
+    GenerationRuleTaxonomyItem(
+        intent_class="column_binding_choice",
+        description="Choose which supported fields, joint field groups or representations participate in the answer when evidence establishes a consequential choice beyond static Concept matching. This selects content, not its column order or formatting; do not repeat an already resolved term-to-field/value mapping.",
+        reference_implementations=(GenerationRuleReferenceImplementation(
+            "semantic_field_selection", ("SELECT <requested_meaning_column>",),
+            "Preserve the requested meaning rather than substituting a similarly named identifier, amount, status or time field.",
+        ),),
+    ),
+    GenerationRuleTaxonomyItem(
+        intent_class="aggregation_grain",
+        description="Preserve the requested counting or aggregation unit across repeated records and joins; distinguish row, object and event grain.",
+        reference_implementations=(GenerationRuleReferenceImplementation(
+            "aggregate_before_expansion", ("WITH <per_unit> AS (<aggregate_at_requested_grain>) SELECT <result> FROM <per_unit>",),
+            "Aggregate each requested unit before a later expansion can multiply its measure; equivalent implementations are valid.",
+        ),),
+    ),
+    GenerationRuleTaxonomyItem(
+        intent_class="null_semantics",
+        description="Preserve an evidenced NULL meaning in filtering, aggregation or arithmetic rather than treating missing values as a documented value without support.",
+        reference_implementations=(GenerationRuleReferenceImplementation(
+            "explicit_missingness", ("<value> IS NULL", "COUNT(<value>)"),
+            "Choose the operation matching the requested missingness semantics; the examples are alternatives, not a combined recipe.",
+        ),),
+    ),
+    GenerationRuleTaxonomyItem(
+        intent_class="temporal_alignment",
+        description="Choose the supported occurrence time, interval boundaries and temporal alignment for the requested business event or duration.",
+        reference_implementations=(GenerationRuleReferenceImplementation(
+            "event_time_selection", ("<occurrence_time> >= <start> AND <occurrence_time> < <end>",),
+            "Use the relevant event time and evidenced boundary convention; do not infer a universal date policy from one request.",
+        ),),
+    ),
+    GenerationRuleTaxonomyItem(
+        intent_class="population_scope",
+        description="Preserve the requested population and intrinsic metric scope when evidence distinguishes the intended group or side of a calculation.",
+        reference_implementations=(GenerationRuleReferenceImplementation(
+            "scoped_population_filter", ("SELECT <calculation> FROM <source> WHERE <supported_population>",),
+            "Apply each condition to its intended population without broadening or narrowing an independently defined metric.",
+        ),),
+    ),
+)
+
+DEFAULT_GENERATION_RULE_TAXONOMY += ADDITIONAL_GENERATION_RULE_TAXONOMY
+
+
+def operation_registry(
+    items: Iterable[GenerationRuleTaxonomyItem] = DEFAULT_GENERATION_RULE_TAXONOMY,
+) -> dict[str, str]:
+    """Compact shared labels; extensions live in this registry, not model-made schemas."""
+    items = tuple(items)
+    result = {item.intent_class: item.description for item in items}
+    if len(result) != len(items) or any(not key.strip() or not value.strip() for key, value in result.items()):
+        raise ValueError("operation registry requires unique nonempty intents and descriptions")
+    return result
+
+
+
 def render_generation_rule_taxonomy(
     items: Iterable[GenerationRuleTaxonomyItem] = DEFAULT_GENERATION_RULE_TAXONOMY,
 ) -> str:
     lines = [
-        "# Initial Operation Registry",
+        "# Operation Registry",
         "",
         (
-            "The Registry is an attention list for user-level intents with several common, "
+            "The Registry labels reusable request operations and observed-error corrections with "
             "result-changing SQL implementations. Each reference implementation is a complete "
             "alternative, not a behavior fragment to combine with another implementation."
         ),

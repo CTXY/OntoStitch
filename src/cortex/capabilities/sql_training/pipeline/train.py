@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
 from threading import Lock
@@ -11,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langsmith.utils import ContextThreadPoolExecutor
 
 from cortex.capabilities.sql_training.artifacts import Workspace
 from cortex.capabilities.sql_training.artifacts.cases import (
@@ -25,16 +25,14 @@ from cortex.capabilities.sql_training.core.enums import NodeType
 from cortex.capabilities.sql_training.graph.snapshots import PHYSICAL_TYPES, GraphStore
 from cortex.capabilities.sql_training.graph.values import merge_verified_values
 from cortex.capabilities.sql_training.learning.runtime import LearningAgent
-from cortex.capabilities.sql_training.llm import NodeLLMProvider
 from cortex.capabilities.sql_training.pipeline.physical import PhysicalPreparation
 from cortex.capabilities.sql_training.pipeline.prepare import PrepareQASQLPipeline
 from cortex.capabilities.sql_training.prepare import load_standard_qa_sql_records
 from cortex.capabilities.sql_training.runtime_config import SqlTrainingRuntimeConfig
 from cortex.capabilities.sql_training.training.evidence import EvidenceStore
-from cortex.capabilities.sql_training.training.observability import SummaryTracer
+from cortex.capabilities.sql_training.training.observability import ExtractTracer
 from cortex.capabilities.sql_training.training.services import CaseServices
 from cortex.capabilities.sql_training.training.trace import (
-    TracingLLMProvider,
     TrainTraceLogger,
 )
 from cortex.capabilities.sql_training.training.workflow import (
@@ -42,6 +40,7 @@ from cortex.capabilities.sql_training.training.workflow import (
     CaseWorkflow,
 )
 from cortex.schema import load_root_schema
+from cortex.infrastructure.progress import emit_progress
 
 
 class TrainPipeline:
@@ -53,7 +52,6 @@ class TrainPipeline:
         config: SqlTrainingRuntimeConfig,
         *,
         model: BaseChatModel | None = None,
-        llm_provider=None,
         validation_client=None,
         validation_client_factory=None,
         case_resources_factory=None,
@@ -63,7 +61,6 @@ class TrainPipeline:
     ):
         self.config = config
         self.model = model
-        self.llm_provider = llm_provider
         self.validation_client = validation_client
         self.validation_client_factory = validation_client_factory
         self.case_resources_factory = case_resources_factory
@@ -72,7 +69,7 @@ class TrainPipeline:
         self.existing_join_edges = existing_join_edges
         self.workspace = Workspace(config.workspace)
         self._aggregation_lock = Lock()
-        self.tracer = SummaryTracer()
+        self.tracer = ExtractTracer()
 
     def run(
         self,
@@ -107,8 +104,14 @@ class TrainPipeline:
         )
         self.workspace.init()
         try:
-            with self.tracer.span("extract.run"):
-                return self._run(qa_path, dataset, run_id, logger)
+            with self.tracer.span(
+                "extract.run",
+                inputs={"qa_path": str(qa_path), "dataset": dataset},
+                run_id=run_id,
+            ) as report:
+                result = self._run(qa_path, dataset, run_id, logger)
+                report["outputs"] = result
+                return result
         except Exception as exc:  # noqa: BLE001 - isolate run/case failures and preserve accepted assets
             logger.log(
                 source_id=None,
@@ -142,19 +145,27 @@ class TrainPipeline:
         ids = [r["source_id"] for r in records]
         if len(ids) != len(set(ids)):
             raise ValueError("training source_id must be unique within a run")
-        provider = TracingLLMProvider(
-            self.llm_provider or NodeLLMProvider(self.model), logger
-        )
         prep = PhysicalPreparation(
             self.config, self.workspace, self.database, self.existing_join_edges
         )
-        with self.tracer.span("extract.prepare"):
+        with self.tracer.span(
+            "extract.prepare", inputs={"source_ids": ids, "case_count": len(records)}
+        ) as preparation_trace:
             records = [prep.add_gold_column_metadata(r) for r in records]
             if self.frozen_physical:
                 bootstrap = {"reused_frozen_snapshot": True}
             else:
-                prep.prepare_gold_join_edges(records, provider, logger)
+                prep.prepare_gold_join_edges(records, logger)
                 bootstrap = prep.bootstrap_dimension_values(records, run_id)
+            preparation_trace["outputs"] = {
+                "bootstrap": bootstrap,
+                "case_count": len(records),
+                "physical_node_counts": {
+                    kind.value: len(self.workspace.read_draft_assets(kind))
+                    for kind in PHYSICAL_TYPES
+                },
+                "catalog_edge_count": len(self.workspace.read_catalog_edges()),
+            }
         # Capture once: case-local Value additions do not silently alter sibling or
         # historical snapshots, even when cases execute concurrently.
         physical = [
@@ -171,15 +182,18 @@ class TrainPipeline:
 
         def run_one(item):
             index, record = item
-            return self._case(record, index, run_id, physical, edges, logger)
+            emit_progress("case_started", source_id=record["source_id"], index=index, total=len(records))
+            result = self._case(record, index, run_id, physical, edges, logger)
+            emit_progress("case_completed", source_id=record["source_id"], index=index, passed=bool(result.get("correct")), completion_reason=result.get("completion_reason"), iterations=result.get("iterations", 0), fatal=bool(result.get("fatal")))
+            return result
 
         if workers == 1:
             cases = [run_one(item) for item in enumerate(records, 1)]
         else:
-            with ThreadPoolExecutor(
+            with ContextThreadPoolExecutor(
                 max_workers=workers, thread_name_prefix="ontology-case"
             ) as executor:
-                cases = list(executor.map(run_one, enumerate(records, 1)))
+                cases = list(executor.map(run_one, list(enumerate(records, 1))))
         errors = [
             f"{c['source_id']}: {c.get('reason') or 'case incomplete'}"
             for c in cases
@@ -284,7 +298,9 @@ class TrainPipeline:
         try:
             with (
                 self.tracer.span(
-                    "extract.case", case_id=record["source_id"]
+                    "extract.case",
+                    inputs={"source": record},
+                    case_id=record["source_id"],
                 ) as summary,
                 ExitStack() as resources,
             ):
@@ -344,9 +360,19 @@ class TrainPipeline:
                 result = read_json(Path(state.result_ref))
                 load_case_assets(result, case_root=root)
                 summary.update(
+                    outputs=result,
                     status=result["case_status"],
                     revision=state.accepted_revision,
-                    model_calls=state.model_calls,
+                    learning_model_calls=state.model_calls,
+                    correct=result["correct"],
+                    completion_reason=state.completion_reason,
+                    rounds=state.round_number,
+                    repair_trials=result["iterations"],
+                    retained_semantic_nodes=result["accepted_assets"],
+                    assessment_accepted_nodes=len(
+                        result["assessment_accepted_asset_ids"]
+                    ),
+                    database_calls=state.database_calls,
                     tool_calls=state.tool_calls,
                 )
         except CaseResumeError:

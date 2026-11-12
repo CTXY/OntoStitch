@@ -4,15 +4,17 @@ from typing import Any
 
 __all__ = [
     "DimensionValuePipeline",
-    "ScanCatalogPipeline",
     "PrepareQASQLPipeline",
+    "ScanCatalogPipeline",
     "TrainPipeline",
 ]
 
 
 def __getattr__(name: str) -> Any:
     if name == "DimensionValuePipeline":
-        from cortex.capabilities.sql_training.pipeline.values import DimensionValuePipeline
+        from cortex.capabilities.sql_training.pipeline.values import (
+            DimensionValuePipeline,
+        )
 
         return DimensionValuePipeline
     if name == "ScanCatalogPipeline":
@@ -20,7 +22,9 @@ def __getattr__(name: str) -> Any:
 
         return ScanCatalogPipeline
     if name == "PrepareQASQLPipeline":
-        from cortex.capabilities.sql_training.pipeline.prepare import PrepareQASQLPipeline
+        from cortex.capabilities.sql_training.pipeline.prepare import (
+            PrepareQASQLPipeline,
+        )
 
         return PrepareQASQLPipeline
     if name == "TrainPipeline":

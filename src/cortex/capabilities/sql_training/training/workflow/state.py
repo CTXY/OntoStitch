@@ -8,7 +8,7 @@ from cortex.capabilities.sql_training.graph.mutations import ChangeGroup
 from cortex.capabilities.sql_training.learning.session import WorkingNotes
 from cortex.capabilities.sql_training.models.base import NodeModel
 
-WORKFLOW_VERSION = "case-graph-v2"
+WORKFLOW_VERSION = "case-graph-v6-inline-conflicts"
 
 
 class CaseState(NodeModel):

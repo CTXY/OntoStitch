@@ -14,28 +14,14 @@ class _MergeApplicationModel(BaseModel):
 
 class DiagnosticCode(StrEnum):
     CONSOLIDATION_PRESERVED_UNRESOLVED = "CONSOLIDATION_PRESERVED_UNRESOLVED"
-    GENERALIZER_UNAVAILABLE = "GENERALIZER_UNAVAILABLE"
-    FUSER_UNAVAILABLE = "FUSER_UNAVAILABLE"
     MODEL_FAILURE = "MODEL_FAILURE"
     INVALID_SELECTION = "INVALID_SELECTION"
     EVIDENCE_UNAVAILABLE = "EVIDENCE_UNAVAILABLE"
     EVIDENCE_LIMIT_REACHED = "EVIDENCE_LIMIT_REACHED"
-    BRANCH_SELECTION_AMBIGUOUS = "BRANCH_SELECTION_AMBIGUOUS"
     CROSS_TYPE_AMBIGUOUS = "CROSS_TYPE_AMBIGUOUS"
-    INVALID_GENERALIZATION_PROPOSAL = "INVALID_GENERALIZATION_PROPOSAL"
-    INVALID_FUSION_PROPOSAL = "INVALID_FUSION_PROPOSAL"
     EDGE_CONTENT_VARIANT = "EDGE_CONTENT_VARIANT"
     STALE_REFERENCE_EDGE_DROPPED = "STALE_REFERENCE_EDGE_DROPPED"
     INVALIDATED_RELATIONSHIP_DROPPED = "INVALIDATED_RELATIONSHIP_DROPPED"
-    MINING_COMPONENT_LIMIT_REACHED = "MINING_COMPONENT_LIMIT_REACHED"
-    MINING_PROPOSAL_LIMIT_REACHED = "MINING_PROPOSAL_LIMIT_REACHED"
-    MINING_EVIDENCE_LIMIT_REACHED = "MINING_EVIDENCE_LIMIT_REACHED"
-    MINER_MODEL_FAILURE = "MINER_MODEL_FAILURE"
-    INVALID_MINER_PROPOSAL = "INVALID_MINER_PROPOSAL"
-    INVALID_GRAPH_REWRITE_PROPOSAL = "INVALID_GRAPH_REWRITE_PROPOSAL"
-    GRAPH_REWRITE_CONFLICT = "GRAPH_REWRITE_CONFLICT"
-    GRAPH_REWRITE_CYCLE = "GRAPH_REWRITE_CYCLE"
-    MINING_STAGE_ROLLED_BACK = "MINING_STAGE_ROLLED_BACK"
 
 
 class CanonicalIdMapping(_MergeApplicationModel):
@@ -50,11 +36,32 @@ class MergeDiagnostic(_MergeApplicationModel):
     message: str
 
 
+class MergeElementRef(_MergeApplicationModel):
+    kind: Literal["node", "edge"]
+    id: str
+    view: Literal["existing", "incoming", "result"]
+    alternative_id: str | None = None
+
+
+class StructuralRewrite(_MergeApplicationModel):
+    """A joint semantic correspondence, never an automatic ID substitution."""
+
+    before: tuple[MergeElementRef, ...]
+    after: tuple[MergeElementRef, ...]
+    explanation: str
+    base_revision: str
+    result_revision: str
+
+
 class GraphMergeResult(_MergeApplicationModel):
+    run_id: str | None = None
     state: GraphState
     node_mappings: tuple[CanonicalIdMapping, ...]
     edge_mappings: tuple[CanonicalIdMapping, ...]
     diagnostics: tuple[MergeDiagnostic, ...]
+    rewrites: tuple[StructuralRewrite, ...] = ()
+    existing_node_mappings: tuple[CanonicalIdMapping, ...] = ()
+    existing_edge_mappings: tuple[CanonicalIdMapping, ...] = ()
 
 
 class GraphMergeUseCase(Protocol):
@@ -63,4 +70,6 @@ class GraphMergeUseCase(Protocol):
         existing: GraphState,
         incoming: GraphState,
         schema: SchemaDefinition,
+        *,
+        run_id: str | None = None,
     ) -> GraphMergeResult: ...

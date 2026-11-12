@@ -15,7 +15,6 @@ from cortex.capabilities.sql_training.artifacts.workspace import (
     serialize_asset_envelope,
 )
 from cortex.capabilities.sql_training.core.enums import NodeType
-from cortex.capabilities.sql_training.graph.case import project_case_edges
 from cortex.capabilities.sql_training.graph.snapshots import (
     SEMANTIC_TYPES,
     GraphStore,
@@ -42,7 +41,7 @@ def case_result(
         if payload.get("content_fingerprint") == snapshot.content_fingerprint:
             replay = services.replay(state.validation_ref)
     stable = bool(replay and replay.correct)
-    passed = stable and not state.operational_failure
+    passed = stable and state.direct_completed and not state.operational_failure
     validation_status = replay.status.value if replay else "unavailable"
     accepted = {
         key
@@ -59,7 +58,11 @@ def case_result(
     sem_hash = fingerprint(
         [a.model_dump(mode="json") for a in sorted(assets, key=lambda a: a.id)]
     )
-    draft_edges = project_case_edges(assets)
+    draft_edges = tuple(
+        e
+        for e in graph.validation_graph(snapshot.revision).edges
+        if e.from_node_id in ids
+    )
     return {
         "source_id": str(record["source_id"]),
         "question": record["question"],
@@ -88,6 +91,7 @@ def case_result(
         "direct_completed": state.direct_completed,
         "directly_retained_asset_ids": sorted(set(state.directly_retained_ids) & ids),
         "assessment_accepted_asset_ids": sorted(accepted),
+        "accepted_event_ids": by_type[NodeType.EVENT],
         "accepted_metric_ids": by_type[NodeType.METRIC],
         "optimized_metric_ids": sorted(accepted & set(by_type[NodeType.METRIC])),
         "accepted_semantic_mapping_ids": by_type[NodeType.CONCEPT],
@@ -101,6 +105,8 @@ def case_result(
         "draft_nodes_generated": bool(assets),
         "draft_node_ids": sorted(ids),
         "draft_node_count": len(assets),
+        "draft_edges": [e.model_dump(mode="json") for e in draft_edges],
+        "relation_contracts": [c.model_dump(mode="json") for c in snapshot.graph.relation_contracts],
         "draft_edge_ids": [e.id for e in draft_edges],
         "draft_edge_count": len(draft_edges),
         "final_ontology_fingerprint": sem_hash,
@@ -168,6 +174,11 @@ def result_signature(result: dict[str, Any]) -> str:
 
 
 def seal_case(root: Path, result: dict[str, Any], graph: GraphStore) -> dict[str, Any]:
+    if graph.accepted.conflict_nodes:
+        raise ValueError(
+            "Resolve accepted conflicts before exporting the single-definition case ontology: "
+            + ", ".join(c.id for c in graph.accepted.conflict_nodes)
+        )
     target = root / "result"
     if target.exists():
         previous = read_json(target / "result.json")

@@ -4,10 +4,10 @@ from enum import StrEnum
 class NodeType(StrEnum):
     TABLE = "table"
     COLUMN = "column"
-    JOIN_PATH = "join_path"
     DIMENSION_VALUE = "dimension_value"
     METRIC = "metric"
     CONCEPT = "concept"
+    EVENT = "event"
     # Workflow/owner naming alias. Persisted assets always serialize as ``concept``.
     SEMANTIC_MAPPING = "concept"
     GENERATION_RULE = "generation_rule"
@@ -48,10 +48,9 @@ class KeyRole(StrEnum):
 
 
 class JoinCardinality(StrEnum):
-    MANY_TO_ONE = "MANY_TO_ONE"
-    ONE_TO_MANY = "ONE_TO_MANY"
-    ONE_TO_ONE = "ONE_TO_ONE"
-    UNKNOWN = "UNKNOWN"
+    MANY_TO_ONE = "N:1"
+    ONE_TO_MANY = "1:N"
+    ONE_TO_ONE = "1:1"
 
 
 class JoinType(StrEnum):

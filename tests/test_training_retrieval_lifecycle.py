@@ -140,21 +140,13 @@ def test_shared_injected_model_does_not_use_native_async_client_across_cases(
         "FileSystemRetrieveDbArtifactRecorder",
         lambda *args: SimpleNamespace(write=lambda *args, **kwargs: None),
     )
-    config = CortexConfig(
-        services={"sql_training": {"case_max_workers": case_workers}}
-    )
-    service = knowledge._build_sql_service(
+    config = CortexConfig(services={"sql_training": {"case_max_workers": case_workers}})
+    capability = knowledge.build_sql_extraction(
         config,
-        "test",
-        None,
-        model,
-        database,
-        None,
-        graph_merge=SimpleNamespace(),
-        state_repository=SimpleNamespace(),
+        llm=model,
+        database=database,
         workspace=workspace.root,
     )
-    capability = service._engine
     first = capability.validation_client_factory()
     second = capability.validation_client_factory()
     try:

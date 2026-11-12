@@ -7,10 +7,12 @@ import sqlglot
 from sqlglot import expressions
 
 from cortex.capabilities.sql_training.core.enums import NodeType
-from cortex.capabilities.sql_training.core.ids import make_node_id
+from cortex.capabilities.sql_training.core.ids import (
+    canonical_value_reference,
+    make_node_id,
+)
 from cortex.capabilities.sql_training.models import (
     NodeAsset,
-    SemanticMappingTarget,
 )
 
 _RELATIVE_TIME_TERM = re.compile(
@@ -36,108 +38,56 @@ def relative_time_mentions(value: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(match.group(0) for match in _RELATIVE_TIME_TERM.finditer(value)))
 
 
+def _parse_binding(expression: str, dialect: str = "sqlite"):
+    statements = sqlglot.parse(f"SELECT {expression}", dialect=dialect)
+    if len(statements) != 1:
+        raise ValueError("Concept binding must contain one expression, not multiple statements")
+    tree = statements[0]
+    if not isinstance(tree, expressions.Select) or any(value for key, value in tree.args.items() if key != "expressions"):
+        raise ValueError("Concept binding must be an expression, not a query or query clause")
+    return tree
+
+
 def normalize_semantic_mapping_candidate(
     asset: NodeAsset,
     *,
     table_schema: dict[str, str],
+    physical_catalog: Any = None,
+    dialect: str = "sqlite",
 ) -> NodeAsset:
-    """Qualify unqualified target columns when their physical table is unambiguous."""
-
+    """Canonicalize physical match groups without deriving graph relations."""
     normalized = asset.model_copy(deep=True)
-    physical_catalog = _physical_catalog(table_schema)
+    if physical_catalog is None:
+        physical_catalog = _physical_catalog(table_schema)
     physical_names_by_ref = _physical_names_by_ref(table_schema)
     schema_tables_by_column = _schema_tables_by_column(table_schema)
-    for target_index, target in enumerate(normalized.properties.targets):
-        canonical_references = [
-            _canonicalize_physical_ref(reference, physical_catalog=physical_catalog)
-            for reference in target.references
-        ]
-        target_changed = canonical_references != target.references
-        target.references = canonical_references
-        try:
-            tree = sqlglot.parse_one(
-                f"SELECT 1 WHERE {target.sql_expression}", dialect="sqlite"
-            )
-        except Exception:  # noqa: BLE001
+    for index, group in enumerate(normalized.properties.targets):
+        group = [_canonicalize_physical_ref(ref, physical_catalog=physical_catalog) for ref in group]
+        normalized.properties.targets[index] = group
+        expression = normalized.properties.target_expressions.get(str(index))
+        if expression is None:
             continue
-        reference_tables_by_column = _reference_tables_by_column(target.references)
-        changed = False
+        try:
+            tree = _parse_binding(expression, dialect)
+        except (sqlglot.errors.SqlglotError, ValueError):
+            continue  # Contract validation below returns actionable errors.
+        reference_tables_by_column = _reference_tables_by_column(group)
         for column in tree.find_all(expressions.Column):
             if column.table or not column.name:
                 continue
-            column_name = str(column.name)
-            candidate_tables = reference_tables_by_column.get(column_name.casefold(), set())
-            if not candidate_tables:
-                candidate_tables = schema_tables_by_column.get(column_name.casefold(), set())
-            if len(candidate_tables) != 1:
-                continue
-            column.set("table", next(iter(candidate_tables)))
-            changed = True
-        if changed:
-            where = tree.args.get("where")
-            if isinstance(where, expressions.Where):
-                target.sql_expression = where.this.sql()
-        tree, expression_changed = _canonicalize_expression_columns(
-            tree,
-            physical_catalog=physical_catalog,
-            physical_names_by_ref=physical_names_by_ref,
+            choices = reference_tables_by_column.get(column.name.casefold(), set())
+            if not choices:
+                choices = schema_tables_by_column.get(column.name.casefold(), set())
+            if len(choices) == 1:
+                column.set("table", next(iter(choices)))
+        tree, _ = _canonicalize_expression_columns(
+            tree, physical_catalog=physical_catalog, physical_names_by_ref=physical_names_by_ref,
         )
-        if expression_changed:
-            where = tree.args.get("where")
-            if isinstance(where, expressions.Where):
-                target.sql_expression = where.this.sql()
-            target_changed = True
-        tree, dqs_changed = coerce_sqlite_dqs_literals(
-            tree,
-            physical_catalog=physical_catalog,
+        if dialect == "sqlite":
+            tree, _ = coerce_sqlite_dqs_literals(tree, physical_catalog=physical_catalog)
+        normalized.properties.target_expressions[str(index)] = ", ".join(
+            item.sql(dialect=dialect) for item in tree.expressions
         )
-        if dqs_changed:
-            where = tree.args.get("where")
-            if isinstance(where, expressions.Where):
-                target.sql_expression = where.this.sql()
-            target_changed = True
-        expected_references = _expression_references(
-            tree,
-            physical_catalog=physical_catalog,
-            table_schema=table_schema,
-        )
-        declared_references = set(target.references)
-        declared_columns = {
-            reference for reference in declared_references if reference.startswith("column.")
-        }
-        expected_columns = {
-            reference for reference in expected_references if reference.startswith("column.")
-        }
-        if expected_columns.issubset(declared_columns):
-            invalid_numeric_values = (
-                _all_expression_dimension_value_references(
-                    tree,
-                    physical_catalog=physical_catalog,
-                )
-                - expected_references
-            )
-            if invalid_numeric_values.intersection(target.references):
-                target.references = [
-                    reference
-                    for reference in target.references
-                    if reference not in invalid_numeric_values
-                ]
-                declared_references = set(target.references)
-                target_changed = True
-            governed_values = {
-                reference
-                for reference in expected_references
-                if reference.startswith("dimension_value.")
-            }
-            missing_values = governed_values - declared_references
-            if missing_values:
-                target.references = [*target.references, *sorted(missing_values)]
-                target_changed = True
-        if target_changed:
-            payload = target.model_dump(mode="python")
-            normalized.properties.targets[target_index] = SemanticMappingTarget.model_validate(
-                payload
-            )
     return normalized
 
 
@@ -145,22 +95,23 @@ def validate_semantic_mapping_candidate_contract(
     asset: NodeAsset,
     *,
     table_schema: dict[str, str] | None = None,
+    physical_catalog: Any = None,
 ) -> None:
-    if asset.node_type != NodeType.SEMANTIC_MAPPING:
-        raise ValueError("Semantic Mapping contract requires a semantic_mapping asset")
-    term = asset.name.strip()
-    if not term:
+    if asset.node_type not in {NodeType.CONCEPT, NodeType.EVENT}:
+        raise ValueError("Physical target contract requires a Concept or Event asset")
+    if not asset.name.strip():
         raise ValueError("Semantic Mapping term must be non-empty")
-    if not asset.properties.targets:
-        raise ValueError("Semantic Mapping requires at least one target")
-    physical_catalog = _physical_catalog(table_schema or {})
-    for index, target in enumerate(asset.properties.targets, start=1):
-        _validate_target(
-            target,
-            index=index,
-            physical_catalog=physical_catalog,
-            table_schema=table_schema or {},
-        )
+    if asset.node_type == NodeType.CONCEPT and not asset.properties.targets:
+        raise ValueError("Concept requires nonempty matching targets")
+    if physical_catalog is None:
+        physical_catalog = _physical_catalog(table_schema or {})
+    for index, group in enumerate(asset.properties.targets):
+        expression = asset.properties.target_expressions.get(str(index))
+        if expression is not None:
+            _validate_target(
+                group, expression=expression, index=index,
+                physical_catalog=physical_catalog, table_schema=table_schema or {},
+            )
 
 
 def validate_semantic_mapping_gold_grounding(
@@ -175,7 +126,7 @@ def validate_semantic_mapping_gold_grounding(
     candidate_columns = {
         reference
         for target in asset.properties.targets
-        for reference in target.references
+        for reference in target
         if reference.startswith("column.")
     }
     unsupported = candidate_columns - gold_physical_refs
@@ -190,16 +141,18 @@ def validate_semantic_mapping_schema_grounding(
     asset: NodeAsset,
     *,
     table_schema: dict[str, str],
+    physical_catalog: Any = None,
 ) -> None:
     """Verify candidate column references against the supplied schema snapshot."""
 
     if not table_schema:
         return
-    physical_catalog = _physical_catalog(table_schema)
+    if physical_catalog is None:
+        physical_catalog = _physical_catalog(table_schema)
     unresolved: set[str] = set()
     for target in asset.properties.targets:
-        for reference in target.references:
-            if not reference.startswith(("column.", "dimension_value.")):
+        for reference in target:
+            if not reference.startswith(("table.", "column.", "dimension_value.")):
                 continue
             if _resolve_physical_ref(reference, physical_catalog) is None:
                 unresolved.add(reference)
@@ -278,66 +231,42 @@ def _canonicalize_physical_ref(reference: str, *, physical_catalog: Any) -> str:
     if len(parts) != 4 or not all(parts[1:]):
         return reference
     _, table_name, column_name, value = parts
-    return make_node_id(NodeType.DIMENSION_VALUE, table_name, column_name, value)
+    return canonical_value_reference(table_name, column_name, value)
 
 
 def _validate_target(
-    target: Any,
+    group: list[str],
     *,
+    expression: str,
     index: int,
     physical_catalog: Any,
     table_schema: dict[str, str],
 ) -> None:
-    expression = str(target.sql_expression or "").strip()
-    if not expression:
-        raise ValueError(f"Semantic Mapping target {index} sql_expression must be non-empty")
     try:
-        # ``sql_expression`` is the executable physical binding of the Concept term, not
-        # a query filter: a composite term (for example a full address) binds several
-        # qualified columns in one target. Parse it as a projection list so every
-        # column is captured; framing it as ``SELECT 1 WHERE <expr>`` silently drops
-        # every column after the first in a comma-separated binding.
-        tree = sqlglot.parse_one(f"SELECT {expression}", dialect="sqlite")
-    except Exception as exc:  # noqa: BLE001
-        raise ValueError(
-            f"Semantic Mapping target {index} sql_expression is invalid: {exc}"
-        ) from exc
+        tree = _parse_binding(expression)
+    except (sqlglot.errors.SqlglotError, ValueError) as exc:
+        raise ValueError(f"Matching group {index} expression is invalid: {exc}") from exc
     tree, _ = coerce_sqlite_dqs_literals(tree, physical_catalog=physical_catalog)
-    forbidden = (
-        expressions.AggFunc,
-        expressions.Window,
-        expressions.Subquery,
-        expressions.Order,
-        expressions.Limit,
-        expressions.CTE,
-    )
-    if any(tree.find(node_type) is not None for node_type in forbidden):
-        raise ValueError(
-            f"Semantic Mapping target {index} contains query or calculation operations"
-        )
+    forbidden = (expressions.AggFunc, expressions.Window, expressions.Subquery,
+                 expressions.Order, expressions.Limit, expressions.CTE)
+    if any(tree.find(kind) is not None for kind in forbidden):
+        raise ValueError(f"Matching group {index} contains query or aggregation operations")
     columns = list(tree.find_all(expressions.Column))
-    unqualified = sorted({column.name for column in columns if not column.table})
-    if unqualified:
-        raise ValueError(
-            f"Semantic Mapping target {index} contains unqualified columns: {unqualified}"
-        )
-    expected_references = _expression_references(
-        tree,
-        physical_catalog=physical_catalog,
-        table_schema=table_schema,
-    )
-
-    actual_references = {
-        _canonicalize_physical_ref(reference, physical_catalog=physical_catalog)
-        for reference in target.references
-        if reference.startswith(("column.", "dimension_value."))
-    }
-    if actual_references != expected_references:
-        raise ValueError(
-            f"Semantic Mapping target {index} references do not match its physical contract: "
-            f"missing={sorted(expected_references-actual_references)}, "
-            f"extra={sorted(actual_references-expected_references)}"
-        )
+    if any(not column.table for column in columns):
+        raise ValueError(f"Matching group {index} expression requires qualified columns")
+    expected = _expression_references(tree, physical_catalog=physical_catalog, table_schema=table_schema)
+    for ref in expected:
+        if ref.startswith("column.") and _resolve_physical_ref(ref, physical_catalog) is None:
+            raise ValueError(f"Matching group {index} expression uses an unknown column: {ref}")
+    declared = {_canonicalize_physical_ref(ref, physical_catalog=physical_catalog) for ref in group}
+    covered_columns = {ref for ref in declared if ref.startswith("column.")}
+    covered_columns.update("column." + ref.split(".", 1)[1].rsplit(".", 1)[0]
+                           for ref in declared if ref.startswith("dimension_value."))
+    declared_tables = {ref.removeprefix("table.") for ref in declared if ref.startswith("table.")}
+    missing = {ref for ref in expected if ref.startswith("column.")
+               and ref not in covered_columns and ref.split(".", 2)[1] not in declared_tables}
+    if missing:
+        raise ValueError(f"Matching group {index} expression uses undeclared inputs: {sorted(missing)}")
 
 
 def coerce_sqlite_dqs_literals(
@@ -504,6 +433,16 @@ def _expression_references(
                     literal,
                 )
             )
+    expected_references = {
+        _canonicalize_physical_ref(reference, physical_catalog=physical_catalog)
+        for reference in expected_references
+    }
+    # Numeric auto-discovery is conservative; an explicitly governed, verified
+    # stored Value is already evidence and must not be stripped by that heuristic.
+    expected_references.update(
+        _all_expression_dimension_value_references(tree, physical_catalog=physical_catalog)
+        & getattr(physical_catalog, "verified_value_ids", frozenset())
+    )
     return expected_references
 
 
@@ -534,7 +473,7 @@ def _all_expression_dimension_value_references(
                 make_node_id(NodeType.DIMENSION_VALUE, table_name, column_name, literal)
                 for literal in literals
             )
-    return references
+    return {_canonicalize_physical_ref(reference, physical_catalog=physical_catalog) for reference in references}
 
 
 def column_allows_numeric_dimension_values(

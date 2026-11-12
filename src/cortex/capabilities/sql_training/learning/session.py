@@ -10,6 +10,12 @@ from pydantic import Field
 
 from cortex.capabilities.sql_training.graph.mutations import ChangeGroup
 from cortex.capabilities.sql_training.graph.snapshots import GraphStore
+from cortex.capabilities.sql_training.learning.inputs import (
+    AUTHORING_MODELS,
+    case_source,
+    graph_context,
+    semantic_overview,
+)
 from cortex.capabilities.sql_training.models.base import NodeModel
 from cortex.capabilities.sql_training.training.evidence import EvidenceStore
 from cortex.config.models import SqlTrainingConfig
@@ -62,39 +68,68 @@ class LearningSession:
     edit_receipts: dict[str, tuple[str, str]] = field(default_factory=dict)
     closed: bool = False
     stop_reason: str | None = None
+    stop_detail: str | None = None
     handoff_result: dict[str, Any] | None = None
     observed_reads: set[str] = field(default_factory=set)
+    loaded_type_guides: set[str] = field(default_factory=set)
+    observed_rejections: set[str] = field(default_factory=set)
     started: float = field(default_factory=monotonic)
     lock: Lock = field(default_factory=Lock)
 
     def context(self) -> dict[str, Any]:
         snapshot = self.graph.working
-        return {
-            "mode": self.mode,
-            "source": self.record,
-            "working_revision": snapshot.revision,
-            "accepted_revision": self.graph.accepted_revision,
-            "baseline_revision": self.baseline_revision,
-            "semantic_nodes": [
-                {
-                    "id": a.id,
-                    "type": a.node_type.value,
-                    "name": a.name,
-                    "aliases": a.aliases,
-                    "references": a.references(),
-                }
-                for a in snapshot.semantic_assets
-            ],
-            "targets": self.targets,
-            "latest_feedback": self.feedback,
-            "working_notes": self.notes.model_dump(mode="json"),
-            "budget": {
-                "model_calls_left": self.config.agent_max_steps - self.model_calls,
-                "database_calls_left": self.config.agent_database_calls
-                - self.database_calls,
-                "remaining_trials": self.remaining_trials,
-            },
+        context = graph_context(snapshot, self.record, self.dialect)
+        accepted = {a.id: a for a in self.graph.accepted.semantic_assets}
+        changed = {a.id for a in snapshot.semantic_assets if accepted.get(a.id) != a}
+        pinned = changed | {member for group in self.groups for member in group.member_ids}
+        context.update(
+            {
+                "mode": self.mode,
+                "available_semantic_types": list(AUTHORING_MODELS),
+                "guidance": "inspect_graph(mode=guide, node_type=...) loads one type contract; mode=relations loads explicit business relations. Choose only evidenced knowledge; no per-type output quota.",
+                "database_dialect": self.dialect,
+                "source": case_source(self.record),
+                "working_revision": snapshot.revision,
+                "accepted_revision": self.graph.accepted_revision,
+                "semantic_nodes": semantic_overview(
+                    snapshot, context["gold_bindings"], str(self.record["question"]), pinned
+                ),
+                "budget": {
+                    "model_calls_left": self.config.agent_max_steps - self.model_calls,
+                    "database_calls_left": self.config.agent_database_calls
+                    - self.database_calls,
+                    "remaining_trials": self.remaining_trials,
+                    "read_concurrency": self.config.agent_read_concurrency,
+                    "repeated_read_decisions_left": max(0, 3 - self.no_progress),
+                },
+            }
+        )
+        if self.loaded_type_guides:
+            context["loaded_type_guides"] = sorted(self.loaded_type_guides)
+        if self.no_progress:
+            context["next_action_hint"] = (
+                f"{self.no_progress} consecutive repeated-read decisions; "
+                f"{max(0, 3 - self.no_progress)} remain before stagnation stops the episode. "
+                "Do not reread unchanged guides. Use the evidence already gathered to submit "
+                "the smallest supported coherent edit with explicit edges, or call handoff "
+                "with the concrete completion gap if unable to proceed."
+            )
+        if self.no_progress >= 2:
+            context["next_action_hint"] += (
+                " Only edit_graph and handoff are available for this decision. "
+                "Save only evidenced knowledge; otherwise hand off unable_to_continue."
+            )
+        if self.mode == "repair":
+            if self.targets:
+                context["targets"] = self.targets
+            if self.feedback:
+                context["latest_feedback"] = self.feedback
+        notes = {
+            key: value for key, value in self.notes.model_dump(mode="json").items() if value
         }
+        if notes:
+            context["working_notes"] = notes
+        return context
 
     def exhausted(self, *, include_model_limit: bool = True) -> bool:
         return (

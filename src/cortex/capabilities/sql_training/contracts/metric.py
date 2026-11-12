@@ -49,7 +49,6 @@ def metric_dependency_refs(asset: NodeAsset) -> set[str]:
     return {
         str(reference).strip()
         for reference in [
-            *asset.properties.references,
             *asset.properties.expression.refs.values(),
         ]
         if str(reference).strip().startswith("metric.")
@@ -91,7 +90,7 @@ def metric_dependency_diagnostics(
     def visit(metric_id: str) -> None:
         if metric_id in visiting:
             start = visiting.index(metric_id)
-            cycle = tuple([*visiting[start:], metric_id])
+            cycle = (*visiting[start:], metric_id)
             if cycle not in seen_cycles:
                 seen_cycles.add(cycle)
                 diagnostics.append(
@@ -152,6 +151,7 @@ def validate_metric_contract(
     if placeholders != ref_names:
         raise ValueError(
             "Metric expression placeholders must exactly match expression.refs keys; "
+            "use ${key} in expression.expr and bare key in expression.refs (not {key}, <key>, or bare SQL names); "
             f"missing_refs={sorted(placeholders-ref_names)}, "
             f"unused_refs={sorted(ref_names-placeholders)}"
         )
@@ -166,18 +166,6 @@ def validate_metric_contract(
         raise ValueError(
             "Metric pattern placeholders must resolve through expression.refs; "
             f"unknown={unknown_pattern_placeholders}"
-        )
-    declared_refs = set(asset.properties.references)
-    missing_declared_refs = sorted(set(expression.refs.values()) - declared_refs)
-    if missing_declared_refs:
-        raise ValueError(
-            f"Metric references omit expression dependencies: {missing_declared_refs}"
-        )
-    extra_declared_refs = sorted(declared_refs - set(expression.refs.values()))
-    if extra_declared_refs:
-        raise ValueError(
-            "Metric references contain dependencies not used by expression: "
-            f"{extra_declared_refs}"
         )
     metric_texts = [pattern] if pattern else []
     _validate_schema_tokens(metric_texts, field_name="Metric pattern")

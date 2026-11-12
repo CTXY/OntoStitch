@@ -5,14 +5,15 @@ from cortex.schema.graph import (
     ConflictChoice,
     ConflictPoint,
     GraphEdge,
-    GraphFragment,
     GraphNode,
     GraphSpace,
     GraphState,
     MergeStatus,
+    NodeContent,
     NodeMergeConflict,
     SourceReference,
 )
+from cortex.schema.graph_io import export_inline_graph, with_conflicts
 from cortex.schema.models import (
     EdgeDirectionality,
     EdgeType,
@@ -24,15 +25,7 @@ from cortex.schema.models import (
     SchemaDefinition,
     SchemaFamily,
 )
-from cortex.schema.ontology import effective_concept_grounding
-from cortex.schema.retrieval import (
-    RetrievalSection,
-    RetrievalSnapshot,
-    RetrievalSourceDocument,
-    RetrievalUnit,
-)
 from cortex.schema.roots import load_root_schema
-from cortex.schema.sources import SourceChunk, SourceCorpus, SourceDocument, SourceSection
 from cortex.schema.validation import (
     GraphSchemaError,
     InvalidGraphState,
@@ -43,40 +36,33 @@ from cortex.schema.validation import (
 )
 
 __all__ = [
-    "EdgeType",
-    "EdgeDirectionality",
     "ConflictAlternative",
     "ConflictChoice",
     "ConflictPoint",
+    "EdgeDirectionality",
+    "EdgeType",
     "FieldDefinition",
     "GraphEdge",
     "GraphNode",
     "GraphSchemaError",
-    "InvalidGraphState",
     "GraphSpace",
     "GraphState",
-    "GraphFragment",
-    "MergeStatus",
-    "NodeMergeConflict",
     "IdentityMode",
     "IdentityPolicy",
+    "InvalidGraphState",
     "MergeRole",
+    "MergeStatus",
+    "NodeContent",
+    "NodeMergeConflict",
     "NodeType",
-    "RetrievalSection",
-    "RetrievalSnapshot",
-    "RetrievalSourceDocument",
-    "RetrievalUnit",
     "SchemaDefinition",
     "SchemaFamily",
-    "SourceChunk",
-    "SourceCorpus",
-    "SourceDocument",
     "SourceReference",
-    "SourceSection",
     "calculate_schema_hash",
-    "effective_concept_grounding",
+    "export_inline_graph",
     "load_root_schema",
     "validate_graph_space",
     "validate_graph_state",
     "validate_incoming_graph_state",
+    "with_conflicts",
 ]

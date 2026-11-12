@@ -7,20 +7,27 @@ from time import monotonic
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cortex.capabilities.graph_merge.llm.agents import _RefCodec
+from cortex.capabilities.graph_merge.llm.references import _RefCodec
 from cortex.capabilities.graph_merge.models import (
     DifferencePoint,
     ReconciledNode,
     ReconciledRepresentation,
 )
-from cortex.capabilities.graph_merge.reconciliation.service import (
-    NodeGroupReconciler,
+from cortex.capabilities.graph_merge.reconciliation.evidence import (
+    evidence_complete,
+    resolve_group_evidence,
+)
+from cortex.capabilities.graph_merge.reconciliation.materialization import (
     _materialize_node,
     _sources_for_refs,
 )
+from cortex.capabilities.graph_merge.reconciliation.materialization import (
+    materialize as materialize_group,
+)
+from cortex.capabilities.graph_merge.reconciliation.service import NodeGroupReconciler
 from cortex.infrastructure.llm.parsing import _parse_output, run_llm_extraction_sync
 from cortex.schema import GraphSpace, validate_graph_space
-from cortex.schema.ontology_asset_definitions import render_ontology_asset_contract
+from cortex.capabilities.retrieve_db.concept_grounding_asset_definitions import render_ontology_asset_contract
 
 PROMPT = Path(__file__).with_name("prompts") / "direct_merge.md"
 SEMANTIC = frozenset({"concept", "metric", "generation_rule"})
@@ -36,14 +43,15 @@ def validate_partition(outcome, group):
     expected = {member.ref for member in group.members}
     actual = [ref for row in outcome.representations for ref in row.supporting_refs]
     if set(actual) != expected or len(actual) != len(expected):
-        raise ValueError("output supporting_refs must partition all input refs exactly once")
-    if any(
-        not row.supporting_refs or row.target_alternative_id is not None
-        for row in outcome.representations
-    ):
+        raise ValueError(
+            "output supporting_refs must partition all input refs exactly once"
+        )
+    if any(not row.supporting_refs for row in outcome.representations):
         raise ValueError("empty membership or invented historical alternative ID")
     if bool(outcome.difference_points) != (len(outcome.representations) > 1):
-        raise ValueError("multiple representations require conflict points; one requires none")
+        raise ValueError(
+            "multiple representations require conflict points; one requires none"
+        )
     source_ids = {
         member.ref: {s.case_id for s in member.sources if s.case_id is not None}
         for member in group.members
@@ -52,10 +60,14 @@ def validate_partition(outcome, group):
         members = [m for position in point.positions for m in position.members]
         refs = [m.representation_ref for m in members]
         if point.resolution != "conflict" or len(point.positions) < 2:
-            raise ValueError("difference point must contain at least two conflict positions")
+            raise ValueError(
+                "difference point must contain at least two conflict positions"
+            )
         if set(refs) != expected or len(refs) != len(expected):
             raise ValueError("conflict positions must partition every source ref")
-        if any(set(m.source_case_ids) != source_ids[m.representation_ref] for m in members):
+        if any(
+            set(m.source_case_ids) != source_ids[m.representation_ref] for m in members
+        ):
             raise ValueError("conflict source Case IDs differ from supplied provenance")
         positions = {
             member.representation_ref: index
@@ -71,13 +83,15 @@ def validate_partition(outcome, group):
 
 class DirectGroupMerger(NodeGroupReconciler):
     def __init__(
-        self, llm, evidence_resolver, trace_sink=None, checkpoint=None, available_nodes=()
+        self,
+        llm,
+        evidence_resolver,
+        trace_sink=None,
+        checkpoint=None,
+        available_nodes=(),
     ):
         super().__init__(
-            reconciler=None,
             evidence_resolver=evidence_resolver,
-            branch_selector=None,
-            generalizer=None,
         )
         self.llm = llm
         self.trace_sink = trace_sink
@@ -92,9 +106,12 @@ class DirectGroupMerger(NodeGroupReconciler):
         schema,
         historical_conflict=None,
         dependency_nodes=(),
+        **kwargs,
     ):
         if historical_conflict is not None:
-            raise ValueError("direct ablation requires a frozen pre-reconciliation input")
+            raise ValueError(
+                "direct ablation requires a frozen pre-reconciliation input"
+            )
         if group.node_type not in SEMANTIC or len(group.members) == 1:
             return super().reconcile_group(
                 group,
@@ -119,7 +136,12 @@ class DirectGroupMerger(NodeGroupReconciler):
                 dependencies[ref] = node
                 pending.extend(_content_references(node.properties))
         dependency_nodes = tuple(dependencies[key] for key in sorted(dependencies))
-        evidence_by_ref, _, evidence_code = self._evidence(group.members)
+        evidence_by_ref = resolve_group_evidence(group, self.evidence_resolver)
+        evidence_code = (
+            None
+            if evidence_complete(group.members, evidence_by_ref)
+            else "EVIDENCE_UNAVAILABLE"
+        )
         canonical = self.canonical_id_for_group(group)
         record = {
             "group_id": group.group_id,
@@ -133,16 +155,22 @@ class DirectGroupMerger(NodeGroupReconciler):
             "members_with_evidence": [
                 {
                     "representation_ref": member.ref.model_dump(mode="json"),
-                    "evidence": [e.model_dump(mode="json") for e in evidence_by_ref[member.ref]],
+                    "evidence": [
+                        e.model_dump(mode="json") for e in evidence_by_ref[member.ref]
+                    ],
                 }
                 for member in group.members
             ],
-            "node_type": schema.node_type_index()[group.node_type].model_dump(mode="json"),
+            "node_type": schema.node_type_index()[group.node_type].model_dump(
+                mode="json"
+            ),
             "effective_fields": {
                 key: field.model_dump(mode="json")
                 for key, field in schema.effective_node_fields(group.node_type).items()
             },
-            "dependency_evidence": [node.model_dump(mode="json") for node in dependency_nodes],
+            "dependency_evidence": [
+                node.model_dump(mode="json") for node in dependency_nodes
+            ],
         }
         codec = _RefCodec.from_payload(payload)
         sections = ("common", "owners", group.node_type)
@@ -151,7 +179,10 @@ class DirectGroupMerger(NodeGroupReconciler):
         started = monotonic()
         cached = self.checkpoint and self.checkpoint.has(group, payload, prompt)
         if self.trace_sink:
-            print(f"direct_group_start {group.group_id} members={len(group.members)}", flush=True)
+            print(
+                f"direct_group_start {group.group_id} members={len(group.members)}",
+                flush=True,
+            )
 
         def materialize(outcome):
             if len(outcome.representations) == 1:
@@ -166,7 +197,8 @@ class DirectGroupMerger(NodeGroupReconciler):
                     representations=group.members,
                     evidence_by_ref=evidence_by_ref,
                 )
-            return self._materialize_conflict(
+            return materialize_group(
+                self.id_factory,
                 canonical,
                 group,
                 outcome.representations,
@@ -179,7 +211,9 @@ class DirectGroupMerger(NodeGroupReconciler):
             if cached:
                 outcome = self.checkpoint.load(group)
                 record.update(self.checkpoint.record(group))
-                record["original_llm_calls"] = record.get("original_llm_calls", record["llm_calls"])
+                record["original_llm_calls"] = record.get(
+                    "original_llm_calls", record["llm_calls"]
+                )
                 record["original_elapsed_seconds"] = record.get(
                     "original_elapsed_seconds", record.get("elapsed_seconds", 0)
                 )
@@ -196,7 +230,8 @@ class DirectGroupMerger(NodeGroupReconciler):
                     original = self.checkpoint.original_response(group)
                     if original is not None:
                         outcome = codec.decode_model(
-                            _parse_output(original, DirectMergeOutcome), DirectMergeOutcome
+                            _parse_output(original, DirectMergeOutcome),
+                            DirectMergeOutcome,
                         )
                         record["previous_structural_error"] = record.pop("error")
                         record["fallback"] = False
@@ -218,21 +253,27 @@ class DirectGroupMerger(NodeGroupReconciler):
                 node = _materialize_node(canonical, group.node_type, row.content, ())
                 validate_graph_space(GraphSpace(nodes=(node,)), schema)
                 for field in ("targets", "sql_generation_plans"):
-                    ids = [item.get("id") for item in row.content.properties.get(field, ())]
+                    ids = [
+                        item.get("id") for item in row.content.properties.get(field, ())
+                    ]
                     if len(ids) != len(set(ids)):
                         raise ValueError(f"duplicate {field} IDs in model output")
-                known = {m.ref.ref_id for m in group.members} | {n.id for n in dependency_nodes}
+                known = {m.ref.ref_id for m in group.members} | {
+                    n.id for n in dependency_nodes
+                }
                 # Public Graph IDs are arbitrary strings; the train-only NodeAsset
                 # ID prefix contract must not reject collision-safe incoming IDs.
                 unknown = _content_references(row.content.properties) - known
                 if unknown:
                     raise ValueError(f"unknown output reference IDs: {sorted(unknown)}")
             result = materialize(outcome)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - ablation preserves originals on model failure
             record.update(fallback=True, error=f"{type(exc).__name__}: {exc}")
             outcome = DirectMergeOutcome(
                 representations=tuple(
-                    ReconciledRepresentation(content=m.content, supporting_refs=(m.ref,))
+                    ReconciledRepresentation(
+                        content=m.content, supporting_refs=(m.ref,)
+                    )
                     for m in group.members
                 )
             )
@@ -240,14 +281,17 @@ class DirectGroupMerger(NodeGroupReconciler):
         record["elapsed_seconds"] = round(monotonic() - started, 3)
         record["output_definitions"] = len(outcome.representations)
         record["semantic_conflict_reported"] = bool(outcome.difference_points)
-        if self.checkpoint and (not record.get("resumed") or record.get("structural_revalidation")):
+        if self.checkpoint and (
+            not record.get("resumed") or record.get("structural_revalidation")
+        ):
             self.checkpoint.save(
                 group,
                 payload,
                 prompt,
                 outcome,
                 record=record,
-                raw_response=trace.get("response") or self.checkpoint.original_response(group),
+                raw_response=trace.get("response")
+                or self.checkpoint.original_response(group),
             )
         self.records.append(record)
         if self.trace_sink:

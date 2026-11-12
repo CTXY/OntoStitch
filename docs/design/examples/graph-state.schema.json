@@ -1,0 +1,352 @@
+{
+  "$defs": {
+    "ConflictAlternative": {
+      "additionalProperties": false,
+      "properties": {
+        "alternative_id": {
+          "minLength": 1,
+          "title": "Alternative Id",
+          "type": "string"
+        },
+        "overrides": {
+          "additionalProperties": true,
+          "title": "Overrides",
+          "type": "object"
+        },
+        "sources": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SourceReference"
+          },
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "alternative_id",
+        "overrides"
+      ],
+      "title": "ConflictAlternative",
+      "type": "object"
+    },
+    "ConflictChoice": {
+      "additionalProperties": false,
+      "description": "One coherent position for a specific unresolved difference.",
+      "properties": {
+        "alternative_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Alternative Ids",
+          "type": "array"
+        },
+        "statement": {
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "alternative_ids",
+        "statement"
+      ],
+      "title": "ConflictChoice",
+      "type": "object"
+    },
+    "ConflictPoint": {
+      "additionalProperties": false,
+      "description": "One decision that remains unresolved across complete alternatives.",
+      "properties": {
+        "point_id": {
+          "minLength": 1,
+          "title": "Point Id",
+          "type": "string"
+        },
+        "aspect": {
+          "minLength": 1,
+          "title": "Aspect",
+          "type": "string"
+        },
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/ConflictChoice"
+          },
+          "minItems": 2,
+          "title": "Choices",
+          "type": "array"
+        }
+      },
+      "required": [
+        "point_id",
+        "aspect",
+        "description",
+        "choices"
+      ],
+      "title": "ConflictPoint",
+      "type": "object"
+    },
+    "GraphEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "edge_type": {
+          "title": "Edge Type",
+          "type": "string"
+        },
+        "from_node_id": {
+          "title": "From Node Id",
+          "type": "string"
+        },
+        "to_node_id": {
+          "title": "To Node Id",
+          "type": "string"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true,
+          "title": "Properties"
+        },
+        "sources": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SourceReference"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "reference_origin": {
+          "anyOf": [
+            {
+              "enum": [
+                "default",
+                "explicit"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference Origin"
+        }
+      },
+      "required": [
+        "id",
+        "edge_type",
+        "from_node_id",
+        "to_node_id"
+      ],
+      "title": "GraphEdge",
+      "type": "object"
+    },
+    "GraphNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "node_type": {
+          "title": "Node Type",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases",
+          "type": "array"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true,
+          "title": "Properties"
+        },
+        "sources": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SourceReference"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "merge_status": {
+          "$ref": "#/$defs/MergeStatus",
+          "default": "normal"
+        },
+        "consolidation_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "semantic_conflict",
+                "unresolved"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Consolidation Status"
+        },
+        "preservation_reasons": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Preservation Reasons",
+          "type": "array"
+        },
+        "alternatives": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ConflictAlternative"
+          },
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "conflict_points": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ConflictPoint"
+          },
+          "title": "Conflict Points",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "node_type",
+        "name"
+      ],
+      "title": "GraphNode",
+      "type": "object"
+    },
+    "GraphSpace": {
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/GraphNode"
+          },
+          "title": "Nodes",
+          "type": "array"
+        },
+        "edges": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "title": "Edges",
+          "type": "array"
+        }
+      },
+      "title": "GraphSpace",
+      "type": "object"
+    },
+    "MergeStatus": {
+      "enum": [
+        "normal",
+        "conflict"
+      ],
+      "title": "MergeStatus",
+      "type": "string"
+    },
+    "SourceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "chunk_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chunk Id"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Case Id"
+        }
+      },
+      "required": [
+        "source_id"
+      ],
+      "title": "SourceReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "graph": {
+      "$ref": "#/$defs/GraphSpace"
+    }
+  },
+  "required": [
+    "graph"
+  ],
+  "title": "GraphState",
+  "type": "object"
+}

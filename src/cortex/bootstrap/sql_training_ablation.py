@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from cortex.bootstrap.knowledge import build_sql_training_service
+from cortex.bootstrap.knowledge import build_sql_extraction
 from cortex.capabilities.sql_training.ablation import RepairOnlyTrainPipeline
 from cortex.capabilities.sql_training.engine import SqlTrainingCapability
 from cortex.config import load_config
@@ -11,8 +11,7 @@ from cortex.infrastructure.llm import create_chat_model
 
 
 def build_repair_only_capability(config_path: Path, *, workspace: Path, physical_workspace: Path):
-    service = build_sql_training_service(config_path, workspace=workspace)
-    original = service._engine
+    original = build_sql_extraction(config_path, workspace=workspace)
     if not isinstance(original, SqlTrainingCapability):
         raise TypeError("repair-only requires SQL Training Capability")
     return SqlTrainingCapability(

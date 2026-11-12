@@ -1,29 +1,9 @@
-"""Node-group reconciliation strategies and orchestration."""
+"""Single-path group consolidation and its source evidence port."""
 
-from cortex.capabilities.graph_merge.reconciliation.service import (
+from cortex.capabilities.graph_merge.reconciliation.evidence import (
     CachedEvidenceResolver,
-    ConflictBranchSelector,
     EvidenceResolver,
-    NodeGroupReconciler,
 )
-from cortex.capabilities.graph_merge.reconciliation.strategy import (
-    GenerationRuleReconciliationSemanticsValidator,
-    MetricReconciliationSemanticsValidator,
-    NodeReconciler,
-    NodeReconcilerRegistry,
-    ReconciliationSemanticsValidator,
-    ReconciliationStrategy,
-)
+from cortex.capabilities.graph_merge.reconciliation.service import NodeGroupReconciler
 
-__all__ = [
-    "GenerationRuleReconciliationSemanticsValidator",
-    "CachedEvidenceResolver",
-    "ConflictBranchSelector",
-    "EvidenceResolver",
-    "MetricReconciliationSemanticsValidator",
-    "NodeGroupReconciler",
-    "NodeReconciler",
-    "NodeReconcilerRegistry",
-    "ReconciliationSemanticsValidator",
-    "ReconciliationStrategy",
-]
+__all__ = ["CachedEvidenceResolver", "EvidenceResolver", "NodeGroupReconciler"]

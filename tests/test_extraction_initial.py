@@ -31,12 +31,14 @@ def test_direct_retention_export_and_evaluation_match(case_graph):
     state = ctrl.run()
     result = seal_case(
         ctrl.root,
-        case_result(ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root),
+        case_result(
+            ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root
+        ),
         ctrl.runtime.graph,
     )
     saved = json.loads(Path(result["result_path"]).read_text())
     assert result["directly_retained_asset_ids"] == [rule().id]
-    assert result["assessment_accepted_asset_ids"] == []
+    assert result["assessment_accepted_asset_ids"] == [rule().id]
     assert result["draft_node_ids"] == [rule().id]
     assert (
         result["evaluation_ontology_fingerprint"]
@@ -45,7 +47,7 @@ def test_direct_retention_export_and_evaluation_match(case_graph):
     assert saved["completion_reason"] == "stable_correct"
 
 
-def test_unavailable_status_preserves_retained_knowledge(case_graph):
+def test_unavailable_status_does_not_accept_tentative_knowledge(case_graph):
     from test_case_workflow import EditingAgent, Validator, make_workflow
 
     from cortex.capabilities.sql_training.artifacts.cases import case_result
@@ -58,12 +60,18 @@ def test_unavailable_status_preserves_retained_knowledge(case_graph):
         case_graph, EditingAgent([[rule()]]), UnavailableValidator()
     )
     import pytest
-    from cortex.capabilities.sql_training.training.workflow.nodes import ValidationUnavailable
+
+    from cortex.capabilities.sql_training.training.workflow.nodes import (
+        ValidationUnavailable,
+    )
+
     with pytest.raises(ValidationUnavailable):
         ctrl.run()
     state = ctrl.state.model_copy(update={"operational_failure": True})
-    result = case_result(ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root)
+    result = case_result(
+        ctrl.runtime.record, state, ctrl.runtime.graph, services, ctrl.root
+    )
     assert not result["correct"]
     assert result["validation_status"] == "unavailable"
-    assert result["draft_node_count"] == 1
-    assert result["asset_outcome"] == "partial"
+    assert result["draft_node_count"] == 0
+    assert result["asset_outcome"] == "empty"

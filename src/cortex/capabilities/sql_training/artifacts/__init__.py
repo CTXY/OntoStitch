@@ -17,7 +17,7 @@ __all__ = [
     "deserialize_asset_envelope",
     "read_json",
     "read_jsonl",
+    "serialize_asset_envelope",
     "write_json",
     "write_jsonl",
-    "serialize_asset_envelope",
 ]

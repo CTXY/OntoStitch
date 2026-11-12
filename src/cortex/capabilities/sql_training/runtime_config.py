@@ -26,6 +26,7 @@ class RuntimeDatabaseConfig(BaseModel):
     url: str | None = None
     include_tables: list[str] = Field(default_factory=list)
     dialect: str = "mysql"
+    description_path: str | None = None
     sqlite_schema_path: str | None = None
     sqlite_seed_path: str | None = None
     sqlite_overwrite: bool = False
@@ -76,12 +77,14 @@ def _database(config: SharedDatabaseConfig) -> RuntimeDatabaseConfig:
             url=_secret(config.url),
             include_tables=list(config.include_tables),
             dialect="mysql",
+            description_path=_path(config.description_path),
         )
     if isinstance(config, SQLiteDatabaseConfig):
         return RuntimeDatabaseConfig(
-            url=f"sqlite:///{config.path}",
+            url=(f"sqlite:///file:{config.path}?mode=ro&uri=true" if config.read_only else f"sqlite:///{config.path}"),
             include_tables=list(config.include_tables),
             dialect="sqlite",
+            description_path=_path(config.description_path),
             sqlite_schema_path=_path(config.schema_path),
             sqlite_seed_path=_path(config.seed_path),
             sqlite_overwrite=config.overwrite,

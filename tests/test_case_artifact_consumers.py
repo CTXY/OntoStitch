@@ -26,6 +26,10 @@ def test_ablation_export_is_consumed_without_duplicate_case_files(case_graph, tm
         result={"correct": None, "asset_outcome": "unassessed"},
         provenance={"snapshot": "frozen"},
         case_index=1,
+        physical_workspace=physical.root,
+        explicit_edges=[__import__('cortex.schema', fromlist=['GraphEdge']).GraphEdge(
+            id='rule-field', edge_type='grounded_on', from_node_id=asset.id,
+            to_node_id='column.orders.id', properties={'description':'Uses the order identifier in this case.'})],
     )
     finalize_collection(
         root,
@@ -112,15 +116,24 @@ def test_direct_export_consumes_versioned_graph_snapshot(case_graph, tmp_path):
 
 
 @pytest.mark.parametrize("keep_original", [True, False])
-def test_collection_uses_local_ontology_after_relocation(tmp_path, keep_original):
+def test_collection_uses_local_ontology_after_relocation(
+    case_graph, tmp_path, keep_original
+):
+    _, _, physical = case_graph
     original = tmp_path / "original"
     entry = write_case(
         original,
         {"source_id": "case", "question": "How many?", "sql": "SELECT 1"},
         [make_rule()],
-        arm="direct", result={}, provenance={}, case_index=1,
+        arm="direct",
+        result={},
+        provenance={},
+        case_index=1,
+        physical_workspace=physical.root,
     )
-    (original / "manifest.json").write_text(json.dumps({"cases": [entry]}))
+    (original / "manifest.json").write_text(
+        json.dumps({"cases": [entry], "physical_workspace": str(physical.root)})
+    )
     moved = tmp_path / "moved"
     shutil.copytree(original, moved)
     if keep_original:
@@ -133,3 +146,29 @@ def test_collection_uses_local_ontology_after_relocation(tmp_path, keep_original
     (moved / "cases/case/result/ontology.json").write_text("[]")
     with pytest.raises(ValueError, match="fingerprint"):
         _load_cases(moved)
+
+
+@pytest.mark.parametrize("arm", ["without_integration", "naive_name_merge"])
+def test_integration_does_not_invent_unsupplied_relations(case_graph, arm):
+    from ablation_study.integration.graphs import build_graph
+    from cortex.schema import GraphState
+
+    store, _, _ = case_graph
+    physical = GraphState(
+        graph=store.validation_graph(store.working_revision), node_conflicts=()
+    )
+    asset = make_rule(references=["column.orders.id"])
+    state, audit = build_graph(
+        physical,
+        [
+            ("first", [asset.model_dump(mode="json")]),
+            ("second", [asset.model_dump(mode="json")]),
+        ],
+        arm,
+    )
+    semantic = [n for n in state.graph.nodes if n.node_type == "generation_rule"]
+    assert len(semantic) == (2 if arm == "without_integration" else 1)
+    assert {
+        e.from_node_id for e in state.graph.edges if e.edge_type == "grounded_on"
+    } == set()
+    assert audit["output_edges"] == len(state.graph.edges)

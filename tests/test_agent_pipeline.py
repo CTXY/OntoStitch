@@ -2,7 +2,14 @@ import json
 from pathlib import Path
 
 from conftest import make_rule
-from test_agent_runtime import ScriptModel, call, finish, message
+from test_agent_runtime import (
+    ScriptModel,
+    assessment_reply,
+    call,
+    finish,
+    message,
+    read_case_context,
+)
 from test_case_workflow import Validator
 
 from cortex.application.sql_training import QASqlTrainingRecord, SqlTrainingService
@@ -22,30 +29,19 @@ def test_default_application_runs_case_graph_and_merges_valid_incoming(case_grap
     _store, database, workspace = case_graph
 
     def create(messages):
-        system = messages[0].content
-        context = json.loads(
-            system.split("<case_context>\n", 1)[1].split("\n</case_context>", 1)[0]
-        )
+        context = read_case_context(messages)
         return message(
             call(
                 "edit_graph",
                 {
-                    "edit": {
-                        "edit_id": "direct",
-                        "expected_revision": context["working_revision"],
-                        "operations": [
-                            {
-                                "operation": "create",
-                                "node_id": make_rule().id,
-                                "asset": make_rule().model_dump(mode="json"),
-                            }
-                        ],
-                    }
+                    "edit_id": "direct",
+                    "expected_revision": context["working_revision"],
+                    "upserts": [make_rule().model_dump(mode="json")],
                 },
             )
         )
 
-    model = ScriptModel([create, finish()])
+    model = ScriptModel([create, finish(), assessment_reply])
     config = CortexConfig(
         database=SQLiteDatabaseConfig(path=Path(database.engine.url.database))
     )
@@ -91,7 +87,7 @@ def test_default_application_runs_case_graph_and_merges_valid_incoming(case_grap
     assert report.success, report.model_dump()
     assert report.passed == 1
     assert validator.generate_calls == 3
-    assert len(model._calls) == 2  # no legacy pre-extractor or optimizer calls
+    assert len(model._calls) == 3  # no legacy pre-extractor or optimizer calls
     assert {n.node_type for n in state.graph.nodes} >= {
         "table",
         "column",
@@ -122,31 +118,19 @@ def test_resource_shutdown_failure_does_not_erase_retained_assets_or_publish_pas
     store, database, workspace = case_graph
 
     def create(messages):
-        context = json.loads(
-            messages[0]
-            .content.split("<case_context>\n", 1)[1]
-            .split("\n</case_context>", 1)[0]
-        )
+        context = read_case_context(messages)
         return message(
             call(
                 "edit_graph",
                 {
-                    "edit": {
-                        "edit_id": "direct",
-                        "expected_revision": context["working_revision"],
-                        "operations": [
-                            {
-                                "operation": "create",
-                                "node_id": make_rule().id,
-                                "asset": make_rule().model_dump(mode="json"),
-                            }
-                        ],
-                    }
+                    "edit_id": "direct",
+                    "expected_revision": context["working_revision"],
+                    "upserts": [make_rule().model_dump(mode="json")],
                 },
             )
         )
 
-    model = ScriptModel([create, finish()])
+    model = ScriptModel([create, finish(), assessment_reply])
 
     @contextmanager
     def resources():

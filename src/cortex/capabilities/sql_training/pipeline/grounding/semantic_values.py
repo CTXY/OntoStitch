@@ -37,6 +37,7 @@ def materialize_semantic_mapping_dimension_values(
     table_schema: dict[str, Any],
     database: DatabaseConnector | None,
     source_id: str,
+    existing_values: list[NodeAsset] | None = None,
 ) -> tuple[list[NodeAsset], list[NodeAsset]]:
     """Build DB-verified value nodes for exact Semantic Mapping predicates.
 
@@ -48,6 +49,9 @@ def materialize_semantic_mapping_dimension_values(
         return assets, []
     normalized_assets: list[NodeAsset] = []
     items: list[dict[str, Any]] = []
+    existing_catalog = physical_reference_catalog(
+        table_schema, dimension_values=existing_values or []
+    )
     for asset in assets:
         if asset.node_type != NodeType.SEMANTIC_MAPPING:
             normalized_assets.append(asset)
@@ -55,6 +59,8 @@ def materialize_semantic_mapping_dimension_values(
         normalized = normalize_semantic_mapping_candidate(
             asset,
             table_schema={key: str(value) for key, value in table_schema.items()},
+            physical_catalog=existing_catalog,
+            dialect=database.get_dialect(),
         )
         normalized_assets.append(normalized)
         for obligation in extract_semantic_mapping_value_obligations(
@@ -79,7 +85,6 @@ def materialize_semantic_mapping_dimension_values(
                     "table_name": table_name,
                     "column_name": column_name,
                     "value": matches[0],
-                    "id_value": obligation.literal,
                     "aliases": (
                         [obligation.literal]
                         if str(matches[0]) != obligation.literal
@@ -108,6 +113,18 @@ def materialize_semantic_mapping_dimension_values(
         )
         for asset in generated
     ]
+    verified_catalog = physical_reference_catalog(
+        table_schema, dimension_values=[*(existing_values or []), *generated]
+    )
+    normalized_assets = [
+        normalize_semantic_mapping_candidate(
+            asset, table_schema=table_schema, physical_catalog=verified_catalog,
+            dialect=database.get_dialect(),
+        )
+        if asset.node_type == NodeType.SEMANTIC_MAPPING
+        else asset
+        for asset in normalized_assets
+    ]
     return normalized_assets, generated
 
 
@@ -121,20 +138,24 @@ def extract_semantic_mapping_value_obligations(
     physical_catalog = physical_reference_catalog(table_schema)
     obligations: list[ColumnLiteralObligation] = []
     seen: set[tuple[str, str, str]] = set()
-    for target in asset.properties.targets:
+    for expression in asset.properties.target_expressions.values():
         try:
             tree = sqlglot.parse_one(
-                f"SELECT 1 WHERE {target.sql_expression}",
+                f"SELECT 1 WHERE {expression}",
                 dialect="sqlite",
             )
-        except Exception:  # noqa: BLE001
-            continue
+        except (sqlglot.errors.ParseError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid Concept SQL expression: {expression}"
+            ) from exc
         if tree is None:
             continue
         tree, _ = coerce_sqlite_dqs_literals(tree, physical_catalog=physical_catalog)
         for predicate in tree.walk():
             if isinstance(predicate, expressions.EQ):
-                pair = _column_literal_pair(predicate, physical_catalog=physical_catalog)
+                pair = _column_literal_pair(
+                    predicate, physical_catalog=physical_catalog
+                )
                 if pair is not None:
                     column_ref, literal = pair
                     literal_node = (
@@ -262,7 +283,9 @@ def _exact_like_column_literal(
         return None
     left: Any = predicate.left
     right: Any = predicate.right
-    if not isinstance(left, expressions.Column) or not isinstance(right, expressions.Literal):
+    if not isinstance(left, expressions.Column) or not isinstance(
+        right, expressions.Literal
+    ):
         return None
     literal = str(right.this)
     if not _is_exact_like_literal(literal):
@@ -289,17 +312,6 @@ def _column_reference(
 
 
 def _merge_dimension_values(assets: list[NodeAsset]) -> list[NodeAsset]:
-    by_id: dict[str, NodeAsset] = {}
-    for asset in assets:
-        existing = by_id.get(asset.id)
-        if existing is None:
-            by_id[asset.id] = asset
-            continue
-        sources = {
-            (source.source_type.value, source.source_id): source
-            for source in [*existing.sources, *asset.sources]
-        }
-        by_id[asset.id] = asset.model_copy(
-            update={"sources": [sources[key] for key in sorted(sources)]}
-        )
-    return [by_id[asset_id] for asset_id in sorted(by_id)]
+    from cortex.capabilities.sql_training.graph.values import merge_verified_values
+
+    return merge_verified_values([], assets)

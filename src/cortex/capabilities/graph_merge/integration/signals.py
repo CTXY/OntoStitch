@@ -1,0 +1,160 @@
+"""Recall inspectable patterns, never decide identity/conflict/redundancy."""
+
+from collections import defaultdict
+
+import sqlglot
+from sqlglot import exp
+
+from cortex.capabilities.graph_merge.integration.context import PHYSICAL
+
+
+def projected_columns(sql, nodes, dialect=None):
+    """Only unambiguous direct SELECT expressions; not general SQL lineage."""
+    try:
+        tree = sqlglot.parse_one(sql, dialect=dialect)
+    except (ValueError, sqlglot.errors.SqlglotError):
+        return set()
+    if not isinstance(tree, exp.Select):
+        return set()
+    from cortex.capabilities.sql_training.extractors.sql_normalizer import (
+        physical_column_sources,
+    )
+
+    by_name = {}
+    table_columns = defaultdict(set)
+    for n in nodes.values():
+        if n.node_type == "column":
+            owner = nodes.get(n.properties.get("table_ref"))
+            if owner:
+                table = owner.properties.get("table_name")
+                column = n.properties.get("column_name")
+                by_name[table, column] = n.id
+                table_columns[table].add(column)
+    lineage = physical_column_sources(tree, dict(table_columns))
+    return {
+        by_name[pair]
+        for projection in tree.expressions
+        for col in projection.find_all(exp.Column)
+        if (pair := lineage.get(id(col))) in by_name
+    }
+
+
+def inspection_signals(context, preview):
+    nodes = {n.id: n for n in preview.state.graph.nodes}
+    edges = [
+        e
+        for e in preview.state.graph.edges
+        if nodes[e.from_node_id].node_type not in PHYSICAL
+        and nodes[e.to_node_id].node_type not in PHYSICAL
+    ]
+    signals = []
+
+    def add(kind, keys, **details):
+        signals.append(
+            {"id": kind + ":" + ",".join(sorted(keys)), "kind": kind, **details}
+        )
+
+    pairs = defaultdict(list)
+    neighbors = defaultdict(list)
+    adj = defaultdict(list)
+    for e in edges:
+        pairs[e.from_node_id, e.to_node_id].append(e)
+        neighbors[e.from_node_id, e.edge_type].append(e)
+        adj[e.from_node_id].append(e)
+    for (a, b), group in sorted(pairs.items()):
+        if len(group) > 1:
+            add("parallel_assertions", [a, b], edge_ids=[e.id for e in group])
+    triangles = defaultdict(set)
+    for e in edges:
+        for second in adj[e.to_node_id]:
+            if e.from_node_id == second.to_node_id:
+                continue
+            direct = pairs.get((e.from_node_id, second.to_node_id), [])
+            if direct:
+                triangles[e.from_node_id, e.to_node_id, second.to_node_id].update(
+                    [e.id, second.id, *[d.id for d in direct]]
+                )
+    for chain, ids in sorted(triangles.items()):
+        add("triangle", list(chain), node_ids=list(chain), edge_ids=sorted(ids))
+    for (owner, predicate), group in sorted(neighbors.items()):
+        if (
+            nodes[owner].node_type in {"concept", "event"}
+            and len({e.to_node_id for e in group}) > 1
+        ):
+            add(
+                "same_role_neighbors",
+                [owner, predicate],
+                edge_ids=[e.id for e in group],
+            )
+    rules = [n for n in nodes.values() if n.node_type == "generation_rule"]
+    targets = defaultdict(set)
+    for e in edges:
+        if e.edge_type == "applies_to":
+            targets[e.from_node_id].add(e.to_node_id)
+    for i, a in enumerate(rules):
+        for b in rules[i + 1 :]:
+            if targets[a.id] & targets[b.id] and set(
+                a.properties.get("operation_intents", [])
+            ) & set(b.properties.get("operation_intents", [])):
+                add(
+                    "related_decisions",
+                    [a.id, b.id],
+                    node_ids=[a.id, b.id],
+                    shared_operands=sorted(targets[a.id] & targets[b.id]),
+                )
+    choices = defaultdict(dict)
+    for evidence in context.evidence:
+        selected = projected_columns(
+            evidence.content.get("sql", ""),
+            context.nodes,
+            getattr(context, "sql_dialect", None),
+        )
+        if not selected:
+            continue
+        for source in context.raw_nodes.values():
+            if source.node_type != "concept" or not any(
+                s.source_id == evidence.source.source_id for s in source.sources
+            ):
+                continue
+            canonical = preview.node_map.get(source.id, source.id)
+            if canonical not in nodes:
+                continue
+            refs = {
+                context.physical_map.get(ref, ref)
+                for group in source.properties.get("targets", [])
+                for ref in group
+            }
+            chosen = selected & refs
+            if chosen:
+                choices[canonical][evidence.source.source_id] = {
+                    "source_id": evidence.source.source_id,
+                    "source_node_id": source.id,
+                    "selected_physical_inputs": sorted(chosen),
+                    "evidence_id": evidence.id,
+                }
+    for canonical, variants in sorted(choices.items()):
+        if len({tuple(v["selected_physical_inputs"]) for v in variants.values()}) > 1:
+            add(
+                "source_selection_variants",
+                [canonical],
+                node_ids=[canonical],
+                variants=list(variants.values()),
+            )
+    values = defaultdict(list)
+    for e in preview.state.graph.edges:
+        target = nodes[e.to_node_id]
+        if (
+            e.edge_type == "grounded_on"
+            and nodes[e.from_node_id].node_type == "concept"
+            and target.node_type == "dimension_value"
+        ):
+            values[target.properties["column_ref"]].append(
+                {"concept": e.from_node_id, "value": target.id}
+            )
+    for column, items in sorted(values.items()):
+        if (
+            len({x["value"] for x in items}) > 1
+            and len({x["concept"] for x in items}) > 1
+        ):
+            add("value_concepts", [column], column_id=column, members=items)
+    return signals

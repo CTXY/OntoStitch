@@ -8,21 +8,21 @@ from cortex.capabilities.sql_training.artifacts.workspace import (
     serialize_asset_envelope,
 )
 from cortex.capabilities.sql_training.core.enums import NodeType
-from cortex.capabilities.sql_training.graph.adapter import NodeGraphAdapter
-from cortex.capabilities.sql_training.graph.case import project_case_edges
+from cortex.capabilities.sql_training.graph.case import project_case_graph
 from cortex.capabilities.sql_training.graph.fingerprints import ontology_fingerprint
-from cortex.capabilities.sql_training.graph.relationships import (
-    compile_all_relationships,
+from cortex.capabilities.sql_training.graph.nodes import (
+    build_graph,
+    build_incoming_graph,
 )
-from cortex.schema import load_root_schema, validate_graph_state
+from cortex.schema import GraphEdge, load_root_schema, validate_graph_state
 
 from .io import fingerprint, read_json, write_json
 
-SEMANTIC = (NodeType.CONCEPT, NodeType.METRIC, NodeType.GENERATION_RULE)
+SEMANTIC = (NodeType.CONCEPT, NodeType.EVENT, NodeType.METRIC, NodeType.GENERATION_RULE)
 PHYSICAL = (NodeType.TABLE, NodeType.COLUMN, NodeType.DIMENSION_VALUE)
 
 
-def validate_assets(rows, physical_workspace: Path):
+def validate_assets(rows, physical_workspace: Path, *, explicit_edges=()):
     assets = [deserialize_asset_envelope(row) for row in rows]
     if len({a.id for a in assets}) != len(assets):
         raise ValueError("duplicate semantic asset IDs inside one Case")
@@ -33,17 +33,10 @@ def validate_assets(rows, physical_workspace: Path):
         for kind in PHYSICAL
         for a in Workspace(physical_workspace).read_draft_assets(kind)
     ]
-    ids = {a.id for a in [*physical, *assets]}
-    missing = sorted({ref for a in assets for ref in a.references() if ref not in ids})
-    if missing:
-        raise ValueError(f"unresolved asset references: {missing}")
-    compilation = compile_all_relationships(
-        [*physical, *assets], endpoint_ids={i: i for i in ids}
+    graph = build_graph(
+        physical, Workspace(physical_workspace).read_catalog_edges(), load_root_schema()
     )
-    if compilation.diagnostics:
-        raise ValueError(
-            f"relationship compilation diagnostics: {compilation.diagnostics}"
-        )
+    project_case_graph(assets, physical_graph=graph, explicit_edges=explicit_edges)
     return assets
 
 
@@ -56,6 +49,8 @@ def write_case(
     result: dict,
     provenance: dict,
     case_index: int,
+    physical_workspace: Path,
+    explicit_edges=(),
 ):
     sid = record["source_id"]
     if not sid or any(
@@ -65,7 +60,14 @@ def write_case(
         raise ValueError(f"unsafe Case ID: {sid}")
     case = root / "cases" / sid
     rows = [serialize_asset_envelope(a) for a in assets]
-    edges = project_case_edges(assets)
+    physical = Workspace(physical_workspace)
+    graph = build_graph(
+        [a for kind in PHYSICAL for a in physical.read_draft_assets(kind)],
+        physical.read_catalog_edges(),
+        load_root_schema(),
+    )
+    authored = tuple(GraphEdge.model_validate(e) for e in (explicit_edges or result.get("draft_edges", ())))
+    edges = project_case_graph(assets, physical_graph=graph, explicit_edges=authored).edges
     if "draft_nodes" in result:
         raise ValueError("result metadata must not embed ontology assets")
     result_path = case / "result" / "result.json"
@@ -77,6 +79,7 @@ def write_case(
         "ontology_path": str(ontology_path.resolve()),
         "draft_node_ids": sorted(asset.id for asset in assets),
         "draft_node_count": len(assets),
+        "draft_edges": [e.model_dump(mode="json") for e in edges],
         "final_ontology_fingerprint": ontology_fingerprint(assets),
         "provenance": provenance,
     }
@@ -135,23 +138,25 @@ def finalize_collection(root: Path, *, spec: dict, arm: str, cases: list[dict]):
     }
     fragments = []
     for case in cases:
+        case_result = read_json(root / case["case_dir"] / "result" / "result.json")
+        authored = tuple(GraphEdge.model_validate(e) for e in case_result.get("draft_edges", ()))
         assets = validate_assets(
-            read_json(root / case["case_dir"] / "result" / "ontology.json"), physical
+            read_json(root / case["case_dir"] / "result" / "ontology.json"), physical,
+            explicit_edges=authored,
         )
-        fragments.append((case["source_id"], assets, project_case_edges(assets)))
+        fragments.append((case["source_id"], assets, authored))
     physical_assets = [
         asset
         for kind in PHYSICAL
         for asset in Workspace(physical).read_draft_assets(kind)
     ]
-    state, warnings = NodeGraphAdapter(Workspace(physical)).to_trace_incoming_state(
+    state = build_incoming_graph(
         load_root_schema(),
-        committed_assets=physical_assets,
-        case_fragments=fragments,
+        assets=physical_assets,
+        cases=fragments,
+        catalog_edges=Workspace(physical).read_catalog_edges(),
     )
     validate_graph_state(state, load_root_schema())
-    if warnings:
-        raise ValueError(f"pre-merge projection warnings: {warnings}")
     manifest["graph_structure_validation"] = "public_GraphState_schema_passed"
     write_json(root / "manifest.json", manifest)
     return manifest

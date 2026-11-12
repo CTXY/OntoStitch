@@ -20,10 +20,8 @@ from cortex.capabilities.sql_training.artifacts import (
 from cortex.capabilities.sql_training.artifacts.cases import load_case_assets
 from cortex.capabilities.sql_training.core.enums import NodeType, SourceType
 from cortex.capabilities.sql_training.core.ids import make_node_id
-from cortex.capabilities.sql_training.graph.adapter import NodeGraphAdapter
-from cortex.capabilities.sql_training.graph.case import project_case_edges
+from cortex.capabilities.sql_training.graph.nodes import build_incoming_graph
 from cortex.capabilities.sql_training.graph.physical import select_run_assets
-from cortex.capabilities.sql_training.llm import NodeLLMProvider
 from cortex.capabilities.sql_training.models import (
     ExampleProperties,
     NodeAsset,
@@ -35,8 +33,9 @@ from cortex.capabilities.sql_training.pipeline.values import DimensionValuePipel
 from cortex.capabilities.sql_training.runtime_config import SqlTrainingRuntimeConfig
 from cortex.config import CortexConfig
 from cortex.infrastructure.database import DatabaseConnector
+from cortex.infrastructure.progress import emit_progress
 from cortex.schema.graph import GraphEdge, GraphSpace, GraphState
-from cortex.schema.models import SchemaDefinition
+from cortex.schema.models import EdgeType, SchemaDefinition
 
 
 class SqlTrainingConfigurationError(ValueError):
@@ -88,6 +87,7 @@ class SqlTrainingCapability:
 
         try:
             if self.prepared_workspace is None:
+                emit_progress("phase", phase="introspecting")
                 ScanCatalogPipeline(self.runtime_config, database=self.database).run()
             else:
                 from cortex.capabilities.sql_training.artifacts.workspace import (
@@ -121,7 +121,6 @@ class SqlTrainingCapability:
             pipeline = self.pipeline_factory(
                 self.runtime_config,
                 model=self.llm,
-                llm_provider=NodeLLMProvider(self.llm),
                 validation_client=self.validation_client,
                 validation_client_factory=self.validation_client_factory,
                 case_resources_factory=(
@@ -142,7 +141,7 @@ class SqlTrainingCapability:
                 max_iterations=self.config.services.sql_training.max_iterations,
                 sql_timeout=self.config.services.sql_training.sql_timeout,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- preserve the run failure report
             raw_result = _fatal_result(workspace, exc)
 
         try:
@@ -157,20 +156,21 @@ class SqlTrainingCapability:
                 case_fragments,
                 existing_graph=existing_graph,
             )
-            state, adapter_warnings = NodeGraphAdapter(
-                workspace
-            ).to_trace_incoming_state(
+            state = build_incoming_graph(
                 schema,
-                committed_assets=run_assets,
-                case_fragments=case_fragments,
-                existing_edge_ids=(edge.id for edge in existing_graph.edges),
-                existing_nodes=existing_graph.nodes,
+                assets=run_assets,
+                cases=case_fragments,
+                case_relation_contracts={
+                    str(case["source_id"]): tuple(EdgeType.model_validate(item) for item in case.get("relation_contracts", ()))
+                    for case in raw_result.get("cases", ()) if case.get("asset_outcome") == "ready"
+                },
+                existing=existing_graph,
+                catalog_edges=workspace.read_catalog_edges(),
             )
-        except Exception as exc:
-            state = GraphState(graph=GraphSpace(), node_conflicts=())
-            adapter_warnings = ()
+        except Exception as exc:  # noqa: BLE001 -- preserve the run failure report
+            state = GraphState(graph=GraphSpace())
             raw_result = _append_fatal_error(raw_result, exc)
-        report = _report(raw_result, workspace, adapter_warnings, training_set)
+        report = _report(raw_result, workspace, training_set)
         return state, report
 
     @contextmanager
@@ -270,7 +270,10 @@ def _merge_eligible_case_fragments(
             raise ValueError(
                 f"merge-eligible Trace case {source_id!r} has no draft assets"
             )
-        fragments.append((source_id, assets, project_case_edges(assets)))
+        edges = tuple(
+            GraphEdge.model_validate(row) for row in case.get("draft_edges", ())
+        )
+        fragments.append((source_id, assets, edges))
     return tuple(fragments)
 
 
@@ -306,7 +309,6 @@ def _with_case_referenced_dimension_values(
 def _report(
     result: dict[str, Any],
     workspace: Workspace,
-    adapter_warnings: tuple[str, ...],
     training_set: tuple[QASqlTrainingRecord, ...],
 ) -> SqlTrainingEvaluationReport:
     raw_cases = list(result.get("cases") or [])
@@ -318,9 +320,7 @@ def _report(
     total = len(cases)
     passed = sum(case.passed for case in cases)
     errors = tuple(str(item) for item in result.get("errors") or [])
-    warnings = (
-        tuple(str(item) for item in result.get("warnings") or []) + adapter_warnings
-    )
+    warnings = tuple(str(item) for item in result.get("warnings") or [])
     fatal = bool(result.get("fatal")) or bool(errors and not cases)
     return SqlTrainingEvaluationReport(
         total=total,
@@ -383,6 +383,7 @@ def _case_result(
         fatal=fatal,
         ontology_updated=bool(value.get("ontology_updated")),
         failed_closed=failed_closed,
+        accepted_event_ids=tuple(value.get("accepted_event_ids") or []),
         accepted_metric_ids=tuple(value.get("accepted_metric_ids") or []),
         accepted_generation_rule_ids=tuple(value.get("accepted_rule_ids") or []),
         committed_semantic_mapping_ids=tuple(
