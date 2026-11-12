@@ -154,9 +154,53 @@ class IncrementalIntegrationAgent:
                 }
             return raw_tools["read_guidance"].invoke({"topic": topic})
 
+        @tool
+        def inspect_pending(ids: list[str] | None = None) -> dict:
+            """Read saved pending objects/changes by ID, including invalid objects absent from candidate. No IDs returns a small directory; pending is not a validated graph."""
+            batch = getattr(context, "active_batch", None)
+            if batch is None:
+                return {"error": "No active batch"}
+            from cortex.capabilities.graph_merge.integration.submission import edit_key
+
+            result = {
+                "revision": batch.revision,
+                "view": "pending",
+                "candidate_available": batch.preview is not None,
+            }
+            if not ids:
+                result["edits"] = [
+                    {
+                        "kind": edit_key(e)[0],
+                        "id": edit_key(e)[1],
+                        "operation": e["operation"],
+                    }
+                    for e in batch.pending.values()
+                ]
+                result["relation_contract_ids"] = list(batch.contracts)
+            else:
+                result["edits"] = [
+                    e for e in batch.pending.values() if edit_key(e)[1] in ids
+                ]
+                result["changes"] = [
+                    c
+                    for c in batch.changes
+                    if any(r["id"] in ids for r in c["before"] + c["after"])
+                ]
+                result["relation_contracts"] = [
+                    c.model_dump(mode="json")
+                    for k, c in batch.contracts.items()
+                    if k in ids
+                ]
+                result["edge_merges"] = [
+                    m.model_dump(mode="json")
+                    for m in batch.edge_merges.values()
+                    if m.survivor_id in ids or set(m.source_ids) & set(ids)
+                ]
+            return result
+
         read_tools = [inspect_graph, raw_tools["read_evidence"], read_guidance]
         if phase in {"consolidate", "reconcile"}:
-            read_tools.append(extend_task)
+            read_tools.extend([extend_task, inspect_pending])
         lookup = {t.name: t for t in read_tools}
         prompt_name = (
             "integration_identity.md"
@@ -240,7 +284,7 @@ class IncrementalIntegrationAgent:
                             result = lookup[call["name"]].invoke(call["args"])
                         else:
                             raise ValueError("Unknown tool")
-                    except (ValueError, TypeError, KeyError) as exc:
+                    except (ValueError, TypeError) as exc:
                         result = {
                             "status": "rejected",
                             "error": str(exc),

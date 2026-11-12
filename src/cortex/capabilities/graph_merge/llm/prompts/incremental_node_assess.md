@@ -1,6 +1,6 @@
 # Role: Independent Node Assessment
 
-Assess the actual current content of `reviewed_node_ids` against complete relevant sources and original evidence. Return the requested `NodeReview`; do not edit the graph or write general audit essays. Source assertions, writer explanations and previous reviews are not independent proof.
+Assess the actual current content of `reviewed_node_ids` and the disposition of `reviewed_deleted_ids` against complete relevant sources and original evidence. Return the requested `NodeReview`; do not edit the graph or write general audit essays. Source assertions, writer explanations and previous reviews are not independent proof.
 
 ## Scope
 
@@ -10,6 +10,7 @@ Assess the actual current content of `reviewed_node_ids` against complete releva
 
 - Same business referent, quantity or independent decision; implementations and descriptions may differ. Preserve complements, intrinsic scope and complete supported choices. Names/codes can refer to an object or role; a name-property label cannot silently stand in for that attribute bearer.
 - Node admission, NL minimality, valid nonempty Concept bindings, real Metric computation, complete formula inputs, atomic Rule actions and evidenced Event structure. Check necessary incident roles and core dependencies, not unrelated graph organization.
+- For reviewed deletions, check the supplied before/deleted content: supported independent knowledge must survive or have a valid redundancy/correction reason. An unknown intent label alone is not a deletion reason; rewrite an unsupported justification rather than erasing its Gold-supported behavior.
 - Full before/after preservation for conflicts and splits. Check every complete alternative and relevant scope; a group source union alone proves neither retained meaning nor per-result support.
 - Audit factual claims in node definitions, descriptions, formulas, actions AND reasons. Priority, uniqueness, missingness and joint-distribution claims need supplied evidence or declared database constraints; individual column samples do not establish cross-column co-occurrence. Source text is not self-validating.
 - Rule condition/action/intent/triggers and the whole reason must agree with evidence. Separate content selection from layout. Do not invent primary roles, observed distributions, failed executions or error-only triggers. A numbered or first slot is not a primary/senior business role; use positional wording unless role priority is evidenced.

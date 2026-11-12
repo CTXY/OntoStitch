@@ -646,6 +646,12 @@ def build_task_context(
         ref for key in selected_nodes for ref in references(nodes[key])
     }
     lookup = {**context.nodes, **nodes}
+    physical_ids.update(
+        ref
+        for key in task.targets
+        if key in old_nodes and key not in nodes
+        for ref in references(old_nodes[key])
+    )
     physical_ids = _physical_closure(physical_ids, lookup)
     source_nodes, source_edges = set(), set()
     missing_sources = []
@@ -709,6 +715,9 @@ def build_task_context(
     )
     evidence_ids = _check_source_ids(task.checks)
     evidence_objects = [nodes[k] for k in root_nodes] + [edges[k] for k in root_edges]
+    evidence_objects += [
+        old_nodes[k] for k in task.targets if k in old_nodes and k not in nodes
+    ]
     evidence_objects += [context.raw_nodes[k] for k in primary_source_nodes] + [
         context.raw_edges[k] for k in source_edges
     ]
@@ -736,6 +745,11 @@ def build_task_context(
         context.raw_nodes[k].node_type
         for k in primary_source_nodes
         if context.raw_nodes[k].node_type not in PHYSICAL
+    }
+    target_types |= {
+        old_nodes[k].node_type
+        for k in task.targets
+        if k in old_nodes and old_nodes[k].node_type not in PHYSICAL
     }
     from cortex.capabilities.sql_training.llm.generation_rule_taxonomy import (
         operation_registry,
@@ -857,6 +871,13 @@ def build_task_context(
     if task.groups:
         payload["matched_groups"] = list(task.groups)
     if task.phase == "node_assess":
+        payload["reviewed_deleted_ids"] = sorted(
+            k
+            for k in task.targets
+            if k in old_nodes
+            and k not in nodes
+            and old_nodes[k].node_type not in PHYSICAL
+        )
         payload["reviewed_node_ids"] = sorted(
             k for k in root_nodes if nodes[k].node_type not in PHYSICAL
         )

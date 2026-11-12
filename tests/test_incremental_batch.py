@@ -109,3 +109,230 @@ def test_rejected_installed_contract_is_not_a_poisoned_pending_operation():
         batch.submit(BatchResult(relation_contracts=(changed,)))
     batch.submit(BatchResult())
     assert batch.preview.graph.relation_contracts == batch.seed.graph.relation_contracts
+
+
+def test_deleting_an_owner_before_retargeting_its_edge_is_atomic():
+    from test_graph_integration import edge
+
+    incoming = state(
+        [*catalog(), concept("A", "a"), concept("B", "b"), concept("C", "c")],
+        [edge("feature", "A", "B", "has_feature")],
+    )
+    ctx = IntegrationContext(state(), incoming, load_root_schema())
+    a, b, c = (ctx.input_node_map[k] for k in ["A", "B", "C"])
+    eid = ctx.input_edge_map["feature"]
+    changed = (
+        ctx.edges[eid].model_copy(update={"from_node_id": c}).model_dump(mode="json")
+    )
+    edits = [
+        {"operation": "delete_node", "node_id": a},
+        {"operation": "update_edge", "edge": changed},
+    ]
+    outputs = []
+    for ordering in (edits, list(reversed(edits))):
+        batch = ActiveBatch(ctx, ctx.union_state(), targets={a, b, c})
+        batch.submit(
+            BatchResult.model_validate(
+                {
+                    "edits": ordering,
+                    "changes": [
+                        {
+                            "before": [{"kind": "node", "id": a}],
+                            "after": [],
+                            "explanation": "Discard a mistaken source object; retain the corrected feature relation.",
+                        }
+                    ],
+                }
+            )
+        )
+        outputs.append(batch.preview)
+    assert outputs[0] == outputs[1]
+
+
+def test_new_conflict_owner_survives_replaying_its_saved_patch():
+    from cortex.schema import NodeContent
+
+    ctx, batch, a, b = setup_batch()
+    owner = ctx.nodes[a].model_dump(mode="json")
+    owner["id"] = "combined"
+    owner["sources"] = []
+    alts = []
+    for key, label in [(a, "first"), (b, "second")]:
+        n = ctx.nodes[key]
+        alts.append(
+            {
+                "alternative_id": label,
+                "content": NodeContent(
+                    name="Shared term",
+                    description=None,
+                    aliases=[],
+                    tags=[],
+                    properties=n.properties,
+                ).model_dump(mode="json"),
+                "sources": [s.model_dump(mode="json") for s in n.sources],
+            }
+        )
+    result = BatchResult.model_validate(
+        {
+            "edits": [
+                {"operation": "delete_node", "node_id": a},
+                {"operation": "delete_node", "node_id": b},
+                write(owner, "create_node"),
+            ],
+            "conflicts": [
+                {
+                    "node_id": "combined",
+                    "alternatives": alts,
+                    "conflict_points": [
+                        {
+                            "point_id": "mapping",
+                            "aspect": "Representation choice",
+                            "description": "Competing source implementations",
+                            "choices": [
+                                {
+                                    "alternative_ids": ["first"],
+                                    "statement": "Use the first representation.",
+                                },
+                                {
+                                    "alternative_ids": ["second"],
+                                    "statement": "Use the second representation.",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "changes": [
+                {
+                    "before": [{"kind": "node", "id": a}, {"kind": "node", "id": b}],
+                    "after": [{"kind": "node", "id": "combined"}],
+                    "explanation": "Preserve the supplied choices as complete sourced alternatives.",
+                }
+            ],
+        }
+    )
+    batch.submit(result)
+    assert (
+        len(
+            next(
+                n for n in batch.preview.graph.nodes if n.id == "combined"
+            ).alternatives
+        )
+        == 2
+    )
+    before = batch.preview
+    batch.submit(BatchResult())
+    assert batch.preview == before
+
+
+def test_new_edge_survivor_copies_current_sources_without_inventing_before_ref():
+    from test_graph_integration import edge
+
+    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
+
+    first = edge("e1", "A", "B", "has_feature").model_copy(
+        update={"sources": concept("A", "a").sources}
+    )
+    second = edge("e2", "A", "B", "has_feature").model_copy(
+        update={
+            "properties": {"description": "The supported feature from another source."},
+            "sources": concept("B", "b").sources,
+        }
+    )
+    ctx = IntegrationContext(
+        state(),
+        state([*catalog(), concept("A", "a"), concept("B", "b")], [first, second]),
+        load_root_schema(),
+    )
+    a, b = (ctx.input_node_map[k] for k in ["A", "B"])
+    e1, e2 = (ctx.input_edge_map[k] for k in ["e1", "e2"])
+    batch = ActiveBatch(ctx, ctx.union_state(), targets={a, b})
+    new = (
+        ctx.edges[e1]
+        .model_copy(update={"id": "new_edge", "sources": ()})
+        .model_dump(mode="json")
+    )
+    result = batch.submit(
+        BatchResult.model_validate(
+            {
+                "edits": [{"operation": "create_edge", "edge": new}],
+                "edge_merges": [
+                    {
+                        "source_ids": [e1, e2, "new_edge"],
+                        "survivor_id": "new_edge",
+                        "explanation": "These are the same compatible feature assertion.",
+                    }
+                ],
+            }
+        )
+    )
+    ledger = LineageIndex(ctx, initial_edge_map=batch.edge_aliases)
+    ledger.observe(batch.seed, batch.preview, result.changes)
+    assert all(r.id != "new_edge" for change in result.changes for r in change.before)
+    final = next(e for e in batch.preview.graph.edges if e.id == "new_edge")
+    assert set(final.sources) == set(first.sources) | set(second.sources)
+    assert not {e1, e2} & {e.id for e in batch.preview.graph.edges}
+
+
+def test_alias_projection_does_not_assign_new_evidence_to_an_unselected_conflict_branch():
+    from cortex.application.ontology_graph import GraphManager
+    from cortex.capabilities.graph_merge.integration.batch import alias_view
+    from cortex.schema import (
+        ConflictPoint,
+        GraphSpace,
+        GraphState,
+        NodeContent,
+        SourceReference,
+    )
+
+    ctx, _batch, a, b = setup_batch()
+    variants = []
+    for key, label in [(a, "first"), (b, "second")]:
+        n = ctx.nodes[key]
+        variants.append(
+            (
+                label,
+                NodeContent(
+                    name="Shared term",
+                    description=None,
+                    aliases=[label],
+                    tags=[],
+                    properties=n.properties,
+                ),
+                n.sources,
+            )
+        )
+    point = ConflictPoint.model_validate(
+        {
+            "point_id": "choice",
+            "aspect": "Representation",
+            "description": "The supported implementations differ.",
+            "choices": [
+                {"alternative_ids": ["first"], "statement": "Use first."},
+                {"alternative_ids": ["second"], "statement": "Use second."},
+            ],
+        }
+    )
+    owner, _ = GraphManager.compact_conflict(
+        ctx.nodes[a],
+        variants,
+        consolidation_status="semantic_conflict",
+        conflict_points=(point,),
+    )
+    incoming = ctx.nodes[a].model_copy(
+        update={"id": "new_input", "sources": (SourceReference(source_id="third"),)}
+    )
+    base = GraphState(
+        graph=GraphSpace(
+            nodes=(
+                *[n for n in ctx.nodes.values() if n.id not in {a, b}],
+                owner,
+                incoming,
+            ),
+            edges=tuple(ctx.edges.values()),
+        )
+    )
+    preview, _ = alias_view(base, {"new_input": a})
+    current = next(n for n in preview.graph.nodes if n.id == a)
+    assert current.sources == owner.sources and current.aliases == []
+    assert current.alternatives == owner.alternatives

@@ -304,6 +304,7 @@ class IncrementalGraphIntegrationEngine:
         before = self.current
         batch = ActiveBatch(ctx, before, targets=task.targets, aliases=aliases)
         ctx.active_task = task
+        ctx.active_batch = batch
         self.open_tasks = [
             {"id": task.id, "phase": task.phase, "targets": sorted(task.targets)}
         ]
@@ -464,8 +465,26 @@ class IncrementalGraphIntegrationEngine:
             payload["rationale_scope"] = (
                 "Check these retained Rules and any Rule meaning you actually change; sources-only maintenance needs no repeated reason review."
             )
-            if batch.pending:
-                payload["pending_edits"] = list(batch.pending.values())
+            if batch.pending or batch.changes or batch.contracts:
+                from cortex.capabilities.graph_merge.integration.submission import (
+                    edit_key,
+                )
+
+                payload["saved_patch"] = {
+                    "edits": [
+                        {
+                            "kind": edit_key(e)[0],
+                            "id": edit_key(e)[1],
+                            "operation": e["operation"],
+                        }
+                        for e in batch.pending.values()
+                    ],
+                    "changes": batch.changes,
+                    "relation_contract_ids": sorted(batch.contracts),
+                    "edge_merges": [
+                        m.model_dump(mode="json") for m in batch.edge_merges.values()
+                    ],
+                }
             ctx.output_validator = batch.submit
             result = self.agent.invoke(task.phase, ctx, payload)
             # Injected test agents use the same validation path.
@@ -482,6 +501,11 @@ class IncrementalGraphIntegrationEngine:
             # Node consolidation always receives independent assessment. Graph
             # structure is self-reviewed; semantic/core dependency edits reopen A.
             review_ids = set(impact["targets"])
+            review_ids |= {
+                key
+                for key in delta(before, candidate)["nodes"]["deleted"]
+                if _nodes(before)[key].node_type not in PHYSICAL
+            }
             for check in task.checks:
                 if check["kind"] in {"related_decisions", "source_selection_variants"}:
                     review_ids |= {
@@ -500,6 +524,7 @@ class IncrementalGraphIntegrationEngine:
                     review_ids,
                     groups=task.groups,
                     checks=task.checks,
+                    feedback=list(task.feedback),
                 )
                 reviewpayload = build_task_context(
                     ctx,

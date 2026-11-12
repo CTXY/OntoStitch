@@ -96,8 +96,12 @@ def alias_view(state, aliases):
         first = merged[key]
         merged[key] = first.model_copy(
             update={
-                "sources": tuple(dict.fromkeys((*first.sources, *n.sources))),
-                "aliases": list(
+                "sources": first.sources
+                if first.alternatives
+                else tuple(dict.fromkeys((*first.sources, *n.sources))),
+                "aliases": first.aliases
+                if any("aliases" in a.overrides for a in first.alternatives)
+                else list(
                     dict.fromkeys(
                         [
                             *first.aliases,
@@ -165,7 +169,12 @@ class ActiveBatch:
                 kept_changes.append(c)
         self.changes = kept_changes
         for edit in data["edits"]:
-            key = edit_key(edit)
+            try:
+                key = edit_key(edit)
+            except KeyError as exc:
+                raise ValueError(
+                    f"{edit['operation']} requires the object id inside node/edge"
+                ) from exc
             old = self.pending.get(key)
             if (
                 old
@@ -206,11 +215,21 @@ class ActiveBatch:
                 raise ValueError(
                     f"Installed predicate {contract.id} cannot be redefined. The conflicting definition was NOT saved; reuse its ID without resending a contract, or use a new predicate ID for a different meaning. Installed contract: {installed[contract.id].model_dump_json(exclude_defaults=True)}"
                 )
+            missing = [
+                field
+                for field in ("direction_semantics", "evidence_requirement")
+                if not getattr(contract, field)
+            ]
+            if contract.id not in installed and missing:
+                raise ValueError(
+                    f"New contract {contract.id} requires all of {missing}; incomplete definition was not saved"
+                )
             self.contracts[contract.id] = contract
         nodes = {n.id: n for n in self.seed.graph.nodes}
         edges = {e.id: e for e in self.seed.graph.edges}
         source_nodes = {n.id: n for n in self.base.graph.nodes}
         source_edges = {e.id: e for e in self.base.graph.edges}
+        physical_ids = {n.id for n in self.seed.graph.nodes if n.node_type in PHYSICAL}
         edits = list(self.pending.values())
         created_nodes = {
             e["node"]["id"] for e in edits if e["operation"] == "create_node"
@@ -236,7 +255,7 @@ class ActiveBatch:
                 kind == "edge"
                 and previous
                 and all(
-                    nodes[k].node_type in PHYSICAL
+                    k in physical_ids
                     for k in (previous.from_node_id, previous.to_node_id)
                 )
             ):
@@ -280,14 +299,34 @@ class ActiveBatch:
                     "A new business edge must involve a writable task target; extend task first"
                 )
             if kind == "edge" and all(
-                k in nodes and nodes[k].node_type in PHYSICAL
-                for k in (obj.from_node_id, obj.to_node_id)
+                k in physical_ids for k in (obj.from_node_id, obj.to_node_id)
             ):
                 raise ValueError("Cannot write physical catalogue edges")
             objects[key] = obj
-        changes = [Change.model_validate(c) for c in self.changes]
+        changes = []
+        for raw_change in self.changes:
+            change = Change.model_validate(raw_change)
+
+            def projected(ref):
+                mapping = self.aliases if ref.kind == "node" else self.edge_aliases
+                return ref.model_copy(update={"id": mapping.get(ref.id, ref.id)})
+
+            changes.append(
+                change.model_copy(
+                    update={
+                        "before": tuple(
+                            dict.fromkeys(projected(r) for r in change.before)
+                        ),
+                        "after": tuple(
+                            dict.fromkeys(projected(r) for r in change.after)
+                        ),
+                    }
+                )
+            )
         for conflict in result.conflicts:
-            if conflict.node_id not in nodes or conflict.node_id not in self.allowed:
+            if conflict.node_id not in nodes or conflict.node_id not in (
+                self.allowed | created_nodes
+            ):
                 raise ValueError("Conflict owner must be a current writable node")
             if any(not a.sources for a in conflict.alternatives):
                 raise ValueError(
@@ -305,7 +344,9 @@ class ActiveBatch:
             nodes[compact.id] = compact
             # Persist successful complete alternative input for local retry.
             self.pending[("node", compact.id)] = {
-                "operation": "set_conflict",
+                "operation": "create_node"
+                if compact.id in created_nodes
+                else "set_conflict",
                 "node": compact.model_dump(mode="json"),
             }
         for merge in result.edge_merges:
@@ -317,43 +358,52 @@ class ActiveBatch:
                 raise ValueError("Merge survivor must be a current writable edge")
             survivor = edges[merge.survivor_id]
             refs = list(survivor.sources)
-            before = [{"kind": "edge", "id": survivor.id}]
+            before = (
+                [{"kind": "edge", "id": survivor.id}]
+                if survivor.id in source_edges
+                else []
+            )
             archived = []
-            for source_id in merge.source_ids:
-                if source_id in edges and source_id not in self.allowed:
+            for source_id in dict.fromkeys(merge.source_ids):
+                if source_id in source_edges and source_id not in self.allowed:
                     raise ValueError(f"Outside task write scope: edge {source_id}")
-                original = edges.get(source_id) or self.context.raw_edges.get(source_id)
+                original = (
+                    source_edges.get(source_id)
+                    or self.context.raw_edges.get(source_id)
+                    or edges.get(source_id)
+                )
                 if original is None:
                     raise ValueError(f"Unknown source edge {source_id}")
                 refs.extend(original.sources)
-                if source_id in {e.id for e in self.base.graph.edges}:
+                if source_id in source_edges:
                     before.append({"kind": "edge", "id": source_id})
-                else:
+                elif source_id in self.context.raw_edges:
                     archived.append({"kind": "edge", "id": source_id})
                 if source_id != survivor.id:
                     edges.pop(source_id, None)
             edges[survivor.id] = survivor.model_copy(
                 update={"sources": tuple(dict.fromkeys(refs))}
             )
-            changes.append(
-                Change.model_validate(
-                    {
-                        "before": before,
-                        "after": [{"kind": "edge", "id": survivor.id}],
-                        "explanation": merge.explanation,
-                    }
-                )
-            )
-            if archived:
-                changes.append(
-                    Change.model_validate(
-                        {
-                            "before": archived,
-                            "after": [{"kind": "edge", "id": survivor.id}],
-                            "explanation": merge.explanation,
-                        }
+            after_ref = Element(kind="edge", id=survivor.id)
+            for group in (before, archived):
+                pending_refs = []
+                for ref in dict.fromkeys(Element.model_validate(r) for r in group):
+                    previous = [c for c in changes if ref in c.before]
+                    if previous:
+                        if any(after_ref not in c.after for c in previous):
+                            raise ValueError(
+                                f"Edge merge disagrees with the saved disposition for {ref.id}; replace the complete before-group with changes or withdraw it with remove_changes"
+                            )
+                    else:
+                        pending_refs.append(ref)
+                if pending_refs:
+                    changes.append(
+                        Change(
+                            before=tuple(pending_refs),
+                            after=(after_ref,),
+                            explanation=merge.explanation,
+                        )
                     )
-                )
         # Same-ID edits carry their own mechanical disposition; deletes do not.
         covered = {(e.kind, e.id) for c in changes for e in c.before}
         for kind, old, current in [

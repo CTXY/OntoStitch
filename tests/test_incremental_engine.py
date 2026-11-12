@@ -141,3 +141,79 @@ def test_no_edit_decision_judgment_still_requires_independent_content_review():
         )
     assert phases == ["reconcile", "node_assess"]
     assert engine.current == before and not engine.history
+
+
+def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
+    import pytest
+    from test_graph_integration import edge
+
+    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+    from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+    from cortex.schema import GraphNode
+
+    rule = GraphNode(
+        id="r",
+        node_type="generation_rule",
+        name="Presentation choice",
+        properties={
+            "condition": "A shared request",
+            "action": "Present the chosen components separately",
+            "reason": "Gold uses separate projected columns",
+            "operation_intents": ["output_field_layout"],
+            "triggers": {
+                "question": {"phrases": ["requested components"]},
+                "sql": {"columns": [], "operations": []},
+            },
+        },
+    )
+    incoming = state(
+        [*catalog(), concept("A", "a"), rule], [edge("er", "r", "A", "applies_to")]
+    )
+    ctx = IntegrationContext(state(), incoming, load_root_schema())
+    r, e = ctx.input_node_map["r"], ctx.input_edge_map["er"]
+    phases = []
+
+    class Agent:
+        def invoke(self, phase, context, payload):
+            phases.append(phase)
+            if phase == "reconcile":
+                result = BatchResult.model_validate(
+                    {
+                        "edits": [
+                            {"operation": "delete_edge", "edge_id": e},
+                            {"operation": "delete_node", "node_id": r},
+                        ],
+                        "changes": [
+                            {
+                                "before": [
+                                    {"kind": "node", "id": r},
+                                    {"kind": "edge", "id": e},
+                                ],
+                                "after": [],
+                                "explanation": "An unsupported deletion rationale to be independently checked.",
+                            }
+                        ],
+                    }
+                )
+                context.output_validator(result)
+                return result
+            assert payload["reviewed_deleted_ids"] == [r]
+            assert any(n["id"] == r for n in payload["deleted_nodes"])
+            return NodeReview(
+                verdict="revise",
+                issues=("The independent supported presentation choice was erased.",),
+            )
+
+    engine = IncrementalGraphIntegrationEngine(Agent(), max_rounds=0)
+    engine.ctx = ctx
+    engine.current = ctx.union_state()
+    engine.lineage = LineageIndex(ctx)
+    engine._revision = 0
+    engine.reviewed_sources = {}
+    engine.history = []
+    old = engine.current
+    with pytest.raises(IntegrationIncomplete):
+        engine._run_task(LocalTask("delete", "reconcile", {r, e}), "unit")
+    assert phases == ["reconcile", "node_assess"] and engine.current == old
