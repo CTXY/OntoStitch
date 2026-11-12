@@ -63,6 +63,8 @@ The valid candidate already includes saved valid writes. `saved_patch` is a smal
 
 Ordinary same-ID updates receive automatic self-dispositions. Deletions require explicit merge/rewrite/discard. A complete node/edge write uses one operation-specific shape; it must not repeat node_id/edge_id alongside the object. New relation contracts cannot replace installed meanings.
 
+Code supplies a fresh `new_id_prefix` for each active batch. The Agent appends local node/edge names instead of guessing the next numeric input ID, which may belong to an unread physical object. The prefix stays stable across that batch's assessment revisions; existing and pending objects retain their IDs.
+
 `edge_merges` means the Agent has confirmed the same assertion in compatible scope. Code unions exact source references into the named survivor; it never infers that confirmation. Historical-source correction and current-object rewrite remain separate correspondence groups. This avoids mixing immutable and current references.
 
 ## Validation and assessment economy
