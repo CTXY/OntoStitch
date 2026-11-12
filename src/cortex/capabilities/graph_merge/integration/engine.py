@@ -65,6 +65,8 @@ def implementation_version():
     paths = [
         *root.glob("*.py"),
         root.parent / "llm/integration.py",
+        root.parent / "llm/incremental.py",
+        *root.parent.glob("llm/prompts/incremental_*.md"),
         root.parent / "llm/submission.py",
         *root.parent.glob("llm/prompts/integration_*.md"),
         root.parent / "transactions.py",

@@ -272,21 +272,27 @@ class GraphMergeConfig(_ConfigModel):
     checkpoint_url: SecretStr = Field(
         default_factory=lambda: SecretStr(
             os.environ.get(
-                "GRAPH_MERGE_CHECKPOINT_URL", "sqlite:///workspace/checkpoints/graph_merge.sqlite"
+                "GRAPH_MERGE_CHECKPOINT_URL",
+                "sqlite:///workspace/checkpoints/graph_merge.sqlite",
             )
         ),
         validate_default=True,
     )
+
     @field_validator("checkpoint_url")
     @classmethod
     def sqlite_checkpoint(cls, value: SecretStr) -> SecretStr:
         url = value.get_secret_value()
-        if not url.startswith("sqlite:///") or url.removeprefix("sqlite:///") in ("", ":memory:"):
+        if not url.startswith("sqlite:///") or url.removeprefix("sqlite:///") in (
+            "",
+            ":memory:",
+        ):
             raise ValueError("checkpoint_url must be a file-backed sqlite:/// URL")
         return value
 
     consolidation_max_rounds: int = Field(default=3, ge=1)
     consolidation_max_calls: int = Field(default=18, ge=1)
+    merge_model_call_budget: int = Field(default=80, ge=1)
     candidate_top_k: int = Field(default=5, ge=1)
     max_evidence_items: int = Field(default=24, ge=1)
     max_evidence_characters: int = Field(default=48_000, ge=1)

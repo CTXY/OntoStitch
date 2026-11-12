@@ -1,3 +1,5 @@
+> Incremental execution update: see [Incremental two-stage ontology integration](ontology-merge-incremental.md) for current-relative local submissions, workspace acceptance and one final publication. The descriptions of cumulative source-relative buffering below document the v67 baseline.
+
 # Two-stage ontology graph merge
 
 Date: 2026-11-12. Design and implementation description; live results are recorded separately.

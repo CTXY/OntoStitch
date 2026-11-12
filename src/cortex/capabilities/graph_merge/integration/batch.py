@@ -1,0 +1,417 @@
+"""One small patch against a stable current graph; no source-relative replay."""
+
+from copy import deepcopy
+from typing import Literal
+
+from pydantic import Field
+
+from cortex.application.ontology_graph import GraphManager
+from cortex.capabilities.graph_merge.integration.compiler import deduplicate_edges
+from cortex.capabilities.graph_merge.integration.context import (
+    PHYSICAL,
+    remap_edge,
+    remap_node,
+)
+from cortex.capabilities.graph_merge.integration.models import (
+    Change,
+    CompleteAlternative,
+    EdgeDelete,
+    EdgeWrite,
+    Element,
+    InspectionCheck,
+    Model,
+    NodeDelete,
+    RationaleCheck,
+)
+from cortex.capabilities.graph_merge.integration.submission import (
+    content_errors,
+    edit_key,
+)
+from cortex.schema import ConflictPoint, GraphEdge, GraphNode, GraphSpace, GraphState
+from cortex.schema.models import EdgeType
+from cortex.schema.relation_contracts import merge_relation_contracts
+from cortex.schema.validation import validate_graph_state
+
+
+class ConflictWrite(Model):
+    node_id: str
+    alternatives: tuple[CompleteAlternative, ...] = Field(min_length=2)
+    conflict_points: tuple[ConflictPoint, ...] = Field(min_length=1)
+
+
+class EdgeMerge(Model):
+    """The Agent declares the same fact; code preserves exact references."""
+
+    source_ids: tuple[str, ...] = Field(min_length=1)
+    survivor_id: str
+    explanation: str = Field(min_length=1)
+
+
+class NodeWrite(Model):
+    operation: Literal["create_node", "update_node"]
+    node: dict
+
+
+class BatchResult(Model):
+    """Submit only this task's patch, not the accumulated graph or history."""
+
+    edits: tuple[NodeWrite | EdgeWrite | NodeDelete | EdgeDelete, ...] = ()
+    changes: tuple[Change, ...] = ()
+    conflicts: tuple[ConflictWrite, ...] = ()
+    edge_merges: tuple[EdgeMerge, ...] = ()
+    relation_contracts: tuple[EdgeType, ...] = ()
+    inspection_checks: tuple[InspectionCheck, ...] = ()
+    rationale_checks: tuple[RationaleCheck, ...] = ()
+    remove_edits: tuple[Element, ...] = ()
+    remove_edge_merges: tuple[str, ...] = ()
+    remove_changes: tuple[Element, ...] = ()
+    failure: str | None = None
+
+
+def delta(before, after):
+    result = {}
+    for kind in ("nodes", "edges"):
+        a = {x.id: x for x in getattr(before.graph, kind)}
+        b = {x.id: x for x in getattr(after.graph, kind)}
+        result[kind] = {
+            "created": sorted(b.keys() - a.keys()),
+            "deleted": sorted(a.keys() - b.keys()),
+            "updated": sorted(k for k in a.keys() & b.keys() if a[k] != b[k]),
+        }
+    return result
+
+
+def alias_view(state, aliases):
+    """Only declared identity aliases; never infer business equivalence."""
+    nodes = {n.id: n for n in state.graph.nodes}
+    merged = {}
+    for n in nodes.values():
+        key = aliases.get(n.id, n.id)
+        if key not in merged:
+            merged[key] = remap_node(nodes[key], aliases)
+        first = merged[key]
+        merged[key] = first.model_copy(
+            update={
+                "sources": tuple(dict.fromkeys((*first.sources, *n.sources))),
+                "aliases": list(
+                    dict.fromkeys(
+                        [
+                            *first.aliases,
+                            *n.aliases,
+                            *([n.name] if n.name != first.name else []),
+                        ]
+                    )
+                ),
+            }
+        )
+    edges, edge_map = deduplicate_edges(
+        remap_edge(e, aliases) for e in state.graph.edges
+    )
+    merged = {k: remap_node(n, {}, edge_map) for k, n in merged.items()}
+    return GraphState(
+        graph=GraphSpace(
+            nodes=tuple(merged.values()),
+            edges=tuple(edges.values()),
+            relation_contracts=state.graph.relation_contracts,
+        )
+    ), edge_map
+
+
+class ActiveBatch:
+    """Pending malformed objects never replace the last valid draft or accepted graph."""
+
+    def __init__(self, context, base, *, targets, aliases=None):
+        self.context, self.base = context, base
+        self.aliases = aliases or {}
+        self.seed, self.edge_aliases = alias_view(base, self.aliases)
+        self.targets = set(targets)
+        self.allowed = self.targets | {
+            e.id
+            for e in self.seed.graph.edges
+            if e.from_node_id in self.targets or e.to_node_id in self.targets
+        }
+        self.pending = {}
+        self.changes = []
+        self.contracts = {}
+        self.edge_merges = {}
+        self.preview = None
+        self.result = None
+        self.revision = 0
+        self.extra_check = None
+
+    def submit(self, result):
+        if result.failure:
+            raise ValueError(result.failure)
+        data = result.model_dump(mode="json")
+        for ref in result.remove_edits:
+            self.pending.pop((ref.kind, ref.id), None)
+        for key in result.remove_edge_merges:
+            self.edge_merges.pop(key, None)
+        removed_refs = {(r.kind, r.id, r.alternative_id) for r in result.remove_changes}
+        kept_changes = []
+        for c in self.changes:
+            old_refs = {
+                (e["kind"], e["id"], e.get("alternative_id")) for e in c["before"]
+            }
+            if old_refs & removed_refs and not old_refs <= removed_refs:
+                raise ValueError(
+                    "Withdraw the complete before-group, not a partial disposition"
+                )
+            if not old_refs & removed_refs:
+                kept_changes.append(c)
+        self.changes = kept_changes
+        for edit in data["edits"]:
+            key = edit_key(edit)
+            old = self.pending.get(key)
+            if (
+                old
+                and old["operation"].startswith("create_")
+                and edit["operation"].startswith("update_")
+            ):
+                edit["operation"] = old["operation"]
+            if (
+                old
+                and old["operation"].startswith("create_")
+                and edit["operation"].startswith("delete_")
+            ):
+                self.pending.pop(key)
+            else:
+                self.pending[key] = edit
+        # Replace an affected source/current correspondence group as a whole.
+        replaced = {
+            (e["kind"], e["id"], e.get("alternative_id"))
+            for c in data["changes"]
+            for e in c["before"]
+        }
+        kept = []
+        for c in self.changes:
+            old = {(e["kind"], e["id"], e.get("alternative_id")) for e in c["before"]}
+            if old & replaced and not old <= replaced:
+                raise ValueError(
+                    "Cover the whole prior before-group when replacing its disposition"
+                )
+            if not old & replaced:
+                kept.append(c)
+        self.changes = kept + data["changes"]
+        for contract in result.relation_contracts:
+            self.contracts[contract.id] = contract
+        nodes = {n.id: n for n in self.seed.graph.nodes}
+        edges = {e.id: e for e in self.seed.graph.edges}
+        source_nodes = {n.id: n for n in self.base.graph.nodes}
+        source_edges = {e.id: e for e in self.base.graph.edges}
+        edits = list(self.pending.values())
+        created_nodes = {
+            e["node"]["id"] for e in edits if e["operation"] == "create_node"
+        }
+        created_edges = {
+            e["edge"]["id"] for e in edits if e["operation"] == "create_edge"
+        }
+        for edit in edits:
+            kind, raw_key = edit_key(edit)
+            key = (
+                self.aliases.get(raw_key, raw_key)
+                if kind == "node"
+                else self.edge_aliases.get(raw_key, raw_key)
+            )
+            objects = nodes if kind == "node" else edges
+            exists = key in objects
+            if exists and key not in self.allowed:
+                raise ValueError(
+                    f"Outside task write scope: {kind} {key}. Read/extend the task before editing."
+                )
+            previous = objects.get(key)
+            if (kind == "node" and previous and previous.node_type in PHYSICAL) or (
+                kind == "edge"
+                and previous
+                and all(
+                    nodes[k].node_type in PHYSICAL
+                    for k in (previous.from_node_id, previous.to_node_id)
+                )
+            ):
+                raise ValueError(
+                    "Physical catalogue objects are immutable to merge writers"
+                )
+            op = edit["operation"]
+            if op.startswith("delete_"):
+                if not exists:
+                    raise ValueError(f"Cannot delete missing {kind} {key}")
+                del objects[key]
+                continue
+            if op.startswith("create_") == exists:
+                raise ValueError(
+                    f"Use update for existing or create for new {kind} {key}"
+                )
+            raw = deepcopy(edit[kind])
+            raw["id"] = key
+            if previous and "sources" not in raw:
+                raw["sources"] = [s.model_dump(mode="json") for s in previous.sources]
+            obj = (GraphNode if kind == "node" else GraphEdge).model_validate(raw)
+            obj = (
+                remap_node(obj, self.aliases, self.edge_aliases)
+                if kind == "node"
+                else remap_edge(obj, self.aliases)
+            )
+            if kind == "node" and obj.node_type in PHYSICAL:
+                raise ValueError("Cannot create physical catalogue nodes")
+            if kind == "node" and previous and previous.node_type != obj.node_type:
+                raise ValueError(
+                    "Type correction needs a new node and explicit rewrite"
+                )
+            if (
+                kind == "edge"
+                and previous is None
+                and not (
+                    {obj.from_node_id, obj.to_node_id} & (self.targets | created_nodes)
+                )
+            ):
+                raise ValueError(
+                    "A new business edge must involve a writable task target; extend task first"
+                )
+            if kind == "edge" and all(
+                k in nodes and nodes[k].node_type in PHYSICAL
+                for k in (obj.from_node_id, obj.to_node_id)
+            ):
+                raise ValueError("Cannot write physical catalogue edges")
+            objects[key] = obj
+        changes = [Change.model_validate(c) for c in self.changes]
+        for conflict in result.conflicts:
+            if conflict.node_id not in nodes or conflict.node_id not in self.allowed:
+                raise ValueError("Conflict owner must be a current writable node")
+            if any(not a.sources for a in conflict.alternatives):
+                raise ValueError(
+                    "Every complete alternative needs its own actual sources"
+                )
+            compact, _ = GraphManager.compact_conflict(
+                nodes[conflict.node_id],
+                [
+                    (a.alternative_id, a.content, a.sources)
+                    for a in conflict.alternatives
+                ],
+                consolidation_status="semantic_conflict",
+                conflict_points=conflict.conflict_points,
+            )
+            nodes[compact.id] = compact
+            # Persist successful complete alternative input for local retry.
+            self.pending[("node", compact.id)] = {
+                "operation": "set_conflict",
+                "node": compact.model_dump(mode="json"),
+            }
+        for merge in result.edge_merges:
+            self.edge_merges[merge.survivor_id] = merge
+        for merge in self.edge_merges.values():
+            if merge.survivor_id not in edges or merge.survivor_id not in (
+                self.allowed | created_edges
+            ):
+                raise ValueError("Merge survivor must be a current writable edge")
+            survivor = edges[merge.survivor_id]
+            refs = list(survivor.sources)
+            before = [{"kind": "edge", "id": survivor.id}]
+            archived = []
+            for source_id in merge.source_ids:
+                if source_id in edges and source_id not in self.allowed:
+                    raise ValueError(f"Outside task write scope: edge {source_id}")
+                original = edges.get(source_id) or self.context.raw_edges.get(source_id)
+                if original is None:
+                    raise ValueError(f"Unknown source edge {source_id}")
+                refs.extend(original.sources)
+                if source_id in {e.id for e in self.base.graph.edges}:
+                    before.append({"kind": "edge", "id": source_id})
+                else:
+                    archived.append({"kind": "edge", "id": source_id})
+                if source_id != survivor.id:
+                    edges.pop(source_id, None)
+            edges[survivor.id] = survivor.model_copy(
+                update={"sources": tuple(dict.fromkeys(refs))}
+            )
+            changes.append(
+                Change.model_validate(
+                    {
+                        "before": before,
+                        "after": [{"kind": "edge", "id": survivor.id}],
+                        "explanation": merge.explanation,
+                    }
+                )
+            )
+            if archived:
+                changes.append(
+                    Change.model_validate(
+                        {
+                            "before": archived,
+                            "after": [{"kind": "edge", "id": survivor.id}],
+                            "explanation": merge.explanation,
+                        }
+                    )
+                )
+        # Same-ID edits carry their own mechanical disposition; deletes do not.
+        covered = {(e.kind, e.id) for c in changes for e in c.before}
+        for kind, old, current in [
+            ("node", source_nodes, nodes),
+            ("edge", source_edges, edges),
+        ]:
+            for key, obj in old.items():
+                target = (
+                    self.aliases.get(key, key)
+                    if kind == "node"
+                    else self.edge_aliases.get(key, key)
+                )
+                if (kind, key) in covered or target != key:
+                    continue
+                if key not in current:
+                    raise ValueError(
+                        f"Delete requires explicit merge/rewrite/discard disposition: {kind} {key}"
+                    )
+                if current[key] != obj:
+                    changes.append(
+                        Change.model_validate(
+                            {
+                                "before": [{"kind": kind, "id": key}],
+                                "after": [{"kind": kind, "id": key}],
+                                "explanation": "Update the current object; original versions remain archived.",
+                            }
+                        )
+                    )
+        contracts = merge_relation_contracts(
+            self.seed.graph.relation_contracts, tuple(self.contracts.values())
+        )
+        candidate = GraphState(
+            graph=GraphSpace(
+                nodes=tuple(nodes.values()),
+                edges=tuple(edges.values()),
+                relation_contracts=contracts,
+            )
+        )
+        # Check every actual changed/new object and every resolved alternative.
+        content = []
+        for n in nodes.values():
+            if source_nodes.get(n.id) != n:
+                content.append(
+                    {"operation": "update_node", "node": n.model_dump(mode="json")}
+                )
+        for e in edges.values():
+            if source_edges.get(e.id) != e:
+                content.append(
+                    {"operation": "update_edge", "edge": e.model_dump(mode="json")}
+                )
+        errors = content_errors(content, self.context.schema)
+        if errors:
+            raise ValueError(str(errors))
+        known = {
+            s
+            for n in self.context.raw_nodes.values()
+            for s in (*n.sources, *(s for a in n.alternatives for s in a.sources))
+        } | {s for e in self.context.raw_edges.values() for s in e.sources}
+        for n in nodes.values():
+            if not set(n.sources) <= known or any(
+                not set(a.sources) <= known for a in n.alternatives
+            ):
+                raise ValueError(f"Invented source on {n.id}")
+        if any(not set(e.sources) <= known for e in edges.values()):
+            raise ValueError("Invented edge source")
+        validate_graph_state(candidate, self.context.schema)
+        if self.extra_check:
+            self.extra_check(candidate, tuple(changes), result)
+        self.preview = candidate
+        self.result = result.model_copy(update={"changes": tuple(changes)})
+        self.revision += 1
+        self.context.candidate = candidate
+        return self.result

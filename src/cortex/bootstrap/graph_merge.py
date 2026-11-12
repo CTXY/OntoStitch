@@ -68,17 +68,19 @@ def build_graph_merge_operator(
         and consolidation_checker is None
         and cross_type_resolver is None
     ):
-        from cortex.capabilities.graph_merge.integration.two_stage import (
-            TwoStageGraphIntegrationEngine as GraphIntegrationEngine,
+        from cortex.capabilities.graph_merge.integration.incremental import (
+            IncrementalGraphIntegrationEngine as GraphIntegrationEngine,
         )
-        from cortex.capabilities.graph_merge.llm.integration import IntegrationAgent
+        from cortex.capabilities.graph_merge.llm.incremental import (
+            IncrementalIntegrationAgent as IntegrationAgent,
+        )
 
         factory = (
             (lambda: nullcontext(checkpointer))
             if checkpointer is not None
             else partial(persistent_checkpointer, config.checkpoint_url)
         )
-        return GraphIntegrationEngine(
+        engine = GraphIntegrationEngine(
             integration_agent
             or IntegrationAgent(
                 llm or create_chat_model(root.llm, profile="graph_merge"),
@@ -93,7 +95,12 @@ def build_graph_merge_operator(
             top_k=config.candidate_top_k,
             runtime_signature=config_fingerprint(root),
             sql_dialect=root.services.sql_training.validation.dialect,
+            model_call_budget=config.merge_model_call_budget,
         )
+        checkpoint_url = config.checkpoint_url.get_secret_value()
+        if checkpointer is None and checkpoint_url.startswith("sqlite:///"):
+            engine.workspace_path = checkpoint_url.removeprefix("sqlite:///")
+        return engine
     if (group_consolidator is None) != (consolidation_checker is None):
         raise ValueError("Consolidator and Assessment must be supplied together")
     embeddings = None

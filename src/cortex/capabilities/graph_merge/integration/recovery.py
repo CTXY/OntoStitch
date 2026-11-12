@@ -67,4 +67,8 @@ def load_reviewed_node_stage(directory, existing, incoming, schema):
     return {
         k: data[k]
         for k in ["identity", "proposal", "preview", "review", "read_ids", "evidence"]
-    } | {"origin": str(directory.resolve()), "run_id": manifest["run_id"]}
+    } | {
+        "origin": str(directory.resolve()),
+        "run_id": manifest["run_id"],
+        "reviewed_node_ids": accepted[-1]["payload"].get("reviewed_node_ids", []),
+    }

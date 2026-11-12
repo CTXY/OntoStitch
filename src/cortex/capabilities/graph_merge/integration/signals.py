@@ -6,6 +6,7 @@ import sqlglot
 from sqlglot import exp
 
 from cortex.capabilities.graph_merge.integration.context import PHYSICAL
+from cortex.schema.relation_vocabulary import ABSTRACT_RELATIONS
 
 
 def projected_columns(sql, nodes, dialect=None):
@@ -39,7 +40,7 @@ def projected_columns(sql, nodes, dialect=None):
     }
 
 
-def inspection_signals(context, preview):
+def inspection_signals(context, preview, *, origins=None):
     nodes = {n.id: n for n in preview.state.graph.nodes}
     edges = [
         e
@@ -54,6 +55,28 @@ def inspection_signals(context, preview):
             {"id": kind + ":" + ",".join(sorted(keys)), "kind": kind, **details}
         )
 
+    owners = defaultdict(set)
+    for edge in preview.state.graph.edges:
+        if edge.edge_type in ABSTRACT_RELATIONS:
+            add(
+                "abstract_predicate",
+                [edge.id],
+                edge_ids=[edge.id],
+                node_ids=[edge.from_node_id, edge.to_node_id],
+            )
+        if (
+            edge.edge_type == "grounded_on"
+            and nodes[edge.from_node_id].node_type == "concept"
+        ):
+            owners[edge.to_node_id].add(edge.from_node_id)
+    for endpoint, claimants in sorted(owners.items()):
+        if len(claimants) > 1:
+            add(
+                "binding_contest",
+                [endpoint],
+                node_ids=sorted(claimants),
+                physical_id=endpoint,
+            )
     pairs = defaultdict(list)
     neighbors = defaultdict(list)
     adj = defaultdict(list)
@@ -116,16 +139,26 @@ def inspection_signals(context, preview):
                 s.source_id == evidence.source.source_id for s in source.sources
             ):
                 continue
-            canonical = preview.node_map.get(source.id, source.id)
-            if canonical not in nodes:
-                continue
+            candidates = {preview.node_map.get(source.id, source.id)}
+            if origins is not None:
+                candidates.update(
+                    key
+                    for key, node in nodes.items()
+                    if node.node_type == "concept"
+                    and any(
+                        r.kind == "node" and r.id == source.id
+                        for r in origins.origin_refs("node", key)
+                    )
+                )
             refs = {
                 context.physical_map.get(ref, ref)
                 for group in source.properties.get("targets", [])
                 for ref in group
             }
             chosen = selected & refs
-            if chosen:
+            for canonical in sorted(candidates & nodes.keys()):
+                if not chosen or nodes[canonical].node_type != "concept":
+                    continue
                 choices[canonical][evidence.source.source_id] = {
                     "source_id": evidence.source.source_id,
                     "source_node_id": source.id,
