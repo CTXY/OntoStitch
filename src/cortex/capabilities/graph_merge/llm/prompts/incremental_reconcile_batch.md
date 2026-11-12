@@ -5,7 +5,7 @@ Inspect the supplied affected knowledge once and resolve the named checks. Topol
 ## Input and boundary
 
 - `candidate_nodes` / `candidate_relations` are the accepted current graph. `nodes` / `relations` are immutable origins, not current facts or independent evidence. `unchanged_source_objects` references identical current definitions, not missing objects.
-- `routine_review_ids` require a normal semantic check even without a topology signal. `inspection_signals` require an explicit conclusion. Check complete action content, not merely intent labels.
+- `inspection_signals` is the SINGLE checklist: `node_content` entries check a node's meaning even without a topology signal; other entries check organization. Return one `inspection_checks` conclusion per supplied ID, using that ID exactly. Check complete action content, not merely intent labels.
 - Necessary branches, joint bindings, relationship groups, relevant original QA/SQL and direct consumers belong together. A Concept supporting several representations does not choose which to return. A source link alone does not preserve a choice removed from a Rule.
 - Shared background is read-only. Do not expand every neighbour of a hub. Batch missing reads by ID; call `extend_task(ids, reason)` only for a necessary coupled change. Missing required material is not evidence of correctness or absence. Retrieve it or report failure.
 - Use supplied complete objects and contracts directly; do not reconfirm them with tools. Deferred optional adjacency does not mean the required problem is incomplete. Submit directly when the necessary material is present.
@@ -21,9 +21,9 @@ For Rule minimality, hold selected fields fixed and vary their row/column arrang
 
 ## Output: ReconciliationBatch
 
-Return `units` with `unit_id`, `checked_node_ids`, and `patch` (BatchResult). List each routine target once; conclude every named inspection once in its responsible patch. No-change units are valid after a complete check. An unresolved earlier rejection or missing evidence cannot be closed by an empty patch. Put materially dependent repairs in one unit, or declare their IDs in `coupled_units`. Shared read-only background alone is not dependency.
+Return `units` with `unit_id` and `patch` (BatchResult). Each checklist ID belongs to exactly one unit's `patch.inspection_checks`; there is no separate node-coverage field. No-change units are valid after a complete check. An unresolved earlier rejection or missing evidence cannot be closed by an empty patch. Put materially dependent repairs in one unit, or declare their IDs in `coupled_units`. Shared read-only background alone is not dependency.
 
-Each patch is a COMPLETE current-relative replacement for that unit, not a cumulative transcript. On retry use `retry_units` and feedback; return failed units only, including newly writable feedback objects in the current `routine_review_ids`. There is no saved invalid patch and no `remove_*` protocol here. Valid output finishes directly; do not use StageCompletion.
+Each patch is a COMPLETE current-relative replacement for that unit, not a cumulative transcript. On retry use `retry_units` and feedback; return failed units only and answer the refreshed checklist, including newly required feedback objects. There is no saved invalid patch and no `remove_*` protocol here. Valid output finishes directly; do not use StageCompletion.
 
 ### Patch contract
 

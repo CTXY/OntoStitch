@@ -14,8 +14,10 @@ from cortex.capabilities.graph_merge.integration.reconciliation import (
     ReconciliationController,
 )
 from cortex.capabilities.graph_merge.integration.reconciliation_units import (
+    CheckedUnit as RepairUnit,
+)
+from cortex.capabilities.graph_merge.integration.reconciliation_units import (
     ReconciliationBatch,
-    RepairUnit,
     group_units,
 )
 from cortex.capabilities.graph_merge.integration.task_context import LocalTask
@@ -76,13 +78,47 @@ class ScriptedAgent:
 
     def invoke(self, phase, ctx, payload):
         self.calls.append((phase, payload))
-        result = (
-            self.writer(ctx, payload)
-            if phase == "reconcile"
-            else self.assessor(payload)
-        )
+        if phase == "reconcile":
+            # Fixture builders select nodes; the wire protocol answers only
+            # the single inspection registry, just like a real model result.
+            local = {**payload, "routine_review_ids": routine_ids(payload)}
+            result = self.writer(ctx, local)
+            units = []
+            for unit in result.units:
+                found = {c.inspection_id for c in unit.patch.inspection_checks}
+                extra = tuple(
+                    {
+                        "inspection_id": key,
+                        "conclusion": "keep",
+                        "reason": "Node meaning checked against complete inputs",
+                    }
+                    for key in getattr(unit, "checked_node_ids", ())
+                    if key not in found
+                )
+                patch = BatchResult.model_validate(
+                    {
+                        **unit.patch.model_dump(mode="json"),
+                        "inspection_checks": [
+                            c.model_dump(mode="json")
+                            for c in unit.patch.inspection_checks
+                        ]
+                        + list(extra),
+                    }
+                )
+                units.append({"unit_id": unit.unit_id, "patch": patch})
+            result = ReconciliationBatch(
+                units=tuple(units), coupled_units=result.coupled_units
+            )
+        else:
+            result = self.assessor(payload)
         IncrementalIntegrationAgent._validate(result, ctx, payload, phase)
         return result
+
+
+def routine_ids(payload):
+    return [
+        c["id"] for c in payload["inspection_signals"] if c["kind"] == "node_content"
+    ]
 
 
 def no_change(ctx, payload):
@@ -141,7 +177,7 @@ def test_unanswered_checks_cannot_be_recorded_as_no_change(monkeypatch):
         "inspection_signals",
         lambda *args, **kw: [{"id": "required", "kind": "triangle", "node_ids": [a]}],
     )
-    with pytest.raises(ValueError, match="Conclude each active inspection"):
+    with pytest.raises(ValueError, match="supplied registry"):
         ReconciliationController(engine, "controlled").run(first=True)
     assert not engine.history
 
@@ -203,7 +239,7 @@ def test_only_failed_unit_is_regenerated_and_reassessed():
         "node_assess",
     ]
     retry = agent.calls[2][1]
-    assert retry["routine_review_ids"] == [b]
+    assert routine_ids(retry) == [b]
     assert [u["unit_id"] for u in retry["retry_units"]] == [b]
     assert [u["unit_id"] for u in agent.calls[3][1]["review_units"]] == [b]
     assert len(engine.history) == 3
@@ -422,7 +458,7 @@ def test_feedback_extension_becomes_an_explicit_retry_review_target():
     retry = next(
         p for phase, p in agent.calls if phase == "reconcile" and p.get("retry_units")
     )
-    assert set(retry["routine_review_ids"]) == {a, b}
+    assert set(routine_ids(retry)) == {a, b}
     assert [phase for phase, _ in agent.calls] == [
         "reconcile",
         "node_assess",
@@ -449,3 +485,16 @@ def test_mechanical_coupling_rejects_empty_or_unknown_groups():
         group_units([unit], state(), coupled=[()])
     with pytest.raises(ValueError, match="Unknown"):
         group_units([unit], state(), coupled=[("one", "unknown")])
+
+
+def test_wire_schema_has_one_coverage_list_and_no_parallel_node_ack_field():
+    schema = ReconciliationBatch.model_json_schema()
+    assert set(schema["$defs"]["RepairUnit"]["properties"]) == {"unit_id", "patch"}
+    agent = ScriptedAgent(no_change)
+    engine = engine_for(agent)
+    ReconciliationController(engine, "single-registry").run(first=True)
+    packet = agent.calls[0][1]
+    assert "routine_review_ids" not in packet
+    assert {s["id"] for s in packet["inspection_signals"]} == {
+        engine.ctx.input_node_map[k] for k in ("A", "B", "C")
+    }

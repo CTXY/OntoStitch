@@ -70,7 +70,7 @@ class IncrementalIntegrationAgent:
         self.call_budget = None
 
     def invoke(self, phase, context, payload):
-        from cortex.capabilities.graph_merge.integration.reconciliation import (
+        from cortex.capabilities.graph_merge.integration.reconciliation_units import (
             ReconciliationBatch,
         )
 
@@ -286,7 +286,7 @@ class IncrementalIntegrationAgent:
         }
         budget_announced = False
         repair_hint = (
-            "No invalid units are saved. Return complete corrected units using the current routine_review_ids and retry_units."
+            "No invalid units are saved. Return complete corrected units and exactly the current inspection_signals IDs in patch.inspection_checks."
             if payload.get("reconciliation_batch")
             else "Replace faulty objects; previously saved pending objects remain. Use remove_edits/remove_changes/remove_edge_merges to withdraw them."
         )

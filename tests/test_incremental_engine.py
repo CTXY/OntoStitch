@@ -35,6 +35,30 @@ class IdentityOnlyAgent:
             )
         elif phase == "node_assess":
             result = NodeReview(verdict="accept")
+        elif payload.get("reconciliation_batch"):
+            from cortex.capabilities.graph_merge.integration.reconciliation_units import (
+                ReconciliationBatch,
+            )
+
+            result = ReconciliationBatch.model_validate(
+                {
+                    "units": [
+                        {
+                            "unit_id": "checked",
+                            "patch": {
+                                "inspection_checks": [
+                                    {
+                                        "inspection_id": c["id"],
+                                        "conclusion": "keep",
+                                        "reason": "Checked supported input",
+                                    }
+                                    for c in payload["inspection_signals"]
+                                ]
+                            },
+                        }
+                    ]
+                }
+            )
         else:
             result = BatchResult()
         callback = getattr(ctx, "output_validator", None)

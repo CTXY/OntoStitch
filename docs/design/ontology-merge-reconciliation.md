@@ -21,21 +21,20 @@ The previous four-case run used 27 Reconciliation calls plus 21 Assessment calls
 
 The packet uses existing current/source views: `candidate_nodes` and `candidate_relations` are current, `nodes` and `relations` are immutable origins. Exact identical source definitions may be referenced through `unchanged_source_objects`; this is explicit deduplication, not evidence omission. Relevant evidence and guidance appear once. Display-only directories are removed; tools still retrieve complete objects in an explicit view.
 
-Writer input contains `routine_review_ids`, `inspection_signals`, current local objects, relevant originals/QA, contracts, writable targets and `new_id_prefix`. Retry adds only failed `retry_units` and their feedback. Writer output is:
+Writer input contains ONE `inspection_signals` registry, current local objects, relevant originals/QA, contracts, writable targets and `new_id_prefix`. `node_content` entries cover ordinary node meaning; other entries cover organization. Retry adds only failed `retry_units` and their feedback. Writer output is:
 
 ```text
 ReconciliationBatch
   units[]
     unit_id
-    checked_node_ids[]
     patch: BatchResult
   coupled_units[][]
   failure?
 ```
 
-Each routine target and named inspection must be answered exactly once. Patches are complete replacements for failed units; there is no invalid-pending accumulation or `remove_*` protocol in this path. Code preserves the existing current-relative patch validator, source checks and conflict compaction.
+Every registry entry is answered once in its responsible unit's `patch.inspection_checks`, including node-content entries whose IDs are the node IDs. There is no second node-coverage field. Controller-only coverage is derived from this registry. Missing/unexpected/duplicate IDs are reported explicitly. Patches are complete replacements for failed units; there is no invalid-pending accumulation or `remove_*` protocol in this path. Code preserves the existing current-relative patch validator, source checks and conflict compaction.
 
-On retry, feedback-referenced current objects are promoted into the refreshed routine target list; validation uses that refreshed list, not the original batch's list. Rejected newly created objects remain in complete `retry_units` rather than becoming nonexistent accepted-graph targets. A changed inspection must affect its actual problem, not merely an unrelated object. A no-change claim cannot override an explicit hard relation constraint.
+On retry, feedback-referenced current objects enter the refreshed registry; `extend_task` similarly returns newly required node checks. Validation uses that refreshed registry, not the original batch's list. Rejected newly created objects remain in complete `retry_units` rather than becoming nonexistent accepted-graph targets. A changed inspection must affect its actual problem, not merely an unrelated object. A no-change claim cannot override an explicit hard relation constraint.
 
 Assessment receives a shared candidate, exact per-unit target lists, actual-change directories, accepted-before contents for changed objects, source evidence and compact unit patch directories. Complete candidate definitions are not duplicated in the patch directory. It returns:
 

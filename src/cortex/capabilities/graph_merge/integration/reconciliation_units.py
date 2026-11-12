@@ -12,8 +12,13 @@ from cortex.capabilities.graph_merge.integration.task_context import (
 
 class RepairUnit(Model):
     unit_id: str = Field(min_length=1)
-    checked_node_ids: tuple[str, ...] = ()
     patch: BatchResult
+
+
+class CheckedUnit(RepairUnit):
+    """Controller-only coverage, derived from the single inspection registry."""
+
+    checked_node_ids: tuple[str, ...] = ()
 
 
 class ReconciliationBatch(Model):
@@ -105,7 +110,7 @@ def _footprint(unit, state):
         if e.from_node_id in changed_nodes or e.to_node_id in changed_nodes:
             reads.add(("edge", e.id))
             reads.update(("node", k) for k in (e.from_node_id, e.to_node_id))
-    for key in unit.checked_node_ids:
+    for key in getattr(unit, "checked_node_ids", ()):
         reads.add(("node", key))
     return writes, reads
 
@@ -135,10 +140,16 @@ def group_units(units, state, coupled=()):
     for keys in groups:
         selected = [u for u in units if u.unit_id in keys]
         result.append(
-            RepairUnit(
+            CheckedUnit(
                 unit_id=selected[0].unit_id,
                 checked_node_ids=tuple(
-                    sorted({k for u in selected for k in u.checked_node_ids})
+                    sorted(
+                        {
+                            k
+                            for u in selected
+                            for k in getattr(u, "checked_node_ids", ())
+                        }
+                    )
                 ),
                 patch=_combine(selected),
             )

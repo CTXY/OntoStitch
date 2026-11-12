@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from cortex.capabilities.graph_merge.integration.batch import (
     ActiveBatch,
-    BatchResult,
     delta,
 )
 from cortex.capabilities.graph_merge.integration.compiler import Preview
@@ -28,7 +27,7 @@ from cortex.capabilities.graph_merge.integration.reconciliation_scope import (
     signal_targets,
 )
 from cortex.capabilities.graph_merge.integration.reconciliation_units import (
-    ReconciliationBatch,
+    CheckedUnit,
     RepairUnit,
     _combine,
     _footprint,
@@ -62,13 +61,18 @@ class ReconciliationController:
                 before=before,
             )
         )
-        payload["reconciliation_batch"] = True
-        payload["routine_review_ids"] = sorted(
-            k
-            for k in task.targets
-            if k in _indexes(state)[0]
-            and _indexes(state)[0][k].node_type not in PHYSICAL
-        )
+        if task.phase == "reconcile":
+            payload["reconciliation_batch"] = True
+            payload["inspection_signals"] = [
+                *task.checks,
+                *[
+                    {"id": k, "kind": "node_content", "node_ids": [k]}
+                    for k in sorted(task.targets)
+                    if k in _indexes(state)[0]
+                    and _indexes(state)[0][k].node_type not in PHYSICAL
+                    and k not in {check["id"] for check in task.checks}
+                ],
+            ]
         return payload
 
     def run(self, *, first=False, initial_targets=None):
@@ -221,8 +225,18 @@ class ReconciliationController:
                     "Local scope extension exceeded; keep unrelated problems separate"
                 )
             scope.update(ids)
+            added_checks = []
+            for key in ids:
+                if (
+                    key in nodes
+                    and nodes[key].node_type not in PHYSICAL
+                    and key not in checks
+                ):
+                    checks[key] = {"id": key, "kind": "node_content", "node_ids": [key]}
+                    added_checks.append(checks[key])
             return {
                 "writable_ids": sorted(scope),
+                "added_inspection_checks": added_checks,
                 "objects": [
                     nodes[k].model_dump(mode="json")
                     if k in nodes
@@ -242,12 +256,13 @@ class ReconciliationController:
             payload.update(
                 new_id_prefix=new_prefix,
                 feedback=unresolved,
-                routine_review_ids=sorted(
-                    set(payload["routine_review_ids"]) - completed
-                ),
             )
+            checks = {check["id"]: check for check in payload["inspection_signals"]}
             if attempt:
-                payload["retry_units"] = [u.model_dump(mode="json") for u in pending]
+                payload["retry_units"] = [
+                    u.model_dump(mode="json", exclude={"checked_node_ids"})
+                    for u in pending
+                ]
             staged_units = []
 
             def validate_proposal(
@@ -258,34 +273,23 @@ class ReconciliationController:
                 pending=tuple(pending),
                 payload=payload,
                 scope=scope,
+                checks=checks,
             ):
                 nonlocal staged_units
-                if isinstance(result, BatchResult):  # Legacy injected callers.
-                    result = ReconciliationBatch(
-                        units=(
-                            RepairUnit(
-                                unit_id="local",
-                                checked_node_ids=tuple(payload["routine_review_ids"]),
-                                patch=result,
-                            ),
-                        )
-                    )
                 if result.failure:
                     raise ValueError(result.failure)
-                found = [k for u in result.units for k in u.checked_node_ids]
-                expected = set(payload["routine_review_ids"])
-                if set(found) != expected or len(found) != len(set(found)):
-                    raise ValueError(
-                        f"Check each routine target once: {sorted(expected)}"
-                    )
                 conclusions = [
                     c for u in result.units for c in u.patch.inspection_checks
                 ]
                 if {c.inspection_id for c in conclusions} != checks.keys() or len(
                     conclusions
                 ) != len(checks):
+                    found = [c.inspection_id for c in conclusions]
                     raise ValueError(
-                        f"Conclude each active inspection once: {sorted(checks)}"
+                        "patch.inspection_checks must answer the supplied registry once; "
+                        f"missing={sorted(checks.keys() - set(found))}, "
+                        f"unexpected={sorted(set(found) - checks.keys())}, "
+                        f"duplicates={sorted(k for k in set(found) if found.count(k) > 1)}"
                     )
                 for conclusion in conclusions:
                     if conclusion.conclusion == "failed":
@@ -300,7 +304,19 @@ class ReconciliationController:
                         raise ValueError(
                             "Decision inspection needs compatible/conditional/conflict/different_decision"
                         )
-                grouped = group_units(result.units, base, result.coupled_units)
+                units = [
+                    CheckedUnit(
+                        unit_id=unit.unit_id,
+                        patch=unit.patch,
+                        checked_node_ids=tuple(
+                            c.inspection_id
+                            for c in unit.patch.inspection_checks
+                            if checks[c.inspection_id]["kind"] == "node_content"
+                        ),
+                    )
+                    for unit in result.units
+                ]
+                grouped = group_units(units, base, result.coupled_units)
                 next_units = []
                 local = LocalTask(
                     task.id, task.phase, set(scope), checks=list(checks.values())
@@ -457,7 +473,7 @@ class ReconciliationController:
             # New objects remain complete in retry_units, not missing accepted
             # targets. Feedback-referenced current objects become routine roots.
             scope &= nodes.keys() | edges.keys()
-            task.checks = list(checks.values())
+            task.checks = [c for c in checks.values() if c["kind"] != "node_content"]
         raise IntegrationIncomplete(
             f"{task.id} failed reconciliation assessment; graph not published"
         )
