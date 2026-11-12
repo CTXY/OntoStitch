@@ -144,7 +144,9 @@ DEFAULT_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
     GenerationRuleTaxonomyItem(
         intent_class="top_k_selection",
         description=(
-            "Return entity rows associated with the leading or trailing K values. K may be one."
+            "Return entity rows associated with the leading or trailing K values. K may be one. "
+            "This fixes ranking and row inclusion, not which physical field representations are output. "
+            "Passing requested attributes through is allowed; an additional fixed field-set policy is a separate decision."
         ),
         reference_implementations=(
             GenerationRuleReferenceImplementation(
@@ -193,7 +195,7 @@ DEFAULT_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
 ADDITIONAL_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
     GenerationRuleTaxonomyItem(
         intent_class="column_binding_choice",
-        description="Choose which supported fields, joint field groups or representations participate in the answer when evidence establishes a consequential choice beyond static Concept matching. This selects content, not its column order or formatting; do not repeat an already resolved term-to-field/value mapping.",
+        description="Choose which supported fields, joint field groups or representations participate in the answer when evidence establishes a consequential choice beyond static Concept matching. This selects content, not its column order, formatting or row/column output shape. Choosing a field set does not also decide how the already-selected values are arranged; that is an independent decision. Do not repeat an already resolved term-to-field/value mapping.",
         reference_implementations=(GenerationRuleReferenceImplementation(
             "semantic_field_selection", ("SELECT <requested_meaning_column>",),
             "Preserve the requested meaning rather than substituting a similarly named identifier, amount, status or time field.",

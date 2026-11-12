@@ -371,6 +371,7 @@ class IncrementalGraphIntegrationEngine:
         self._persist(run_id)
         ctx.workspace_revision = self._revision
         extensions = []
+        review_history = []
 
         def expand(ids, reason):
             known = {n.id for n in (batch.preview or batch.seed).graph.nodes} | {
@@ -595,6 +596,9 @@ class IncrementalGraphIntegrationEngine:
                     origins=batch.lineage_preview,
                     before=before,
                 )
+                # Latest findings are already in feedback. Retain older findings
+                # separately so a later review cannot unknowingly reverse a fix.
+                reviewpayload["earlier_findings"] = review_history[:-1]
                 ctx.output_validator = None
                 review = self.agent.invoke("node_assess", ctx, reviewpayload)
                 if review.verdict != "accept":
@@ -602,6 +606,14 @@ class IncrementalGraphIntegrationEngine:
                         raise IntegrationIncomplete(
                             "Concrete identity counterexample: rebuild this unpublished input batch; do not guess a reverse split"
                         )
+                    review_history.append(
+                        {
+                            "issues": list(review.issues),
+                            "issue_refs": [
+                                r.model_dump(mode="json") for r in review.issue_refs
+                            ],
+                        }
+                    )
                     task.feedback = list(review.issues)
                     task.targets.update(r.id for r in review.issue_refs)
                     batch.allowed.update(task.targets)

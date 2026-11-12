@@ -403,6 +403,33 @@ class IncrementalIntegrationAgent:
                 raise ValueError(
                     f"Check each supplied Rule reason once: {sorted(expected)}"
                 )
+            from cortex.schema.graph import alternative_content
+
+            current_nodes = (
+                {n.id: n for n in context.candidate.graph.nodes}
+                if context.candidate is not None
+                else {}
+            )
+            for check in value.rationale_checks:
+                if check.supported:
+                    continue
+                if check.node_id not in current_nodes:
+                    raise ValueError(f"Missing current reason target: {check.node_id}")
+                node = current_nodes[check.node_id]
+                contents = [node] + [
+                    alternative_content(node, a) for a in node.alternatives
+                ]
+                reasons = [str(c.properties.get("reason", "")) for c in contents]
+                normalized = [" ".join(text.split()) for text in reasons]
+                if not check.unsupported_claims or any(
+                    not quote.strip()
+                    or not any(" ".join(quote.split()) in text for text in normalized)
+                    for quote in check.unsupported_claims
+                ):
+                    raise ValueError(
+                        f"Unsupported claims must quote actual CURRENT reason text for {check.node_id}, "
+                        f"not an archived predecessor. Current reason texts: {reasons}"
+                    )
         if getattr(value, "failure", None):
             from cortex.capabilities.graph_merge.integration.engine import (
                 IntegrationIncomplete,

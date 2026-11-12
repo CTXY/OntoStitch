@@ -96,3 +96,51 @@ def test_empty_pending_tool_is_not_advertised():
     ctx = IntegrationContext(state(), state(), load_root_schema())
     IncrementalIntegrationAgent(model).invoke("reconcile", ctx, {})
     assert "inspect_pending" not in [getattr(t, "name", None) for t in model.tools]
+
+
+def test_reason_finding_cannot_quote_a_retired_source_version():
+    import pytest
+
+    from cortex.capabilities.graph_merge.llm.incremental import NodeReview
+    from cortex.schema import GraphNode, GraphSpace, GraphState
+
+    ctx = IntegrationContext(state(), state(), load_root_schema())
+    ctx.candidate = GraphState(
+        graph=GraphSpace(
+            nodes=(
+                GraphNode(
+                    id="r",
+                    node_type="generation_rule",
+                    name="order outputs",
+                    properties={
+                        "reason": "Gold orders the requested columns; uniqueness is guaranteed."
+                    },
+                ),
+            )
+        )
+    )
+    payload = {"rationale_review_ids": ["r"]}
+    stale = NodeReview(
+        verdict="revise",
+        issues=["A claimed observation lacks evidence"],
+        rationale_checks=[
+            {
+                "node_id": "r",
+                "supported": False,
+                "explanation": "The quoted observed-history claim has no supplied evidence.",
+                "unsupported_claims": ["The validated attempt returned eight rows."],
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="actual CURRENT reason"):
+        IncrementalIntegrationAgent._validate(stale, ctx, payload, "node_assess")
+    current = stale.model_copy(
+        update={
+            "rationale_checks": (
+                stale.rationale_checks[0].model_copy(
+                    update={"unsupported_claims": ("uniqueness is guaranteed",)}
+                ),
+            )
+        }
+    )
+    IncrementalIntegrationAgent._validate(current, ctx, payload, "node_assess")
