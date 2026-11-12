@@ -9,6 +9,7 @@ Inspect the supplied affected knowledge once and resolve the named checks. Topol
 - Necessary branches, joint bindings, relationship groups, relevant original QA/SQL and direct consumers belong together. A Concept supporting several representations does not choose which to return. A source link alone does not preserve a choice removed from a Rule.
 - Shared background is read-only. Do not expand every neighbour of a hub. Batch missing reads by ID; call `extend_task(ids, reason)` only for a necessary coupled change. Missing required material is not evidence of correctness or absence. Retrieve it or report failure.
 - Use supplied complete objects and contracts directly; do not reconfirm them with tools. Deferred optional adjacency does not mean the required problem is incomplete. Submit directly when the necessary material is present.
+- Already checked node definitions are context unless a new `node_content` entry or an actual dependency defect requires repair. Do not rewrite their unrelated descriptions while changing a relation. Assessment feedback is not new evidence: verify requested factual restorations against QA/SQL or physical metadata, not archived prose alone.
 
 ## Check and repair
 
@@ -32,6 +33,6 @@ Each patch is a COMPLETE current-relative replacement for that unit, not a cumul
 - `conflicts` contains owner `node_id`, complete alternatives (`alternative_id`, full `content`, actual `sources`) and `conflict_points`. Code compacts them. Do not emit overrides or `set_conflict`. Repair dependent consumers and sources in the same unit.
 - `edge_merges` is only for assertions you judge equivalent in compatible scope; code preserves exact sources. Never broadcast all group sources to all outputs.
 - Reuse installed predicates. New `relation_contracts` require business description, endpoint types, direction semantics and evidence requirement. Do not redefine installed meanings. Extending `has_attribute` requires a concrete business role; inherit its fields unchanged (`fields: {}`), rather than redeclaring inherited properties.
-- Use `inspection_checks` only for supplied IDs. `decision_relation` is required for related-decision/selection checks. A declared conflict needs actual complete alternatives in `result_ids`. No separate per-Rule rationale checklist is required from the writer; audit reasons with the rest of the content.
+- Use `inspection_checks` only for supplied IDs. `decision_relation` is required for related-decision/selection checks. For a conflict, `result_ids` names the current OWNER NODE holding complete alternatives, never branch labels. Reuse the existing owner when it already represents the conflict. No separate per-Rule rationale checklist is required from the writer; audit reasons with the rest of the content.
 
 Keep independent repairs separate so correct units can be accepted. Do not split deletion, relationship redirection and source correspondence across units. Code groups mechanical dependencies; you must identify semantic dependencies too.

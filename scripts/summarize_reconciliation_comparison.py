@@ -58,6 +58,9 @@ def summarize_run(root):
                 "responses": int(call_id in ends),
                 "input_tokens": usage.get("input_tokens", 0),
                 "output_tokens": usage.get("output_tokens", 0),
+                "reasoning_tokens": usage.get("output_token_details", {}).get(
+                    "reasoning", 0
+                ),
                 "cache_read_tokens": usage.get("input_token_details", {}).get(
                     "cache_read", raw.get("prompt_cache_hit_tokens", 0)
                 ),
@@ -78,17 +81,50 @@ def summarize_run(root):
     }
 
 
+def summarize_job(root):
+    """Include accepted-checkpoint continuations, never hide their ancestor cost."""
+    segments, seen = [], set()
+    current = root.resolve()
+    while current is not None:
+        if current in seen:
+            raise ValueError("Cycle in experiment resume manifests")
+        seen.add(current)
+        segments.append(summarize_run(current))
+        manifest = json.loads((current / "manifest.json").read_text())
+        parent = manifest.get("resumed_from")
+        current = Path(parent) if parent else None
+    segments.reverse()
+    totals, tasks, tools, packets = defaultdict(Counter), {}, Counter(), []
+    for segment in segments:
+        name = Path(segment["directory"]).name
+        for stage, values in segment["stages"].items():
+            totals[stage].update(values)
+        tasks.update(
+            {name + "/" + key: value for key, value in segment["tasks"].items()}
+        )
+        tools.update(segment["tool_executions"])
+        packets.extend({**p, "segment": name} for p in segment["packets"])
+    return {
+        "directory": str(root),
+        "segments": segments,
+        "stages": dict(totals),
+        "tasks": tasks,
+        "tool_executions": dict(tools),
+        "packets": packets,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    baseline, candidate = summarize_run(args.baseline), summarize_run(args.candidate)
+    baseline, candidate = summarize_job(args.baseline), summarize_job(args.candidate)
     report = {
         "baseline": baseline,
         "candidate": candidate,
-        "scope": "Provider-reported tokens and recorded invocations; no estimated monetary charge or hidden-retry billing.",
+        "scope": "Provider-reported tokens and recorded invocations; reasoning_tokens is already included in output_tokens. No estimated monetary charge or hidden-retry billing.",
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2))

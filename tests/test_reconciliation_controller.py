@@ -337,7 +337,7 @@ def test_shared_read_only_parent_is_not_a_dependency_but_new_endpoint_is():
     assert len(group_units([create, left, right], state())) == 1
 
 
-def test_actual_role_change_requires_review_of_business_endpoints():
+def test_actual_role_change_reviews_edge_with_endpoints_as_context():
     source = state(
         [*catalog(), concept("A", "a"), concept("B", "b")],
         [edge("role", "A", "B", "is_a")],
@@ -351,13 +351,28 @@ def test_actual_role_change_requires_review_of_business_endpoints():
         update={"from_node_id": old.to_node_id, "to_node_id": old.from_node_id}
     )
     candidate = current.model_copy(
-        update={"graph": current.graph.model_copy(update={"edges": (changed,)})}
+        update={
+            "graph": current.graph.model_copy(
+                update={
+                    "edges": tuple(
+                        changed if e.id == old.id else e for e in current.graph.edges
+                    )
+                }
+            )
+        }
     )
     controller = ReconciliationController(engine, "controlled")
     ids = controller._review_ids(
         current, candidate, LocalTask("role", "reconcile", {old.id}), []
     )
-    assert {old.from_node_id, old.to_node_id} <= ids
+    assert ids == {old.id}
+    packet = controller._packet(
+        LocalTask("edge-review", "node_assess", ids), candidate, before=current
+    )
+    assert packet["reviewed_node_ids"] == []
+    assert {old.from_node_id, old.to_node_id} <= {
+        n["id"] for n in packet["candidate_nodes"]
+    }
 
 
 def test_deletion_without_correspondence_never_changes_graph_or_lineage():
@@ -498,3 +513,253 @@ def test_wire_schema_has_one_coverage_list_and_no_parallel_node_ack_field():
     assert {s["id"] for s in packet["inspection_signals"]} == {
         engine.ctx.input_node_map[k] for k in ("A", "B", "C")
     }
+
+
+def test_peripheral_edges_do_not_reopen_checked_node_definitions():
+    from cortex.capabilities.graph_merge.integration.reconciliation_scope import (
+        definition_stamp,
+    )
+
+    engine = engine_for(None)
+    a, b = (engine.ctx.input_node_map[k] for k in ("A", "B"))
+    before = engine.current
+    after = before.model_copy(
+        update={
+            "graph": before.graph.model_copy(
+                update={"edges": (*before.graph.edges, edge("role", a, b, "is_a"))}
+            )
+        }
+    )
+    assert definition_stamp(before, a) == definition_stamp(after, a)
+    controller = ReconciliationController(engine, "scope")
+    controller.checked_nodes[a] = definition_stamp(before, a)
+    packet = controller._packet(
+        LocalTask(
+            "role",
+            "reconcile",
+            {a, b},
+            checks=[{"id": "pattern", "kind": "triangle", "node_ids": [a, b]}],
+        ),
+        after,
+    )
+    assert a not in routine_ids(packet) and b in routine_ids(packet)
+    changed = next(n for n in after.graph.nodes if n.id == a).model_copy(
+        update={"description": "New meaning"}
+    )
+    revised = after.model_copy(
+        update={
+            "graph": after.graph.model_copy(
+                update={
+                    "nodes": tuple(
+                        changed if n.id == a else n for n in after.graph.nodes
+                    )
+                }
+            )
+        }
+    )
+    assert definition_stamp(before, a) != definition_stamp(revised, a)
+
+
+def test_binding_changes_still_invalidate_node_definition_coverage():
+    from cortex.capabilities.graph_merge.integration.reconciliation_scope import (
+        definition_stamp,
+    )
+
+    engine = engine_for(None)
+    a = engine.ctx.input_node_map["A"]
+    initial = engine.current
+    target = next(n for n in initial.graph.nodes if n.id == a).properties["targets"][0][
+        0
+    ]
+    binding = edge("binding", a, target, "grounded_on")
+    before = initial.model_copy(
+        update={
+            "graph": initial.graph.model_copy(
+                update={"edges": (*initial.graph.edges, binding)}
+            )
+        }
+    )
+    after = before.model_copy(
+        update={
+            "graph": before.graph.model_copy(
+                update={
+                    "edges": tuple(e for e in before.graph.edges if e.id != binding.id)
+                }
+            )
+        }
+    )
+    assert definition_stamp(before, a) != definition_stamp(after, a)
+
+
+def test_same_job_coverage_survives_controller_restart_but_not_code_change():
+    agent = ScriptedAgent(no_change)
+    engine = engine_for(agent)
+    ReconciliationController(engine, "run").run(first=True)
+    count = len(agent.calls)
+    ReconciliationController(engine, "run").run(first=True)
+    assert len(agent.calls) == count
+    engine.reconciliation_coverage["implementation_version"] = "older-code"
+    ReconciliationController(engine, "run").run(first=True)
+    assert len(agent.calls) == count + 1
+
+
+def test_rejected_edge_only_patch_cannot_escape_review_with_a_noop():
+    source = state(
+        [*catalog(), concept("A", "a"), concept("B", "b")],
+        [edge("role", "A", "B", "is_a")],
+    )
+    first = True
+
+    def writer(ctx, p):
+        nonlocal first
+        patch = BatchResult(
+            inspection_checks=tuple(
+                {"inspection_id": s["id"], "conclusion": "keep", "reason": "Checked"}
+                for s in p["inspection_signals"]
+            )
+        )
+        if first:
+            first = False
+            old = next(e for e in ctx.candidate.graph.edges if e.id == role)
+            revised = old.model_copy(
+                update={"from_node_id": old.to_node_id, "to_node_id": old.from_node_id}
+            )
+            patch = BatchResult.model_validate(
+                {
+                    **patch.model_dump(mode="json"),
+                    "edits": [
+                        {
+                            "operation": "update_edge",
+                            "edge": revised.model_dump(mode="json"),
+                        }
+                    ],
+                }
+            )
+        return ReconciliationBatch(units=({"unit_id": "role", "patch": patch},))
+
+    agent = ScriptedAgent(writer, lambda p: review_all(p, failures=("role",)))
+    engine = engine_for(agent, source)
+    role = engine.ctx.input_edge_map["role"]
+    controller = ReconciliationController(engine, "edge-retry")
+    with pytest.raises(IntegrationIncomplete):
+        controller._execute(LocalTask("edge", "reconcile", {role}), {})
+    assert [p for p, _ in agent.calls] == [
+        "reconcile",
+        "node_assess",
+        "reconcile",
+        "node_assess",
+    ]
+    assert all(
+        p["review_units"][0]["reviewed_edge_ids"] == [role]
+        for phase, p in agent.calls
+        if phase == "node_assess"
+    )
+
+
+def test_conflict_reference_error_names_owner_not_a_different_semantic_decision():
+    from cortex.application.ontology_graph import GraphManager
+    from cortex.schema import NodeContent, SourceReference
+
+    root, _ = GraphManager.compact_conflict(
+        concept("Root", "a"),
+        [
+            (
+                "left",
+                NodeContent(
+                    name="Shared term",
+                    description=None,
+                    aliases=[],
+                    tags=[],
+                    properties={"targets": [["a"]]},
+                ),
+                (SourceReference(source_id="left"),),
+            ),
+            (
+                "right",
+                NodeContent(
+                    name="Shared term",
+                    description=None,
+                    aliases=[],
+                    tags=[],
+                    properties={"targets": [["b"]]},
+                ),
+                (SourceReference(source_id="right"),),
+            ),
+        ],
+        consolidation_status="semantic_conflict",
+        conflict_points=[
+            {
+                "point_id": "binding",
+                "aspect": "Implementation",
+                "description": "Competing bindings",
+                "choices": [
+                    {"alternative_ids": ["left"], "statement": "First binding"},
+                    {"alternative_ids": ["right"], "statement": "Second binding"},
+                ],
+            }
+        ],
+    )
+
+    def writer(ctx, p):
+        return ReconciliationBatch(
+            units=(
+                {
+                    "unit_id": "choice",
+                    "patch": {
+                        "inspection_checks": [
+                            {
+                                "inspection_id": check["id"],
+                                "conclusion": "keep",
+                                "reason": "The complete alternatives remain",
+                                "decision_relation": "conflict",
+                                "result_ids": ["left", "right"],
+                            }
+                            for check in p["inspection_signals"]
+                        ]
+                    },
+                },
+            )
+        )
+
+    source = state([*catalog(), root])
+    ctx = IntegrationContext(source, state(), load_root_schema())
+    engine = IncrementalGraphIntegrationEngine(ScriptedAgent(writer))
+    engine.ctx, engine.current = ctx, ctx.union_state()
+    engine.lineage, engine.history, engine.reviewed_sources = LineageIndex(ctx), [], {}
+    engine._revision, engine.open_tasks = 0, []
+    owner = "Root"
+    task = LocalTask(
+        "choice",
+        "reconcile",
+        {owner},
+        checks=[
+            {
+                "id": "choice-check",
+                "kind": "source_selection_variants",
+                "node_ids": [owner],
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="OWNER NODE IDs") as error:
+        ReconciliationController(engine, "owners")._execute(task, {})
+    assert owner in str(error.value) and "Fix" in str(error.value)
+    assert not engine.history
+
+
+def test_sqlite_resume_keeps_same_job_check_coverage_without_more_model_calls(tmp_path):
+    from test_incremental_engine import IdentityOnlyAgent
+
+    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+
+    source = state([*catalog(), concept("A", "a"), concept("B", "a")])
+    first = IncrementalGraphIntegrationEngine(IdentityOnlyAgent())
+    first.workspace_path = tmp_path / "workspace.sqlite"
+    first.merge(state(), source, load_root_schema(), run_id="original")
+    saved = WorkspaceStore(first.workspace_path).load("original")
+    assert saved["reconciliation_coverage"]["nodes"]
+    agent = IdentityOnlyAgent()
+    resumed = IncrementalGraphIntegrationEngine(agent)
+    resumed.resume_snapshot = saved
+    result = resumed.merge(state(), source, load_root_schema(), run_id="resumed")
+    assert agent.phases == []
+    assert len(result.node_mappings) == len(source.graph.nodes)

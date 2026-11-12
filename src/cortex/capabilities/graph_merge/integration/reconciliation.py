@@ -24,6 +24,7 @@ from cortex.capabilities.graph_merge.integration.provenance import (
 from cortex.capabilities.graph_merge.integration.reconciliation_scope import (
     _compact_packet,
     _stamp,
+    definition_stamp,
     signal_targets,
 )
 from cortex.capabilities.graph_merge.integration.reconciliation_units import (
@@ -49,6 +50,24 @@ class ReconciliationController:
         self.packet_budget = packet_budget
         self.checked_nodes, self.checked_signals = {}, {}
         self.sequence = 0
+        from cortex.capabilities.graph_merge.integration.engine import (
+            implementation_version,
+        )
+
+        self.version = implementation_version()
+        saved = getattr(engine, "reconciliation_coverage", {})
+        if saved.get("implementation_version") == self.version:
+            self.checked_nodes = dict(saved.get("nodes", {}))
+            self.checked_signals = dict(saved.get("signals", {}))
+            self.sequence = saved.get("sequence", 0)
+
+    def _save_coverage(self):
+        self.engine.reconciliation_coverage = {
+            "implementation_version": self.version,
+            "nodes": self.checked_nodes,
+            "signals": self.checked_signals,
+            "sequence": self.sequence,
+        }
 
     def _packet(self, task, state=None, before=None, origins=None):
         state = state or self.engine.current
@@ -71,6 +90,7 @@ class ReconciliationController:
                     if k in _indexes(state)[0]
                     and _indexes(state)[0][k].node_type not in PHYSICAL
                     and k not in {check["id"] for check in task.checks}
+                    and self.checked_nodes.get(k) != definition_stamp(state, k)
                 ],
             ]
         return payload
@@ -103,7 +123,7 @@ class ReconciliationController:
                 for k in required
                 if k in nodes
                 and nodes[k].node_type not in PHYSICAL
-                and self.checked_nodes.get(k) != _stamp(current, {k})
+                and self.checked_nodes.get(k) != definition_stamp(current, k)
             }
             signals = inspection_signals(
                 self.ctx,
@@ -119,7 +139,13 @@ class ReconciliationController:
             ]
             # Organization repairs may retire abstract edges; resolve them
             # before spending calls on predicate wording alone.
-            active.sort(key=lambda check: check["kind"] == "abstract_predicate")
+            priorities = {
+                "binding_contest": 0,
+                "related_decisions": 0,
+                "source_selection_variants": 0,
+                "abstract_predicate": 2,
+            }
+            active.sort(key=lambda check: priorities.get(check["kind"], 1))
             candidates = [(signal_targets(s, current), [s]) for s in active]
             covered = (
                 set().union(*(ids for ids, _ in candidates)) if candidates else set()
@@ -146,7 +172,7 @@ class ReconciliationController:
             required.update(impacts)
             for key in completed:
                 if key in _indexes(engine.current)[0]:
-                    self.checked_nodes[key] = _stamp(engine.current, {key})
+                    self.checked_nodes[key] = definition_stamp(engine.current, key)
             for check in checks:
                 self.checked_signals[check["id"]] = _stamp(
                     engine.current, signal_targets(check, engine.current), check
@@ -156,7 +182,9 @@ class ReconciliationController:
             # new signals still get their own explicit conclusion next iteration.
             for key in affected_query_roots(before, engine.current) & set(completed):
                 if key in _indexes(engine.current)[0]:
-                    self.checked_nodes[key] = _stamp(engine.current, {key})
+                    self.checked_nodes[key] = definition_stamp(engine.current, key)
+            self._save_coverage()
+            engine._persist(self.run_id)
         raise IntegrationIncomplete(
             "Reconciliation work budget exhausted; graph not published"
         )
@@ -189,21 +217,22 @@ class ReconciliationController:
             for k in delta(before, candidate)["nodes"]["deleted"]
             if old_nodes[k].node_type not in PHYSICAL
         )
-        # Concrete business-role changes require semantic review too, not only
-        # grounded_on/depends_on/applies_to edits.
+        # Review a changed business assertion itself. Unchanged endpoints are
+        # context, not invitations to re-audit their entire old descriptions.
         for key in impact["semantic_changed_ids"]:
             for edges in (old_edges, new_edges):
                 if key in edges:
-                    ids.update((edges[key].from_node_id, edges[key].to_node_id))
+                    ids.add(key)
         for check in checks:
             if check["kind"] in {"related_decisions", "source_selection_variants"}:
                 ids.update(signal_targets(check, candidate))
-        return {
+        result = ids & (old_edges.keys() | new_edges.keys())
+        result |= {
             k
-            for k in ids
-            if k in old_nodes or k in new_nodes
+            for k in ids & (old_nodes.keys() | new_nodes.keys())
             if (new_nodes.get(k) or old_nodes[k]).node_type not in PHYSICAL
         }
+        return result
 
     def _execute(self, task, payload):
         engine, ctx = self.engine, self.ctx
@@ -211,6 +240,7 @@ class ReconciliationController:
         initial_scope = set(scope)
         completed, impacts, unresolved = set(), set(), []
         pending = []
+        pending_review_ids = set()
         new_prefix = f"generated::{uuid4().hex}::"
         checks = {s["id"]: s for s in task.checks}
 
@@ -274,6 +304,7 @@ class ReconciliationController:
                 payload=payload,
                 scope=scope,
                 checks=checks,
+                pending_review_ids=frozenset(pending_review_ids),
             ):
                 nonlocal staged_units
                 if result.failure:
@@ -329,8 +360,19 @@ class ReconciliationController:
                             and len(_indexes(batch.preview)[0][k].alternatives) > 1
                             for k in conclusion.result_ids
                         ):
+                            owners = {
+                                k: [a.alternative_id for a in n.alternatives]
+                                for k, n in _indexes(batch.preview)[0].items()
+                                if n.alternatives
+                                and k
+                                in signal_targets(
+                                    checks[conclusion.inspection_id], batch.preview
+                                )
+                            }
                             raise ValueError(
-                                "Conflict requires complete alternatives, not ordinary competing Rules"
+                                f"Inspection {conclusion.inspection_id}: result_ids must name current conflict OWNER NODE IDs, not alternative labels. "
+                                f"Got {list(conclusion.result_ids)}; local owners and their branches: {owners}. "
+                                "Fix the references, not the business decision. Do not dissolve a saved conflict into ordinary rules to avoid this reference error."
                             )
                     if batch.preview == base and any(
                         c.conclusion == "changed" for c in unit.patch.inspection_checks
@@ -371,9 +413,7 @@ class ReconciliationController:
                     )
                     if unresolved and not review_ids:
                         # An empty patch cannot close a rejected semantic unit.
-                        review_ids.update(
-                            k for u in pending for k in u.checked_node_ids
-                        )
+                        review_ids.update(pending_review_ids)
                     next_units.append((unit, batch, staged, review_ids))
                 # Validate the combined candidate as well as each independent unit.
                 combined = RepairUnit(
@@ -399,6 +439,7 @@ class ReconciliationController:
                 transactional_validate(proposal)
             reviews = self._assess(task, base, staged_units, checks, unresolved)
             rejected, feedback, coupling, repair_refs = [], [], [], set()
+            pending_review_ids = set()
             for cross in getattr(reviews, "cross_unit_issues", ()):
                 coupling.append(cross.unit_ids)
                 feedback.append(cross.issue)
@@ -408,6 +449,7 @@ class ReconciliationController:
                 review = by_id.get(unit.unit_id)
                 if unit.unit_id in blocked or (review and review.verdict != "accept"):
                     rejected.append(unit)
+                    pending_review_ids.update(review_ids)
                     if review:
                         if review.verdict == "revisit_identity":
                             raise IntegrationIncomplete(
@@ -434,7 +476,16 @@ class ReconciliationController:
                         "revision": engine._revision,
                         "attempt": attempt,
                         "delta": delta(before, engine.current),
-                        "node_review_ids": sorted(review_ids),
+                        "node_review_ids": sorted(
+                            review_ids & _indexes(engine.current)[0].keys()
+                        ),
+                        "edge_review_ids": sorted(
+                            review_ids
+                            & (
+                                _indexes(before)[1].keys()
+                                | _indexes(engine.current)[1].keys()
+                            )
+                        ),
                         "inspection_ids": [
                             c.inspection_id for c in unit.patch.inspection_checks
                         ],
@@ -450,10 +501,19 @@ class ReconciliationController:
                     }
                 )
                 completed.update(unit.checked_node_ids)
+                for key in set(unit.checked_node_ids) | review_ids:
+                    if key in _indexes(engine.current)[0]:
+                        self.checked_nodes[key] = definition_stamp(engine.current, key)
                 impacts |= affected_query_roots(before, engine.current)
                 for c in unit.patch.inspection_checks:
+                    check = checks[c.inspection_id]
+                    if check["kind"] != "node_content":
+                        self.checked_signals[c.inspection_id] = _stamp(
+                            engine.current, signal_targets(check, engine.current), check
+                        )
                     checks.pop(c.inspection_id, None)
                 engine.open_tasks = []
+                self._save_coverage()
                 engine._persist(self.run_id)
             if not rejected:
                 return completed | (impacts & scope), impacts
@@ -469,6 +529,7 @@ class ReconciliationController:
                 if kind in {"node", "edge"}
             }
             scope |= repair_refs
+            scope |= pending_review_ids
             nodes, edges = _indexes(engine.current)
             # New objects remain complete in retry_units, not missing accepted
             # targets. Feedback-referenced current objects become routine roots.
@@ -512,6 +573,10 @@ class ReconciliationController:
                     "unit_id": unit.unit_id,
                     "reviewed_node_ids": packet["reviewed_node_ids"],
                     "reviewed_deleted_ids": packet["reviewed_deleted_ids"],
+                    "reviewed_edge_ids": sorted(
+                        ids
+                        & (_indexes(base)[1].keys() | _indexes(batch.preview)[1].keys())
+                    ),
                     "rationale_review_ids": packet["rationale_review_ids"],
                     "decision_review_ids": packet["decision_review_ids"],
                     "actual_changes": packet["actual_changes"],

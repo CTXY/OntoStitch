@@ -3,7 +3,12 @@
 import hashlib
 import json
 
-from cortex.capabilities.graph_merge.integration.task_context import _indexes
+from cortex.capabilities.graph_merge.integration.context import references
+from cortex.capabilities.graph_merge.integration.task_context import (
+    _core_dependency,
+    _indexes,
+    _metadata_edges,
+)
 
 
 def signal_targets(check, state):
@@ -40,6 +45,29 @@ def _stamp(state, keys, check=None):
             for c in state.graph.relation_contracts
             if any(edges[k].edge_type == c.id for k in selected_edges)
         ],
+    ]
+    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
+def definition_stamp(state, key):
+    """Node admission coverage is not invalidated by every peripheral role edge.
+
+    Bindings, formula/operand dependencies, explicit group facts and referenced
+    definitions do matter. Organizational patterns use their own broader stamp.
+    """
+    nodes, edges = _indexes(state)
+    node = nodes[key]
+    selected = _metadata_edges(node) & edges.keys()
+    selected |= {
+        e.id
+        for e in edges.values()
+        if e.from_node_id == key and _core_dependency(e.edge_type, state)
+    }
+    refs = references(node) | {edges[e].to_node_id for e in selected}
+    data = [
+        node.model_dump(mode="json"),
+        [edges[e].model_dump(mode="json") for e in sorted(selected)],
+        [nodes[k].model_dump(mode="json") for k in sorted(refs & nodes.keys())],
     ]
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 

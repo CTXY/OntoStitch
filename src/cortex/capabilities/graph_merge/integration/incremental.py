@@ -27,7 +27,6 @@ from cortex.capabilities.graph_merge.integration.models import IntegrationPropos
 from cortex.capabilities.graph_merge.integration.provenance import (
     validate_rewrite_sources,
 )
-from cortex.capabilities.graph_merge.integration.signals import inspection_signals
 from cortex.capabilities.graph_merge.integration.task_context import (
     LocalTask,
     affected_query_roots,
@@ -205,6 +204,7 @@ class IncrementalGraphIntegrationEngine:
         self._storage_revision = None
         self.open_tasks = []
         self.reviewed_sources = {}
+        self.reconciliation_coverage = {}
         self.identity_decision = None
         resume = getattr(self, "resume_snapshot", None)
         if resume:
@@ -213,6 +213,9 @@ class IncrementalGraphIntegrationEngine:
                     "Workspace source/schema/evidence fingerprint mismatch"
                 )
             self.current = GraphState.model_validate(resume["current"])
+            self.reconciliation_coverage = dict(
+                resume.get("reconciliation_coverage", {})
+            )
             self.lineage = LineageIndex.restore(ctx, resume["lineage"])
             self.history = list(resume["history"])
             self._revision = resume.get("accepted_revision", len(self.history))
@@ -741,6 +744,7 @@ class IncrementalGraphIntegrationEngine:
                 ]
                 for k, refs in getattr(self, "reviewed_sources", {}).items()
             },
+            "reconciliation_coverage": getattr(self, "reconciliation_coverage", {}),
         }
         self._storage_revision = WorkspaceStore(path).save(
             run_id, payload, expected_revision=self._storage_revision

@@ -14,7 +14,7 @@ The previous four-case run used 27 Reconciliation calls plus 21 Assessment calls
 4. Code groups units with actual write/read or disposition dependencies, plus Agent-declared semantic coupling. Shared read-only parents alone do not couple units. Each component must independently apply to the accepted baseline; the combined candidate is checked too.
 5. Batch Assessment reviews actual semantic changes, deletions, concrete business-role changes, fresh evidence and explicit related-decision/source-selection inspections. Unchanged unrelated Rules are not mandatory review targets. Complete ordinary no-change inspections skip a second review. Rejected semantic feedback cannot be closed by returning an empty patch.
 6. Independently accepted units update the workspace graph and lineage together. Failed units retain their proposed patch and current feedback; the next invocation contains only their required scope. Mechanically or semantically coupled units pass/fail together. No dependency DAG or speculative execution is used.
-7. Recompute remaining signals against the accepted graph after each batch. Resolve organization before standalone abstract-predicate wording: an organization repair may retire the old edge entirely. Run-local check coverage is invalidated by changes to the checked objects, incident facts or relevant contracts. New patterns receive explicit conclusions. This is not a global semantic cache or a claim of inferred correctness.
+7. Recompute remaining signals against the accepted graph after each batch. Resolve organization before standalone abstract-predicate wording: an organization repair may retire the old edge entirely. Node-definition coverage is invalidated by changes to the node, its grounding/computational dependencies or declared relation groups, not unrelated incident business edges. Structural inspection coverage separately includes the relevant incident facts. Coverage is checkpointed only within the same fingerprinted job and implementation version; changing the code invalidates it. New patterns receive explicit conclusions. This is not a global semantic cache or a claim of inferred correctness.
 8. Final publication and complete public provenance audit run once. An incomplete/rejected run does not publish a final graph.
 
 ## Input and output
@@ -36,7 +36,7 @@ Every registry entry is answered once in its responsible unit's `patch.inspectio
 
 On retry, feedback-referenced current objects enter the refreshed registry; `extend_task` similarly returns newly required node checks. Validation uses that refreshed registry, not the original batch's list. Rejected newly created objects remain in complete `retry_units` rather than becoming nonexistent accepted-graph targets. A changed inspection must affect its actual problem, not merely an unrelated object. A no-change claim cannot override an explicit hard relation constraint.
 
-Assessment receives a shared candidate, exact per-unit target lists, actual-change directories, accepted-before contents for changed objects, source evidence and compact unit patch directories. Complete candidate definitions are not duplicated in the patch directory. It returns:
+Assessment receives a shared candidate, exact per-unit node and edge target lists, actual-change directories, accepted-before contents for changed objects, source evidence and compact unit patch directories. Complete candidate definitions are not duplicated in the patch directory. It returns:
 
 ```text
 BatchNodeReview
@@ -47,6 +47,8 @@ BatchNodeReview
     unit_ids[]
     issue
 ```
+
+An edge-only edit targets that edge; complete unchanged endpoints remain context and are not independently re-audited. Actual node/dependency changes still require node review. Conflict-reference errors name the actual owner node and distinguish branch labels; reference repair must not erase the semantic conflict. Feedback is not new factual evidence.
 
 The existing per-Rule decision/reason coverage and exact-current reason quote checks still apply separately to each unit. Assessment must judge each unit against the accepted baseline, not rely on another unaccepted candidate. Cross-unit findings block the named units and join their retry. Findings should cover all discovered material problems in one response; this does not guarantee model exhaustiveness.
 
