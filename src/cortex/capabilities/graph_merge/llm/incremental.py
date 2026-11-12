@@ -228,11 +228,41 @@ class IncrementalIntegrationAgent:
         bound = self.llm.bind_tools([*read_tools, output], tool_choice="auto")
         finished = None
         plain_fallback = False
+        read_rounds = 0
+        read_limit = 3 if phase == "node_assess" else 4
+        read_names = {
+            "inspect_graph",
+            "read_evidence",
+            "read_guidance",
+            "inspect_pending",
+        }
+        budget_announced = False
         try:
             for _ in range(self.max_calls):
+                if read_rounds >= read_limit:
+                    if not budget_announced:
+                        messages.append(
+                            HumanMessage(
+                                "Read budget reached. Use the supplied definitions/evidence and saved results to submit the supported local result now. Do not repeat exploratory reads. If essential evidence is unavailable, report failure rather than inventing it."
+                            )
+                        )
+                        budget_announced = True
+                    allowed = (
+                        [extend_task] if phase in {"consolidate", "reconcile"} else []
+                    )
+                    if not plain_fallback:
+                        allowed.append(output)
+                    bound = (
+                        self.llm.bind_tools(allowed, tool_choice="auto")
+                        if allowed
+                        else self.llm
+                    )
                 response = bound.invoke(messages, config={"callbacks": [trace]})
                 messages.append(response)
                 calls = response.tool_calls
+                reads_allowed = read_rounds < read_limit
+                if any(call["name"] in read_names for call in calls):
+                    read_rounds += 1
                 fallback_notice = None
                 if response.invalid_tool_calls:
                     for invalid in response.invalid_tool_calls:
@@ -281,6 +311,10 @@ class IncrementalIntegrationAgent:
                             completed = value
                             result = {"status": "accepted"}
                         elif call["name"] in lookup:
+                            if call["name"] in read_names and not reads_allowed:
+                                raise ValueError(
+                                    "Read budget exhausted; submit a supported result or explicit failure"
+                                )
                             result = lookup[call["name"]].invoke(call["args"])
                         else:
                             raise ValueError("Unknown tool")
