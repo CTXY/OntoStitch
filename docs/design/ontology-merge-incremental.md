@@ -13,7 +13,7 @@ This implementation retains three roles: Identity, Node Consolidation with indep
 - **Active batch:** a current-relative patch, pending invalid objects, confirmed aliases and its last valid draft. Failure does not partially apply edits to current.
 - **Lineage:** true single-target identity aliases are separate from many-to-many rewrite groups. An origin group is possible provenance, not evidence that every source supports every output.
 
-SQLite atomically stores current, lineage, revision, history and open tasks. No SQLite transaction stays open during a model call. Stale revisions cannot overwrite a newer snapshot. The journal is a recovery artifact; automatic semantic continuation after a crash is not currently promised.
+SQLite atomically stores current, lineage, revision, history and open tasks. No SQLite transaction stays open during a model call. Stale revisions cannot overwrite a newer snapshot. Explicit experimental resume validates an input/schema/evidence fingerprint and restores accepted work, not an invalid pending patch. Completed consolidation batches are skipped. Reconciliation currently starts a fresh graph check after resume; its repeated calls must be included in recovery costs rather than reported as a fresh merge's cost.
 
 Only final publication assigns public IDs and invokes the strict GraphManager transaction. Local acceptance does not call the final exporter.
 
@@ -57,6 +57,8 @@ The first version is serial. It does not add distributed transactions, a task ta
 
 `BatchResult` contains only required local edits, nontrivial `changes`, optional complete `conflicts`, semantic `edge_merges`, new relation contracts, and current inspection/rationale conclusions. It does not repeat current, origins or the cumulative graph. Valid submission finishes the task directly: there is no extra StageCompletion call.
 
+The valid candidate already includes saved valid writes. `saved_patch` is a small operation/ID directory plus explicit dispositions. `inspect_pending` retrieves invalid saved objects or dispositions that cannot be read from the candidate. Rejected installed-predicate redefinitions are never saved, so they cannot poison subsequent local corrections. New conflict owners and replacement edges may be created and referenced atomically in the same batch; validity does not depend on the order of edits in the submitted list.
+
 Ordinary same-ID updates receive automatic self-dispositions. Deletions require explicit merge/rewrite/discard. A complete node/edge write uses one operation-specific shape; it must not repeat node_id/edge_id alongside the object. New relation contracts cannot replace installed meanings.
 
 `edge_merges` means the Agent has confirmed the same assertion in compatible scope. Code unions exact source references into the named survivor; it never infers that confirmation. Historical-source correction and current-object rewrite remain separate correspondence groups. This avoids mixing immutable and current references.
@@ -67,7 +69,9 @@ Ordinary same-ID updates receive automatic self-dispositions. Deletions require 
 - Tool views are explicit `input` or `candidate`; modes are enumerated. Missing IDs, revision and pagination completeness are returned. No fallback silently substitutes a source definition for a current one.
 - A valid complete plain-JSON result goes through the same model/schema/graph validation as tool output and can finish without another model call. Malformed JSON is rejected, not heuristically repaired. Every malformed tool-call ID receives a tool response before the next API request.
 - Node Assessment has compact findings; three mandatory global essays are removed. Rule reasons are checked against actual evidence for the requested/changed Rules, including alternatives. Correct action does not establish a correct reason.
+- Semantic deletions receive independent assessment using their before-content and source evidence. Named joint-decision inspections receive independent assessment even when Reconciliation proposes no edits; a no-change compatibility claim can itself be wrong. Assessment receives those inspections, prior findings and the candidate's staged lineage.
 - A source-only delta is not automatically safe. New or removed supporting evidence reopens relevant content review. Reuse is limited to evidence actually reviewed for that target, using resolved QA content identity; QA/qa provenance strings are still preserved exactly. Loading evidence or inspecting neighbours is not equivalent to reviewing them.
+- Inspection defaults use explicit task roots, not accumulated read history. Writers have four exploratory read rounds per episode and Node Assessment three; after that only submission and necessary scope extension remain available. Essential missing information must produce a concrete failure. These bounds limit exploration, not the required completeness of conflict or identity groups. A separate merge-wide call budget prevents unlimited repair loops.
 - Trace records provider calls, responses, errors, tool arguments/results, task inputs and workspace revisions. Report all experimental attempts separately; offline tests cannot prove model-quality equivalence.
 
 ## Administrator walkthrough (evaluation only)
