@@ -89,3 +89,23 @@ def test_scope_rejects_read_only_neighbour_node_and_keeps_last_valid_draft():
     with pytest.raises(ValueError, match="Outside task"):
         batch.submit(BatchResult.model_validate({"edits": [write(raw)]}))
     assert batch.preview == accepted
+
+
+def test_rejected_installed_contract_is_not_a_poisoned_pending_operation():
+    from test_graph_integration import edge
+
+    schema = load_root_schema()
+    incoming = state(
+        [*catalog(), concept("A", "a"), concept("B", "b")],
+        [edge("feature", "A", "B", "has_feature")],
+    )
+    ctx = IntegrationContext(state(), incoming, schema)
+    batch = ActiveBatch(ctx, ctx.union_state(), targets={ctx.input_node_map["A"]})
+    original = batch.seed.graph.relation_contracts[0]
+    changed = original.model_copy(
+        update={"description": "A restyled definition is not a new predicate."}
+    )
+    with pytest.raises(ValueError, match="NOT saved"):
+        batch.submit(BatchResult(relation_contracts=(changed,)))
+    batch.submit(BatchResult())
+    assert batch.preview.graph.relation_contracts == batch.seed.graph.relation_contracts

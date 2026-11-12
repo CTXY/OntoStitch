@@ -59,12 +59,16 @@ class BatchResult(Model):
     changes: tuple[Change, ...] = ()
     conflicts: tuple[ConflictWrite, ...] = ()
     edge_merges: tuple[EdgeMerge, ...] = ()
-    relation_contracts: tuple[EdgeType, ...] = ()
+    relation_contracts: tuple[EdgeType, ...] = Field(
+        default=(),
+        description="NEW predicate IDs only. Reuse installed predicates by edge_type; do not resend or restyle installed definitions.",
+    )
     inspection_checks: tuple[InspectionCheck, ...] = ()
     rationale_checks: tuple[RationaleCheck, ...] = ()
     remove_edits: tuple[Element, ...] = ()
     remove_edge_merges: tuple[str, ...] = ()
     remove_changes: tuple[Element, ...] = ()
+    remove_contracts: tuple[str, ...] = ()
     failure: str | None = None
 
 
@@ -193,7 +197,15 @@ class ActiveBatch:
             if not old & replaced:
                 kept.append(c)
         self.changes = kept + data["changes"]
+        for key in result.remove_contracts:
+            self.contracts.pop(key, None)
+        installed = {c.id: c for c in self.seed.graph.relation_contracts}
         for contract in result.relation_contracts:
+            if contract.id in installed and installed[contract.id] != contract:
+                self.contracts.pop(contract.id, None)
+                raise ValueError(
+                    f"Installed predicate {contract.id} cannot be redefined. The conflicting definition was NOT saved; reuse its ID without resending a contract, or use a new predicate ID for a different meaning. Installed contract: {installed[contract.id].model_dump_json(exclude_defaults=True)}"
+                )
             self.contracts[contract.id] = contract
         nodes = {n.id: n for n in self.seed.graph.nodes}
         edges = {e.id: e for e in self.seed.graph.edges}
