@@ -69,6 +69,10 @@ Code supplies a fresh `new_id_prefix` for each active batch. The Agent appends l
 
 ## Validation and assessment economy
 
+- Independent action review is separate from Rule-reason support. Node Assessment returns one `decision_checks` record per requested Rule, listing independently variable decisions and concrete issues. Acceptance requires one decision and no unresolved issues; code checks declared coverage, not business meanings. Alternative implementations of one decision are not counted as independent decisions.
+- Shared-operand Rules are grouped into one related-decision signal per operand, regardless of intent label. `decision_neighborhoods` indexes current Rule IDs, complete branch IDs and applicability scopes without repeating their definitions. It exposes ordinary policies that could bypass a saved alternative, as well as selection/presentation consumers with different tags.
+- Retained Rule targets in structural review receive independent action review even when the writer makes no content edit. An absent edit does not certify atomicity or compatibility. The pending-inspection tool is advertised only once there is actual saved pending data.
+
 - Malformed internal fields fail at submission, before final publication. Errors identify the object/path. Valid pending siblings remain saved for repair.
 - Tool views are explicit `input` or `candidate`; modes are enumerated. Missing IDs, revision and pagination completeness are returned. No fallback silently substitutes a source definition for a current one.
 - A valid complete plain-JSON result goes through the same model/schema/graph validation as tool output and can finish without another model call. Malformed JSON is rejected, not heuristically repaired. Every malformed tool-call ID receives a tool response before the next API request.

@@ -543,6 +543,13 @@ class IncrementalGraphIntegrationEngine:
                     }
             if task.phase == "consolidate":
                 review_ids |= {k for k in task.targets if k in _nodes(candidate)}
+            if getattr(task, "review_retained_rules", False):
+                review_ids |= {
+                    k
+                    for k in task.targets
+                    if k in _nodes(candidate)
+                    and _nodes(candidate)[k].node_type == "generation_rule"
+                }
             if review_ids:
                 reviewtask = LocalTask(
                     task.id + "-node-review",

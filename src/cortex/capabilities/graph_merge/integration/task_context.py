@@ -867,6 +867,40 @@ def build_task_context(
         "unknown_operation_intents": sorted(intents - known.keys()),
         "feedback": list(task.feedback),
         "inspection_signals": list(task.checks),
+        "decision_neighborhoods": [
+            {
+                "operand_id": operand,
+                "rules": [
+                    {
+                        "node_id": key,
+                        "alternative_ids": [
+                            a.alternative_id for a in nodes[key].alternatives
+                        ],
+                        "applicability": [
+                            {
+                                "edge_id": e.id,
+                                "alternative_ids": e.properties.get(
+                                    "alternative_ids", []
+                                ),
+                            }
+                            for e in edges.values()
+                            if e.edge_type == "applies_to"
+                            and e.from_node_id == key
+                            and e.to_node_id == operand
+                        ],
+                    }
+                    for key in sorted(required_nodes & nodes.keys())
+                    if nodes[key].node_type == "generation_rule"
+                    and any(
+                        e.edge_type == "applies_to"
+                        and e.from_node_id == key
+                        and e.to_node_id == operand
+                        for e in edges.values()
+                    )
+                ],
+            }
+            for operand in sorted(operands)
+        ],
     }
     if task.groups:
         payload["matched_groups"] = list(task.groups)
@@ -884,6 +918,7 @@ def build_task_context(
         payload["rationale_review_ids"] = sorted(
             k for k in root_nodes if nodes[k].node_type == "generation_rule"
         )
+        payload["decision_review_ids"] = list(payload["rationale_review_ids"])
     if before is not None:
         payload["actual_changes"] = {
             label: {

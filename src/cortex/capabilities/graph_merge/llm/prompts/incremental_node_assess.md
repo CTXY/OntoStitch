@@ -8,6 +8,10 @@ Assess the actual current content of `reviewed_node_ids` and the disposition of 
 
 ## Checks
 
+Evaluate action integrity BEFORE checking whether its reason matches Gold. For every `decision_review_ids` Rule, return one `decision_checks` item: `node_id`, `independent_decisions`, and concrete `issues` (empty only when valid). List independently variable business obligations, not SQL clauses or alternative implementations of one decision. Holding the chosen records fixed while changing requested fields tests selection versus ranking; holding chosen fields fixed while changing row/column arrangement tests presentation versus selection. Multiple intent tags do not resolve a compound action. A multi-decision Rule requires revision even if every clause matches Gold.
+
+Use `decision_neighborhoods` to compare ordinary Rules with every applicable conflict branch on the same operands. Empty edge `alternative_ids` means unscoped applicability, not a disabled Rule. An ordinary copy of a branch must be removed/merged or have an evidenced different scope; merely finding complete alternatives on another node is insufficient. Report this in the affected Rule's `issues` and global revision findings. The packet references full node/branch definitions already supplied; do not fetch them again without a material omission.
+
 - Same business referent, quantity or independent decision; implementations and descriptions may differ. Preserve complements, intrinsic scope and complete supported choices. Names/codes can refer to an object or role; a name-property label cannot silently stand in for that attribute bearer.
 - Node admission, NL minimality, valid nonempty Concept bindings, real Metric computation, complete formula inputs, atomic Rule actions and evidenced Event structure. Check necessary incident roles and core dependencies, not unrelated graph organization.
 - For reviewed deletions, check the supplied before/deleted content: supported independent knowledge must survive or have a valid redundancy/correction reason. An unknown intent label alone is not a deletion reason; rewrite an unsupported justification rather than erasing its Gold-supported behavior.

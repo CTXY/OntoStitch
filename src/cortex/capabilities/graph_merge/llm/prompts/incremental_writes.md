@@ -4,6 +4,10 @@ Return one `BatchResult` with the required patch and checks; valid submission fi
 
 ## Shapes
 
+Before writing a Rule, identify its independently variable decision. Record selection, field selection and arrangement of already-selected content are independent when changing one does not require changing the others; split such actions and preserve their individual sources. ORDER BY plus LIMIT can implement one ranking decision: SQL clause count is not the atomicity test. Use the operation registry to describe the decision, not to justify a compound action. Compare every ordinary Rule in `decision_neighborhoods` with complete conflict branches; do not leave an unscoped duplicate of an alternative. Existing source text and Gold agreement alone do not prove sound organization or factual reasons.
+
+Only return inspection_checks for IDs in inspection_signals, and rationale_checks for requested or actually changed Rules. Do not invent extra inspection IDs. With no saved_patch and pending_revision zero there is no pending data to inspect; the pending tool appears after data is saved.
+
 - Node edits: `create_node` or `update_node` with `node`; deletes use only `node_id`. Required properties come from the preloaded type guidance.
 - Create fresh node/edge IDs under the supplied `new_id_prefix`, with a local descriptive suffix. Never guess the next `input::n...` or `input::e...`: unread IDs may already belong to physical catalogue objects. Keep a pending new object's ID when repairing it.
 - Edge edits: `create_edge` or `update_edge` with `edge`; deletes use only `edge_id`. An edge has `id`, `edge_type`, `from_node_id`, `to_node_id`, `properties`, optional `sources` and `reference_origin`. Put branch scope in `properties.alternative_ids`, never a top-level alternative field.

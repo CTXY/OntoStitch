@@ -50,3 +50,49 @@ def test_malformed_tool_json_receives_matching_tool_error_before_retry():
     assert len(replies) == 1 and replies[0].tool_call_id == "broken"
     assert "plain JSON" in model.requests[1][-1].content
     assert all(getattr(t, "__name__", None) != "IdentityDecision" for t in model.tools)
+
+
+def test_acceptance_requires_atomic_decisions_and_exact_rule_coverage():
+    import pytest
+    from pydantic import ValidationError
+
+    from cortex.capabilities.graph_merge.llm.incremental import NodeReview
+
+    with pytest.raises(ValidationError, match="Acceptance"):
+        NodeReview(
+            verdict="accept",
+            decision_checks=[
+                {
+                    "node_id": "r",
+                    "independent_decisions": ["choose rows", "choose fields"],
+                }
+            ],
+        )
+    with pytest.raises(ValidationError, match="Acceptance"):
+        NodeReview(
+            verdict="accept",
+            decision_checks=[
+                {
+                    "node_id": "r",
+                    "independent_decisions": ["choose fields"],
+                    "issues": [
+                        "Unscoped ordinary policy bypasses a competing saved branch"
+                    ],
+                }
+            ],
+        )
+    ctx = IntegrationContext(state(), state(), load_root_schema())
+    with pytest.raises(ValueError, match="each supplied Rule decision"):
+        IncrementalIntegrationAgent._validate(
+            NodeReview(verdict="accept"),
+            ctx,
+            {"decision_review_ids": ["r"]},
+            "node_assess",
+        )
+
+
+def test_empty_pending_tool_is_not_advertised():
+    model = Chat([AIMessage(content='{"edits":[]}')])
+    ctx = IntegrationContext(state(), state(), load_root_schema())
+    IncrementalIntegrationAgent(model).invoke("reconcile", ctx, {})
+    assert "inspect_pending" not in [getattr(t, "name", None) for t in model.tools]

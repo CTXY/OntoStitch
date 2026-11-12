@@ -114,17 +114,18 @@ def inspection_signals(context, preview, *, origins=None):
     for e in edges:
         if e.edge_type == "applies_to":
             targets[e.from_node_id].add(e.to_node_id)
-    for i, a in enumerate(rules):
-        for b in rules[i + 1 :]:
-            if targets[a.id] & targets[b.id] and set(
-                a.properties.get("operation_intents", [])
-            ) & set(b.properties.get("operation_intents", [])):
-                add(
-                    "related_decisions",
-                    [a.id, b.id],
-                    node_ids=[a.id, b.id],
-                    shared_operands=sorted(targets[a.id] & targets[b.id]),
-                )
+    by_operand = defaultdict(set)
+    for rule in rules:
+        for operand in targets[rule.id]:
+            by_operand[operand].add(rule.id)
+    for operand, members in sorted(by_operand.items()):
+        if len(members) > 1:
+            add(
+                "related_decisions",
+                [operand],
+                node_ids=sorted(members),
+                shared_operands=[operand],
+            )
     choices = defaultdict(dict)
     for evidence in context.evidence:
         selected = projected_columns(

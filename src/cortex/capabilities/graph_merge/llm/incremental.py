@@ -19,18 +19,31 @@ from cortex.capabilities.graph_merge.integration.tools import build_tools
 from cortex.capabilities.graph_merge.llm.trace import EpisodeTrace
 
 
+class RuleDecisionCheck(Model):
+    node_id: str
+    independent_decisions: tuple[str, ...] = Field(min_length=1)
+    issues: tuple[str, ...] = ()
+
+
 class NodeReview(Model):
     verdict: str = Field(pattern="^(accept|revise|revisit_identity)$")
     issues: tuple[str, ...] = ()
     issue_refs: tuple[ReviewReference, ...] = ()
     rationale_checks: tuple[RationaleCheck, ...] = ()
+    decision_checks: tuple[RuleDecisionCheck, ...] = ()
 
     @model_validator(mode="after")
     def consistent(self):
+        if self.verdict != "accept" and not self.issues:
+            raise ValueError("A revision needs concrete issues and affected issue_refs")
         if self.verdict == "accept" and (
             self.issues
             or self.issue_refs
             or any(not r.supported for r in self.rationale_checks)
+            or any(
+                len(c.independent_decisions) != 1 or c.issues
+                for c in self.decision_checks
+            )
         ):
             raise ValueError("Acceptance cannot contain unresolved issues")
         return self
@@ -225,7 +238,6 @@ class IncrementalIntegrationAgent:
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             ),
         ]
-        bound = self.llm.bind_tools([*read_tools, output], tool_choice="auto")
         finished = None
         plain_fallback = False
         read_rounds = 0
@@ -239,6 +251,13 @@ class IncrementalIntegrationAgent:
         budget_announced = False
         try:
             for _ in range(self.max_calls):
+                batch = getattr(context, "active_batch", None)
+                has_pending = batch is not None and any(
+                    (batch.pending, batch.changes, batch.contracts, batch.edge_merges)
+                )
+                available_reads = [
+                    t for t in read_tools if t.name != "inspect_pending" or has_pending
+                ]
                 if read_rounds >= read_limit:
                     if not budget_announced:
                         messages.append(
@@ -252,11 +271,15 @@ class IncrementalIntegrationAgent:
                     )
                     if not plain_fallback:
                         allowed.append(output)
-                    bound = (
-                        self.llm.bind_tools(allowed, tool_choice="auto")
-                        if allowed
-                        else self.llm
-                    )
+                else:
+                    allowed = list(available_reads)
+                    if not plain_fallback:
+                        allowed.append(output)
+                bound = (
+                    self.llm.bind_tools(allowed, tool_choice="auto")
+                    if allowed
+                    else self.llm
+                )
                 response = bound.invoke(messages, config={"callbacks": [trace]})
                 messages.append(response)
                 calls = response.tool_calls
@@ -366,6 +389,14 @@ class IncrementalIntegrationAgent:
     @staticmethod
     def _validate(value, context, payload, phase):
         if phase == "node_assess":
+            expected_decisions = set(payload.get("decision_review_ids", ()))
+            found_decisions = [c.node_id for c in value.decision_checks]
+            if set(found_decisions) != expected_decisions or len(
+                found_decisions
+            ) != len(set(found_decisions)):
+                raise ValueError(
+                    f"Check each supplied Rule decision once: {sorted(expected_decisions)}"
+                )
             expected = set(payload.get("rationale_review_ids", ()))
             found = [c.node_id for c in value.rationale_checks]
             if set(found) != expected or len(found) != len(set(found)):
