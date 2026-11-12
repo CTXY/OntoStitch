@@ -5,6 +5,7 @@ Return one `BatchResult` with the required patch and checks; valid submission fi
 ## Shapes
 
 - Node edits: `create_node` or `update_node` with `node`; deletes use only `node_id`. Required properties come from the preloaded type guidance.
+- Create fresh node/edge IDs under the supplied `new_id_prefix`, with a local descriptive suffix. Never guess the next `input::n...` or `input::e...`: unread IDs may already belong to physical catalogue objects. Keep a pending new object's ID when repairing it.
 - Edge edits: `create_edge` or `update_edge` with `edge`; deletes use only `edge_id`. An edge has `id`, `edge_type`, `from_node_id`, `to_node_id`, `properties`, optional `sources` and `reference_origin`. Put branch scope in `properties.alternative_ids`, never a top-level alternative field.
 - Introduce or revise alternatives through `conflicts`: owner `node_id`, complete `alternatives` (alternative_id, content, actual sources), and conflict_points. Code performs lossless compaction. Do not hand-write overrides or use set_conflict edits. Ordinary competing copies do not preserve a conflict.
 - Rule triggers have separate `question: {phrases: [...]}` and `sql: {columns: [...], operations: [...]}` objects.

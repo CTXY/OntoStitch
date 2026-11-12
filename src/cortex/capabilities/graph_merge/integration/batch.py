@@ -260,7 +260,9 @@ class ActiveBatch:
                 )
             ):
                 raise ValueError(
-                    "Physical catalogue objects are immutable to merge writers"
+                    f"Physical catalogue {kind} {key} is immutable. "
+                    "For a new semantic object use create with a fresh ID under new_id_prefix; "
+                    "withdraw any pending operation that reused this ID."
                 )
             op = edit["operation"]
             if op.startswith("delete_"):

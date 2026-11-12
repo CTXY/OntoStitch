@@ -326,6 +326,7 @@ class IncrementalGraphIntegrationEngine:
     def _run_task(self, task, run_id, *, aliases=None):
         ctx = self.ctx
         before = self.current
+        new_id_prefix = f"generated::{uuid4().hex}::"
         batch = ActiveBatch(ctx, before, targets=task.targets, aliases=aliases)
         ctx.active_task = task
         ctx.active_batch = batch
@@ -472,6 +473,7 @@ class IncrementalGraphIntegrationEngine:
             payload = build_task_context(
                 ctx, ctx.candidate, task, origins=self.lineage, before=before
             )
+            payload["new_id_prefix"] = new_id_prefix
             payload["task_scope"]["writable_ids"] = sorted(batch.allowed)
             payload["identity_aliases"] = batch.aliases
             payload["provisional_identity_projection"] = bool(batch.aliases)
