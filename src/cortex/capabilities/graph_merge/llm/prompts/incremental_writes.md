@@ -17,6 +17,8 @@ Only return inspection_checks for IDs in inspection_signals, and rationale_check
 
 ## Repair
 
+`edits` execute graph modifications; `changes` ONLY records provenance correspondence. To remove a current copy, submit `delete_node` with `node_id` and delete/retarget its incident edges, PLUS the corresponding `changes`. Writing “delete/replaced by” in a correspondence does not remove anything. Resolve every Assessment issue on the actual candidate, including necessary related objects now made writable; these are part of this repair, not unrelated cleanup.
+
 Pending objects remain until replaced or withdrawn. Use `remove_edits` (kind/id), `remove_edge_merges` (survivor IDs), `remove_contracts` (new pending predicate IDs), or `remove_changes` (complete old before-group). Omitting an operation does not remove it. Never list a before reference twice in overlapping changes/edge_merges.
 
 Use `edge_merges` only after confirming the same assertion and compatible scope. Prefer it to copying whole edges when only exact provenance needs consolidation. Code preserves exact references; it does not decide semantic equivalence. Source-union membership is not proof that each source supports every output.

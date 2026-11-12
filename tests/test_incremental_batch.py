@@ -336,3 +336,26 @@ def test_alias_projection_does_not_assign_new_evidence_to_an_unselected_conflict
     current = next(n for n in preview.graph.nodes if n.id == a)
     assert current.sources == owner.sources and current.aliases == []
     assert current.alternatives == owner.alternatives
+
+
+def test_correspondence_is_not_a_graph_operation_and_archived_remaps_remain_valid():
+    ctx, batch, a, b = setup_batch()
+    mapping = {
+        "before": [{"kind": "node", "id": a}],
+        "after": [{"kind": "node", "id": b}],
+        "explanation": "Consolidate the former representation into the survivor.",
+    }
+    with pytest.raises(ValueError, match="Correspondence-only replacement"):
+        batch.submit(BatchResult.model_validate({"changes": [mapping]}))
+    assert batch.preview is None and any(n.id == a for n in batch.base.graph.nodes)
+    batch.submit(
+        BatchResult.model_validate(
+            {"edits": [{"operation": "delete_node", "node_id": a}]}
+        )
+    )
+    assert a not in {n.id for n in batch.preview.graph.nodes}
+    # A removed original can still have its historical source correspondence
+    # corrected without pretending that a current graph object was deleted.
+    next_batch = ActiveBatch(ctx, batch.preview, targets={b})
+    next_batch.submit(BatchResult.model_validate({"changes": [mapping]}))
+    assert next_batch.preview == batch.preview

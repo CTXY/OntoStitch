@@ -63,6 +63,8 @@ The valid candidate already includes saved valid writes. `saved_patch` is a smal
 
 Ordinary same-ID updates receive automatic self-dispositions. Deletions require explicit merge/rewrite/discard. A complete node/edge write uses one operation-specific shape; it must not repeat node_id/edge_id alongside the object. New relation contracts cannot replace installed meanings.
 
+`edits` executes modifications; `changes` only records correspondence. A replacement that omits a current input from its outputs cannot leave that input wholly unchanged in the candidate. Submission reports all such objects and requires explicit edits or a truthful retained-output correspondence; it never silently deletes them. Remapping an already absent archived source remains valid without a new deletion. Related-decision signal identities include group membership so a changed group is not mistaken for an already reviewed pattern.
+
 Code supplies a fresh `new_id_prefix` for each active batch. The Agent appends local node/edge names instead of guessing the next numeric input ID, which may belong to an unread physical object. The prefix stays stable across that batch's assessment revisions; existing and pending objects retain their IDs.
 
 `edge_merges` means the Agent has confirmed the same assertion in compatible scope. Code unions exact source references into the named survivor; it never infers that confirmation. Historical-source correction and current-object rewrite remain separate correspondence groups. This avoids mixing immutable and current references.

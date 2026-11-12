@@ -56,7 +56,10 @@ class BatchResult(Model):
     """Submit only this task's patch, not the accumulated graph or history."""
 
     edits: tuple[NodeWrite | EdgeWrite | NodeDelete | EdgeDelete, ...] = ()
-    changes: tuple[Change, ...] = ()
+    changes: tuple[Change, ...] = Field(
+        default=(),
+        description="Provenance correspondences only; does NOT execute graph changes. Retire current copies with explicit delete_node/delete_edge edits as well as their before/after correspondence.",
+    )
     conflicts: tuple[ConflictWrite, ...] = ()
     edge_merges: tuple[EdgeMerge, ...] = ()
     relation_contracts: tuple[EdgeType, ...] = Field(
@@ -406,6 +409,31 @@ class ActiveBatch:
                             explanation=merge.explanation,
                         )
                     )
+        # Correspondences describe effects; they do not execute them. A current
+        # input excluded from its replacement cannot survive wholly unchanged.
+        stale = set()
+        for change in changes:
+            after_ids = {(r.kind, r.id) for r in change.after}
+            for ref in change.before:
+                old, current = (
+                    (source_nodes, nodes)
+                    if ref.kind == "node"
+                    else (source_edges, edges)
+                )
+                if (
+                    ref.alternative_id is None
+                    and (ref.kind, ref.id) not in after_ids
+                    and ref.id in old
+                    and ref.id in current
+                    and old[ref.id] == current[ref.id]
+                ):
+                    stale.add((ref.kind, ref.id))
+        if stale:
+            raise ValueError(
+                f"Correspondence-only replacement leaves current objects unchanged: {sorted(stale)}. "
+                "changes does not execute edits. Submit explicit delete_node/delete_edge edits to retire copies, "
+                "or include each genuinely retained output in after; do not merely repeat the correspondence."
+            )
         # Same-ID edits carry their own mechanical disposition; deletes do not.
         covered = {(e.kind, e.id) for c in changes for e in c.before}
         for kind, old, current in [

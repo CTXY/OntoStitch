@@ -122,7 +122,7 @@ def inspection_signals(context, preview, *, origins=None):
         if len(members) > 1:
             add(
                 "related_decisions",
-                [operand],
+                [operand, *sorted(members)],
                 node_ids=sorted(members),
                 shared_operands=[operand],
             )
