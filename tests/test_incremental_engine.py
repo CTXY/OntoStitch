@@ -249,7 +249,7 @@ def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path
 
 
 def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypatch):
-    from cortex.capabilities.graph_merge.integration import incremental as module
+    from cortex.capabilities.graph_merge.integration import reconciliation as module
     from cortex.capabilities.graph_merge.integration.context import IntegrationContext
     from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
 
@@ -265,7 +265,11 @@ def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypat
         "inspection_signals",
         lambda *args, **kw: [{"id": "unrelated", "kind": "example", "node_ids": [b]}],
     )
-    engine._run_task = lambda task, run_id: calls.append(task.targets) or set()
+    monkeypatch.setattr(
+        module.ReconciliationController,
+        "_execute",
+        lambda self, task, payload: (calls.append(task.targets) or task.targets, set()),
+    )
     engine._reconcile("local", initial_targets={a})
     assert calls == [{a}]
 

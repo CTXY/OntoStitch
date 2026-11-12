@@ -651,81 +651,12 @@ class IncrementalGraphIntegrationEngine:
         )
 
     def _reconcile(self, run_id, *, first=False, initial_targets=None):
-        reviewed = set()
-        incoming_roots = {
-            k
-            for k, n in _nodes(self.current).items()
-            if n.node_type not in PHYSICAL
-            and any(
-                r.kind == "node" and r.id in self.ctx.seeds
-                for r in self.lineage.origin_refs("node", k)
-            )
-        }
-        if initial_targets is not None:
-            incoming_roots = set(initial_targets)
-        else:
-            for entry in self.history:
-                incoming_roots.update(entry["delta"]["nodes"]["created"])
-                incoming_roots.update(entry["delta"]["nodes"]["updated"])
-        pending = initial_targets
-        for cycle in range(self.max_rounds + 1):
-            preview = Preview(
-                self.current, self.lineage.node_map, self.lineage.edge_map, []
-            )
-            signals = inspection_signals(self.ctx, preview, origins=self.lineage)
-            targets = incoming_roots if cycle == 0 and first else (pending or set())
-            checks = [
-                s
-                for s in signals
-                if s["id"] not in reviewed
-                and _signal_targets(s, self.current) & targets
-            ]
-            tasks = review_batches(self.current, targets=targets, checks=checks)
-            if not tasks:
-                return
-            impacts = set()
-            for index, (ids, cs) in enumerate(tasks):
-                task = LocalTask(
-                    f"structure-{cycle}-{index}", "reconcile", ids, checks=cs
-                )
-                task.review_retained_rules = True
-                impacts |= self._run_task(task, run_id)
-                reviewed.update(c["id"] for c in cs)
-            # A newly introduced pattern still needs an explicit conclusion,
-            # even when all its endpoints were part of the writer's own patch.
-            scope = incoming_roots | set().union(*(ids for ids, _ in tasks))
-            for signal in inspection_signals(
-                self.ctx,
-                Preview(self.current, self.lineage.node_map, self.lineage.edge_map, []),
-                origins=self.lineage,
-            ):
-                keys = _signal_targets(signal, self.current)
-                if signal["id"] not in reviewed and keys & scope:
-                    impacts |= keys
-            # Reopen affected definitions, including additions to a previously
-            # reviewed neighbourhood, without recursively expanding all hubs.
-            pending = {
-                k
-                for k in impacts
-                if k in _nodes(self.current)
-                and _nodes(self.current)[k].node_type not in PHYSICAL
-            }
-            if not pending:
-                return
-            # Checks involving changed endpoints need semantic reconsideration.
-            reviewed -= {
-                s["id"]
-                for s in inspection_signals(
-                    self.ctx,
-                    Preview(
-                        self.current, self.lineage.node_map, self.lineage.edge_map, []
-                    ),
-                    origins=self.lineage,
-                )
-                if _signal_targets(s, self.current) & pending
-            }
-        raise IntegrationIncomplete(
-            "Structural reconciliation did not close within the configured budget"
+        from cortex.capabilities.graph_merge.integration.reconciliation import (
+            ReconciliationController,
+        )
+
+        return ReconciliationController(self, run_id).run(
+            first=first, initial_targets=initial_targets
         )
 
     def _publish_checks(self):
