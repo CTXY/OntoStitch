@@ -186,9 +186,9 @@ def main():
                     args.reviewed_node_stage, empty, fragment, schema
                 )
             if args.feedback_file:
-                engine.external_feedback = json.loads(args.feedback_file.read_text())[
-                    "issues"
-                ]
+                feedback = json.loads(args.feedback_file.read_text())
+                engine.external_feedback = feedback["issues"]
+                engine.feedback_targets = feedback.get("target_ids", [])
             result = engine.merge(
                 current, fragment, schema, run_id=f"{args.output.name}-{index}"
             )

@@ -20,6 +20,8 @@ Check only requested Rule reasons against actual evidence, including branches. C
 
 ## Apply one local patch
 
+For each conflict owner, compare ordinary Rules governing the same operands. An ordinary copy of one alternative must not remain as an unconditional policy that bypasses the conflict. Merge its supporting sources into the corresponding alternative and remove the duplicate, or establish an independently supported non-overlapping condition. Also keep independent selection and presentation decisions separate: choosing fields does not decide whether they become columns or rows.
+
 Return `BatchResult` with the needed edits and current inspection/rationale checks. A valid structured result finishes this task directly; do not call or print StageCompletion. Do not resend the graph or accumulated history.
 
 Use complete contents in `conflicts`; code performs lossless compaction. Replace obsolete competing copies and fix their consumers in the same batch. Same-ID updates receive mechanical dispositions; deletes and nontrivial transformations require `changes`. A surviving relation must be named by its edge or complete replacement subgraph, not merely an adjacent root. Empty after means an explained discard, not an undocumented merge.

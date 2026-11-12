@@ -19,6 +19,8 @@ Bindings need not exhaust physically matching fields and do not require SELECT-a
 
 For a shared operand with selection and presentation Rules, substitute EVERY preserved selection alternative into the presentation action/pattern. A layout that hard-codes another subset is incompatible unless explicitly branch-scoped. Check this even when each Rule separately matches its own Gold.
 
+An ordinary Rule duplicating one conflict alternative must not bypass branch selection through an unconditional applicability edge. Repeated representation positions do not prove distinct underlying people or objects; reasons must respect the Concept's stated identity limits.
+
 ## Feedback and result
 
 Verify current repairs against any supplied previous issues, using original evidence. Do not demand the opposite coverage choice without explaining the evidential mistake in the prior review. A valid alternative representation need not be forced into one preferred shape.

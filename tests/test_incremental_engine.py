@@ -217,3 +217,32 @@ def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
     with pytest.raises(IntegrationIncomplete):
         engine._run_task(LocalTask("delete", "reconcile", {r, e}), "unit")
     assert phases == ["reconcile", "node_assess"] and engine.current == old
+
+
+def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path):
+    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+
+    source = state([*catalog(), concept("A", "a"), concept("B", "a")])
+    schema = load_root_schema()
+    first = IncrementalGraphIntegrationEngine(IdentityOnlyAgent())
+    first.workspace_path = tmp_path / "first.sqlite"
+    first.merge(state(), source, schema, run_id="first")
+    snapshot = WorkspaceStore(first.workspace_path).load("first")
+    target = next(n.id for n in first.current.graph.nodes if n.node_type == "concept")
+    untouched = first.current
+    agent = IdentityOnlyAgent()
+    second = IncrementalGraphIntegrationEngine(agent)
+    second.resume_snapshot = snapshot
+    second.external_feedback = ["Review the definition without unrelated cleanup."]
+    second.feedback_targets = [target]
+    result = second.merge(state(), source, schema, run_id="local")
+    assert agent.phases == ["reconcile"]
+    assert second.current == untouched
+    assert len(result.node_mappings) == len(source.graph.nodes)
+    assert second.history[-1]["task_id"] == "external-review"
+
+    import pytest
+
+    snapshot["final"] = False
+    with pytest.raises(ValueError, match="completed workspace"):
+        second.merge(state(), source, schema, run_id="unfinished")

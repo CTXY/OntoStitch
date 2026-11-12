@@ -243,6 +243,30 @@ class IncrementalGraphIntegrationEngine:
                 LocalTask("external-review", "reconcile", targets, feedback=feedback),
                 run_id,
             )
+        elif resume and getattr(self, "external_feedback", None):
+            # A reviewed graph needs a local feedback transaction, not another
+            # identity/consolidation pass or a scan of every original input.
+            if not resume.get("final"):
+                raise ValueError("Local-only feedback requires a completed workspace")
+            targets = set(getattr(self, "feedback_targets", ()))
+            current_ids = set(_nodes(self.current)) | {
+                e.id for e in self.current.graph.edges
+            }
+            if not targets or not targets <= current_ids:
+                raise ValueError(
+                    "Local resume feedback requires valid current target IDs"
+                )
+            impacts = self._run_task(
+                LocalTask(
+                    "external-review",
+                    "reconcile",
+                    targets,
+                    feedback=list(self.external_feedback),
+                ),
+                run_id,
+            )
+            if impacts:
+                self._reconcile(run_id, initial_targets=impacts)
         else:
             # Identity retrieval is one independent phase. Group choice is never
             # inferred from physical endpoints or candidate scores by code.
@@ -576,7 +600,7 @@ class IncrementalGraphIntegrationEngine:
             f"{task.id} failed independent node assessment; batch not published"
         )
 
-    def _reconcile(self, run_id, *, first=False):
+    def _reconcile(self, run_id, *, first=False, initial_targets=None):
         reviewed = set()
         incoming_roots = {
             k
@@ -590,7 +614,7 @@ class IncrementalGraphIntegrationEngine:
         for entry in self.history:
             incoming_roots.update(entry["delta"]["nodes"]["created"])
             incoming_roots.update(entry["delta"]["nodes"]["updated"])
-        pending = None
+        pending = initial_targets
         for cycle in range(self.max_rounds + 1):
             preview = Preview(
                 self.current, self.lineage.node_map, self.lineage.edge_map, []
