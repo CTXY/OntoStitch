@@ -246,3 +246,25 @@ def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path
     snapshot["final"] = False
     with pytest.raises(ValueError, match="completed workspace"):
         second.merge(state(), source, schema, run_id="unfinished")
+
+
+def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypatch):
+    from cortex.capabilities.graph_merge.integration import incremental as module
+    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
+
+    original = state([*catalog(), concept("A", "a"), concept("B", "b")])
+    ctx = IntegrationContext(state(), original, load_root_schema())
+    engine = IncrementalGraphIntegrationEngine(None)
+    engine.ctx, engine.current = ctx, ctx.union_state()
+    engine.lineage = LineageIndex(ctx)
+    a, b = ctx.input_node_map["A"], ctx.input_node_map["B"]
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "inspection_signals",
+        lambda *args, **kw: [{"id": "unrelated", "kind": "example", "node_ids": [b]}],
+    )
+    engine._run_task = lambda task, run_id: calls.append(task.targets) or set()
+    engine._reconcile("local", initial_targets={a})
+    assert calls == [{a}]

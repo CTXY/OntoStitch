@@ -611,9 +611,12 @@ class IncrementalGraphIntegrationEngine:
                 for r in self.lineage.origin_refs("node", k)
             )
         }
-        for entry in self.history:
-            incoming_roots.update(entry["delta"]["nodes"]["created"])
-            incoming_roots.update(entry["delta"]["nodes"]["updated"])
+        if initial_targets is not None:
+            incoming_roots = set(initial_targets)
+        else:
+            for entry in self.history:
+                incoming_roots.update(entry["delta"]["nodes"]["created"])
+                incoming_roots.update(entry["delta"]["nodes"]["updated"])
         pending = initial_targets
         for cycle in range(self.max_rounds + 1):
             preview = Preview(

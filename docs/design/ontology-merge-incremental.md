@@ -17,6 +17,8 @@ SQLite atomically stores current, lineage, revision, history and open tasks. No 
 
 Only final publication assigns public IDs and invokes the strict GraphManager transaction. Local acceptance does not call the final exporter.
 
+Feedback on a completed workspace can start a new local transaction with explicit current `target_ids` and `issues`. The same input/schema/evidence fingerprint is required. It skips Identity and completed consolidation, reviews the named patch and reopens only its outside impacts. An unfinished workspace cannot use this local-only shortcut. The feedback is semantic input to the Agent, never a code-level instruction to delete or relink a specific kind of object.
+
 ## Workflow
 
 1. **Prepare.** Namespace inputs, align exact physical identities, retrieve source evidence. Preserve all business definitions separately.
