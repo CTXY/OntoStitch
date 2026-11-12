@@ -102,3 +102,5 @@ Correctness checks cover exact source dispositions and resolved alternative beha
 - `scripts/audit_incremental_merge.py`: independent public-result preservation audit.
 
 Experimental results, including unsuccessful attempts and provider-reported token usage, belong in the run report rather than this design contract.
+
+See [real-model validation](ontology-merge-incremental-validation.md) for the controlled comparison, independently reviewed four-case results, failed attempts and total development cost.
