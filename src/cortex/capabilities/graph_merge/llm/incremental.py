@@ -49,40 +49,17 @@ class NodeReview(Model):
         return self
 
 
-class UnitNodeReview(Model):
-    unit_id: str
-    review: NodeReview
-
-
-class CrossUnitIssue(Model):
-    unit_ids: tuple[str, ...] = Field(min_length=2)
-    issue: str = Field(min_length=1)
-
-
-class BatchNodeReview(Model):
-    results: tuple[UnitNodeReview, ...]
-    cross_unit_issues: tuple[CrossUnitIssue, ...] = ()
-
-
 class IncrementalIntegrationAgent:
     def __init__(self, llm, *, max_calls=12, trace_sink=None):
         self.llm, self.max_calls, self.trace_sink = llm, max_calls, trace_sink
         self.call_budget = None
 
     def invoke(self, phase, context, payload):
-        from cortex.capabilities.graph_merge.integration.reconciliation_units import (
-            ReconciliationBatch,
-        )
-
         output = (
             IdentityDecision
             if phase == "identity"
-            else BatchNodeReview
-            if phase == "node_assess" and "review_units" in payload
             else NodeReview
             if phase == "node_assess"
-            else ReconciliationBatch
-            if payload.get("reconciliation_batch")
             else BatchResult
         )
         from cortex.infrastructure.artifacts.graph_merge_trace import (
@@ -237,14 +214,10 @@ class IncrementalIntegrationAgent:
         read_tools = [inspect_graph, raw_tools["read_evidence"], read_guidance]
         if phase in {"consolidate", "reconcile"}:
             read_tools.extend([extend_task, inspect_pending])
-        if payload.get("reconciliation_batch"):
-            read_tools = [t for t in read_tools if t.name != "inspect_pending"]
         lookup = {t.name: t for t in read_tools}
         prompt_name = (
             "integration_identity.md"
             if phase == "identity"
-            else "incremental_reconcile_batch.md"
-            if payload.get("reconciliation_batch")
             else f"incremental_{phase}.md"
         )
         system = (
@@ -252,20 +225,11 @@ class IncrementalIntegrationAgent:
             .joinpath(prompt_name)
             .read_text()
         )
-        if phase in {"consolidate", "reconcile"} and not payload.get(
-            "reconciliation_batch"
-        ):
+        if phase in {"consolidate", "reconcile"}:
             system += (
                 "\n\n"
                 + files("cortex.capabilities.graph_merge.llm.prompts")
                 .joinpath("incremental_writes.md")
-                .read_text()
-            )
-        if "review_units" in payload:
-            system += (
-                "\n\n"
-                + files("cortex.capabilities.graph_merge.llm.prompts")
-                .joinpath("incremental_reconcile_assess.md")
                 .read_text()
             )
         messages = [
@@ -285,11 +249,6 @@ class IncrementalIntegrationAgent:
             "inspect_pending",
         }
         budget_announced = False
-        repair_hint = (
-            "No invalid units are saved. Return complete corrected units and exactly the current inspection_signals IDs in patch.inspection_checks."
-            if payload.get("reconciliation_batch")
-            else "Replace faulty objects; previously saved pending objects remain. Use remove_edits/remove_changes/remove_edge_merges to withdraw them."
-        )
         try:
             for _ in range(self.max_calls):
                 batch = getattr(context, "active_batch", None)
@@ -358,9 +317,7 @@ class IncrementalIntegrationAgent:
                     except (ValueError, TypeError) as exc:
                         messages.append(
                             HumanMessage(
-                                f"Output rejected: {exc}. {repair_hint} Use {output.__name__} or valid complete JSON."
-                                if payload.get("reconciliation_batch")
-                                else f"Output rejected: {exc}. Submit only replacements for the affected objects; pending objects remain saved. Use {output.__name__} or valid complete JSON."
+                                f"Output rejected: {exc}. Submit only replacements for the affected objects; pending objects remain saved. Use {output.__name__} or valid complete JSON."
                             )
                         )
                     continue
@@ -388,7 +345,7 @@ class IncrementalIntegrationAgent:
                         result = {
                             "status": "rejected",
                             "error": str(exc),
-                            "repair": repair_hint,
+                            "repair": "Replace faulty objects; previously saved pending objects remain. Use remove_edits/remove_changes/remove_edge_merges to withdraw them.",
                         }
                     if self.trace_sink:
                         self.trace_sink.record(
@@ -431,27 +388,6 @@ class IncrementalIntegrationAgent:
 
     @staticmethod
     def _validate(value, context, payload, phase):
-        if phase == "node_assess" and "review_units" in payload:
-            units = {u["unit_id"]: u for u in payload["review_units"]}
-            found = [r.unit_id for r in value.results]
-            if set(found) != units.keys() or len(found) != len(set(found)):
-                raise ValueError(f"Review each repair unit once: {sorted(units)}")
-            for issue in value.cross_unit_issues:
-                if not set(issue.unit_ids) <= units.keys():
-                    raise ValueError("Cross-unit issue names an unknown repair unit")
-            candidate, validator = context.candidate, context.output_validator
-            try:
-                context.output_validator = None
-                for result in value.results:
-                    context.candidate = context.review_candidates[result.unit_id]
-                    local = {**payload, **units[result.unit_id]}
-                    local.pop("review_units")
-                    IncrementalIntegrationAgent._validate(
-                        result.review, context, local, phase
-                    )
-            finally:
-                context.candidate, context.output_validator = candidate, validator
-            return
         if phase == "node_assess":
             expected_decisions = set(payload.get("decision_review_ids", ()))
             found_decisions = [c.node_id for c in value.decision_checks]

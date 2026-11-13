@@ -35,30 +35,6 @@ class IdentityOnlyAgent:
             )
         elif phase == "node_assess":
             result = NodeReview(verdict="accept")
-        elif payload.get("reconciliation_batch"):
-            from cortex.capabilities.graph_merge.integration.reconciliation_units import (
-                ReconciliationBatch,
-            )
-
-            result = ReconciliationBatch.model_validate(
-                {
-                    "units": [
-                        {
-                            "unit_id": "checked",
-                            "patch": {
-                                "inspection_checks": [
-                                    {
-                                        "inspection_id": c["id"],
-                                        "conclusion": "keep",
-                                        "reason": "Checked supported input",
-                                    }
-                                    for c in payload["inspection_signals"]
-                                ]
-                            },
-                        }
-                    ]
-                }
-            )
         else:
             result = BatchResult()
         callback = getattr(ctx, "output_validator", None)
@@ -273,7 +249,7 @@ def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path
 
 
 def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypatch):
-    from cortex.capabilities.graph_merge.integration import reconciliation as module
+    from cortex.capabilities.graph_merge.integration import incremental as module
     from cortex.capabilities.graph_merge.integration.context import IntegrationContext
     from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
 
@@ -289,11 +265,7 @@ def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypat
         "inspection_signals",
         lambda *args, **kw: [{"id": "unrelated", "kind": "example", "node_ids": [b]}],
     )
-    monkeypatch.setattr(
-        module.ReconciliationController,
-        "_execute",
-        lambda self, task, payload: (calls.append(task.targets) or task.targets, set()),
-    )
+    engine._run_task = lambda task, run_id: calls.append(task.targets) or set()
     engine._reconcile("local", initial_targets={a})
     assert calls == [{a}]
 
