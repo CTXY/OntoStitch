@@ -18,32 +18,22 @@ def _metadata_view(node, edge_ids):
 
 
 def expand_context(state: GraphState, seed_node_ids: set[str]) -> set[str]:
-    """Return a bounded two-hop semantic neighborhood around selected retrieval seeds."""
+    """One asserted hop, followed only by mandatory references and JOIN routing.
 
-    result = set(seed_node_ids)
+    Neighbours do not become new business traversal roots. In particular a
+    physical column reached from a Concept must not fan back out to every other
+    Concept sharing that column. Predicates need no hard-coded traversal list.
+    """
+
     nodes = {node.id: node for node in state.graph.nodes}
-    frontier = set(seed_node_ids)
-    for _depth in range(2):
-        next_frontier: set[str] = set()
-        for edge in state.graph.edges:
-            if edge.from_node_id in frontier:
-                next_frontier.add(edge.to_node_id)
-            if edge.to_node_id in frontier and (
-                edge.reference_origin is not None
-                or edge.edge_type
-                in {
-                    "applies_to",
-                    "grounded_on",
-                }
-            ):
-                next_frontier.add(edge.from_node_id)
-        # Values only enter through their own recall or an explicit semantic binding.
-        next_frontier = {ref for ref in next_frontier if ref in nodes}
-        next_frontier -= result
-        result.update(next_frontier)
-        frontier = next_frontier
-        if not frontier or len(result) >= 160:
-            break
+    seeds = seed_node_ids & nodes.keys()
+    result = set(seeds)
+    for edge in state.graph.edges:
+        if edge.from_node_id in seeds:
+            result.add(edge.to_node_id)
+        if edge.to_node_id in seeds:
+            result.add(edge.from_node_id)
+    result.intersection_update(nodes)
     # Physical joins are Table-to-Table edges. Include up to two hops so a
     # semantic source pair can retain one intermediate routing table.
     table_frontier = {
@@ -88,7 +78,16 @@ def expand_context(state: GraphState, seed_node_ids: set[str]) -> set[str]:
                             ).properties,
                         )
                     )
+        required_edge_ids = {
+            edge_id
+            for ref in result
+            for alternative in nodes[ref].alternatives
+            for group in alternative.overrides.get("properties.relation_metadata", ())
+            for edge_id in group["edges"]
+        }
         for edge in state.graph.edges:
+            if edge.id in required_edge_ids:
+                required.update((edge.from_node_id, edge.to_node_id))
             if edge.from_node_id in result and edge.to_node_id in result:
                 required.update(property_reference_ids(edge.properties))
                 for pair in edge.properties.get("column_pairs", ()):
