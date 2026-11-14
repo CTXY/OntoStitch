@@ -105,6 +105,9 @@ def test_transient_connection_exception_does_not_require_class_name_in_message()
     spec.loader.exec_module(runner)
     assert runner.transient(ConnectionError('peer closed'))
     assert not runner.transient(ValueError('invalid field'))
+    assert runner.transient(RuntimeError('[Errno 32] Broken pipe'))
+    assert runner.transient(RuntimeError('Connection reset by peer'))
+    assert not runner.transient(RuntimeError('APIError: insufficient balance'))
 
 
 def test_completed_adopted_worker_releases_slot_even_if_pid_still_exists(tmp_path):

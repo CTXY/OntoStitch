@@ -48,6 +48,8 @@ def transient(reason):
     message = f'{type(reason).__name__}: {reason}' if isinstance(reason, BaseException) else str(reason)
     return any(word in message for word in (
         'ConnectionError', 'Timeout', 'timed out', 'RateLimitError',
+        'Broken pipe', 'Connection reset', 'RemoteProtocolError',
+        'incomplete chunked read', 'peer closed connection',
         'Error code: 408', 'Error code: 409', 'Error code: 429',
         'Error code: 500', 'Error code: 502', 'Error code: 503', 'Error code: 504',
         'Upstream', 'Assessment output invalid',
@@ -303,6 +305,9 @@ def merge_worker(args):
                 if not transient(error):
                     raise
                 time.sleep(30)
+                args.slot = (args.slot + 1) % len(read_key_slots(args.keys))
+                _cfg, model = configuration(args, args.output / 'merge')
+                observe(model, out)
     write(args.output / 'merged_state.json', current.model_dump(mode='json'))
     (args.output / 'merged_graph.html').write_text(render_graph_html(current.graph, schema, title='Merged training ontology'))
     write(args.output / 'merge_status.json', {'status': 'complete' if not omitted else 'partial',
