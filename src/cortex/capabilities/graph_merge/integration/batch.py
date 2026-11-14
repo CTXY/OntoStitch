@@ -154,6 +154,22 @@ class ActiveBatch:
         if result.failure:
             raise ValueError(result.failure)
         data = result.model_dump(mode="json")
+        stale_deletes = {}
+        for edit in data["edits"]:
+            if edit["operation"].startswith("delete_"):
+                kind, key = edit_key(edit)
+                mapping = self.aliases if kind == "node" else self.edge_aliases
+                if mapping.get(key, key) != key:
+                    stale_deletes[key] = mapping[key]
+        if stale_deletes:
+            raise ValueError(
+                f"These source IDs are already collapsed in the candidate: {stale_deletes}. "
+                "Do not delete them: that would delete their live canonical objects. "
+                "Identity projection and its lineage are already handled by code. "
+                "Withdraw any pending edits for these source IDs with remove_edits, "
+                "and withdraw their redundant source-only changes with remove_changes. "
+                "Update only the current canonical content. No edits from this submission were saved."
+            )
         for ref in result.remove_edits:
             self.pending.pop((ref.kind, ref.id), None)
         for key in result.remove_edge_merges:

@@ -209,6 +209,7 @@ class IncrementalGraphIntegrationEngine:
         self.identity_decision = None
         self.relation_coverage = set()
         self.reconciliation_complete = False
+        self.pending_review = None
         resume = getattr(self, "resume_snapshot", None)
         if resume:
             if resume.get("input_fingerprint") != input_fingerprint(ctx):
@@ -236,6 +237,7 @@ class IncrementalGraphIntegrationEngine:
             self.identity_decision = resume.get("identity")
             self.relation_coverage = set(resume.get("relation_coverage", ()))
             self.reconciliation_complete = resume.get("reconciliation_complete", False)
+            self.pending_review = resume.get("pending_review")
             normalized, edge_aliases = alias_view(self.current, {})
             if normalized != self.current:
                 self.lineage.observe(
@@ -376,6 +378,15 @@ class IncrementalGraphIntegrationEngine:
         return result
 
     def _run_task(self, task, run_id, *, aliases=None):
+        saved = getattr(self, "pending_review", None)
+        if saved and (
+            saved["revision"] != self._revision or saved["task_id"] != task.id
+            or saved["phase"] != task.phase or saved["aliases"] != (aliases or {})
+            or saved["groups"] != task.groups or saved["checks"] != task.checks
+        ):
+            saved = None
+        if saved:
+            task.targets.update(saved["targets"])
         ctx = self.ctx
         before = self.current
         new_id_prefix = f"generated::{uuid4().hex}::"
@@ -543,11 +554,25 @@ class IncrementalGraphIntegrationEngine:
                         ],
                     }
             ctx.output_validator = batch.submit
-            result = self.agent.invoke(task.phase, ctx, payload)
+            if saved is not None:
+                from cortex.capabilities.graph_merge.integration.batch import BatchResult
+
+                result = BatchResult.model_validate(saved["result"])
+                batch.submit(result)
+                saved = None
+            else:
+                result = self.agent.invoke(task.phase, ctx, payload)
             # Injected test agents use the same validation path.
             if batch.result is not result and batch.preview is None:
                 batch.submit(result)
             candidate = batch.preview
+            self.pending_review = {
+                "revision": self._revision, "task_id": task.id, "phase": task.phase,
+                "aliases": aliases or {}, "targets": sorted(task.targets),
+                "groups": task.groups, "checks": task.checks,
+                "result": batch.result.model_dump(mode="json"),
+            }
+            self._persist(run_id)
             review = None
             review_ids = set()
             if task.phase == "reconcile":
@@ -598,6 +623,8 @@ class IncrementalGraphIntegrationEngine:
                 task.feedback = list(review.issues)
                 task.targets.update(r.id for r in review.issue_refs)
                 batch.allowed.update(task.targets)
+                self.pending_review = None
+                self._persist(run_id)
                 continue
             # No model transaction remains open while persistence runs.
             self.lineage = batch.lineage_preview
@@ -619,6 +646,7 @@ class IncrementalGraphIntegrationEngine:
                 }
             )
             self.open_tasks = []
+            self.pending_review = None
             self._persist(run_id)
             impacts = affected_query_roots(before, candidate)
             if task.phase == "reconcile":
@@ -824,6 +852,7 @@ class IncrementalGraphIntegrationEngine:
             "identity": self.identity_decision,
             "relation_coverage": sorted(getattr(self, "relation_coverage", ())),
             "reconciliation_complete": getattr(self, "reconciliation_complete", False),
+            "pending_review": getattr(self, "pending_review", None),
             "reviewed_sources": {
                 k: [
                     r.model_dump(mode="json")

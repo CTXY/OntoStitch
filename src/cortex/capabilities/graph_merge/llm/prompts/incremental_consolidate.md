@@ -32,4 +32,6 @@ Use `remove_edits` (kind/id) or `remove_edge_merges` (survivor IDs) to withdraw 
 
 ## Provisional identity projection
 
+The candidate ALREADY has every supplied identity alias applied, including incident references. Do not emit deletions or source-only rewrites for those alias members; code records identity lineage. Update the current canonical content. Do not enumerate all projected edges for cleanup; business-edge ownership and redundant assertions belong to Reconciliation.
+
 `identity_aliases` projects live members of an already confirmed identity. An unintegrated draft carries one member's body; a current node may instead already contain accepted complete alternatives from an earlier coupled repair. Compare all immutable matched members with the actual candidate, preserving already integrated knowledge. Archived members need not still exist as current objects. Do not restore retired ordinary copies or repeat already executed deletions. Membership/source union alone proves neither integrated content nor per-alternative support. A concrete identity counterexample must fail the unpublished batch for rebuild.

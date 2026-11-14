@@ -62,6 +62,33 @@ def test_first_structural_pass_covers_unmatched_nodes_without_signals():
     assert {"A", "B"} <= covered
 
 
+def test_interrupted_assessment_resumes_validated_writer_result_without_repeating_writer(tmp_path):
+    import pytest
+    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+
+    class Interrupted(IdentityOnlyAgent):
+        def invoke(self, phase, ctx, payload):
+            if phase == "node_assess":
+                raise RuntimeError("simulated connection loss")
+            return super().invoke(phase, ctx, payload)
+
+    source = state([*catalog(), concept("A", "a"), concept("B", "a")])
+    path = tmp_path / "workspace.sqlite"
+    first = IncrementalGraphIntegrationEngine(Interrupted())
+    first.workspace_path = path
+    with pytest.raises(RuntimeError, match="connection loss"):
+        first.merge(state(), source, load_root_schema(), run_id="resume")
+    saved = WorkspaceStore(path).load("resume")
+    assert saved["pending_review"]["task_id"] == "content-0"
+    model = IdentityOnlyAgent()
+    resumed = IncrementalGraphIntegrationEngine(model)
+    resumed.workspace_path, resumed.resume_snapshot = path, saved
+    result = resumed.merge(state(), source, load_root_schema(), run_id="resume")
+    assert model.phases == ["node_assess", "reconcile"]
+    assert len([n for n in result.state.graph.nodes if n.node_type == "concept"]) == 1
+    assert WorkspaceStore(path).load("resume")["pending_review"] is None
+
+
 def test_no_edit_decision_judgment_skips_independent_assessment():
     from test_graph_integration import edge
 

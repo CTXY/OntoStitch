@@ -22,6 +22,16 @@ def write(node, operation="update_node"):
     return {"operation": operation, "node": node}
 
 
+def test_deleting_an_already_projected_source_does_not_delete_the_canonical():
+    ctx = IntegrationContext(state(), state([*catalog(), concept("A", "a"), concept("B", "a")]), load_root_schema())
+    a, b = (ctx.input_node_map[k] for k in ("A", "B"))
+    batch = ActiveBatch(ctx, ctx.union_state(), targets={a}, aliases={a: a, b: a})
+    with pytest.raises(ValueError, match="already collapsed"):
+        batch.submit(BatchResult.model_validate({"edits": [{"operation": "delete_node", "node_id": b}]}))
+    assert not batch.pending
+    assert a in {n.id for n in batch.seed.graph.nodes}
+
+
 @pytest.mark.parametrize("scope", [["foreign-branch"], [], "foreign-branch", [None]])
 def test_batch_rejects_branch_scope_on_a_normal_source_before_acceptance(scope):
     _ctx, batch, a, b = setup_batch()
