@@ -40,6 +40,12 @@
 
 用 retirements 的 before、after、explanation 一起表达退役/替换，代码同步删除不再保留的对象并记录来源去向；不要另写 changes 或 deletes。相同事实合并用 edge_merges。边的未改来源自动保留；补充实际支持依据用 add_evidence。新增谓词须填写工具 schema 中的全部契约字段。被拒绝的提案不保存任何本次修改，修正后完整重提。
 
+before/after 都是引用对象列表，每个对象必须有 kind 和 id，不能写成裸 ID 或字符串列表。例如：
+
+```json
+{"before":[{"kind":"edge","id":"old_edge"}],"after":[{"kind":"edge","id":"kept_edge"}],"explanation":"同一事实保留在后继边。"}
+```
+
 既有 targets、公式与 Rule 内容已由上游评估；仅修改业务关系时，不复核这些内容。可写范围中的 ID 不是待逐项读取的检查清单。只有确实需要改变节点内容或解决首屏无法解释的指代时，才读取对应字段。
 
 retirements 明确指定单条旧边和单条后继边时，代码把该旧边的精确来源保存在这一后继上；多后继结构仍须按实际支持选择 add_evidence，不自动广播来源。已提供的关系规范与契约无需重新读取。
