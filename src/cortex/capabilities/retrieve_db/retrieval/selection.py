@@ -135,23 +135,35 @@ class LlmRelevanceSelector:
             payload = {"column_groups": list(groups.values())}
         else:
             payload = {"assets": entries}
-        result = await run_llm_extraction(
-            llm=self._llm,
-            prompt=load_prompt(prompt_name),
-            output_model=RelevanceOutput,
-            human_payload={
-                "question": question,
-                "initial_sql": initial_sql or "",
-                **payload,
-            },
-        )
-        decisions = handles.decode_decisions(result.decisions)
-        _validate_partition(
-            expected={item.document.document_id for item in representations},
-            supplied=[item.document_id for item in decisions],
-            label="relevance",
-        )
-        return decisions
+        request = {
+            "question": question,
+            "initial_sql": initial_sql or "",
+            **payload,
+        }
+        expected = {item.document.document_id for item in representations}
+        for attempt in range(2):
+            result = await run_llm_extraction(
+                llm=self._llm,
+                prompt=load_prompt(prompt_name),
+                output_model=RelevanceOutput,
+                human_payload=request,
+            )
+            decisions = handles.decode_decisions(result.decisions)
+            try:
+                _validate_partition(
+                    expected=expected,
+                    supplied=[item.document_id for item in decisions],
+                    label="relevance",
+                )
+                return decisions
+            except ValueError:
+                if attempt:
+                    raise
+                request["format_feedback"] = {
+                    "requirement": "Return each supplied document handle exactly once. Do not omit, duplicate or invent handles. Reuse the evidence above; no default relevance is inferred by code.",
+                    "expected_handles": [handles.encode(k) for k in sorted(expected)],
+                    "previous_decisions": result.model_dump(mode="json"),
+                }
 
 
 def _validate_partition(*, expected: set[str], supplied: list[str], label: str) -> None:
