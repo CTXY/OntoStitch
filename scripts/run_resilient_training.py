@@ -280,6 +280,7 @@ def merge_worker(args):
             nonlocal model
             if not transient(error):
                 return None
+            previous_streaming = bool(getattr(agent.llm, 'streaming', args.streaming))
             write(out / 'last_transport_error.json', {
                 'type': type(error).__name__, 'error': str(error),
                 'slot': args.slot, 'updated': time.time(),
@@ -288,6 +289,10 @@ def merge_worker(args):
             time.sleep(30)
             args.slot = (args.slot + 1) % len(read_key_slots(args.keys))
             _cfg, model = configuration(args, args.output / 'merge')
+            if 'Broken pipe' in str(error):
+                # Some upstream bridges fail while forwarding SSE. Retain the
+                # same dialogue/model/service and try its other HTTP mode.
+                model.streaming = model.stream_usage = not previous_streaming
             observe(model, out)
             status = read(args.output / 'merge_status.json')
             write(args.output / 'merge_status.json', {**status, 'slot': args.slot, 'updated': time.time()})
