@@ -217,7 +217,7 @@ def merge_worker(args):
             if engine.workspace_path.exists():
                 engine.resume_snapshot = WorkspaceStore(engine.workspace_path).load(f'train-merge-{ident}')
             write(args.output / 'merge_status.json', {'status': 'running', 'question_id': ident,
-                'merged': merged, 'omitted': omitted, 'updated': time.time()})
+                'merged': merged, 'omitted': omitted, 'slot': args.slot, 'updated': time.time()})
             try:
                 result = engine.merge(current, incoming, schema, run_id=f'train-merge-{ident}')
                 audit = audit_result(current, incoming, result, schema)
@@ -326,10 +326,11 @@ def watch(args):
             else:
                 raise RuntimeError('Merge process did not exit after transport recovery')
             write(args.output / 'progress.json', {'phase': 'recovering', 'updated': time.time()})
+            slot = (read(args.output / 'merge_status.json').get('slot', 0) + 1) % len(read_key_slots(args.keys))
             with (args.output / 'supervisor.log').open('a') as log:
                 child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
                     '--output', str(args.output), '--config', str(args.config),
-                    '--keys', str(args.keys), '--model', args.model],
+                    '--keys', str(args.keys), '--model', args.model, '--slot', str(slot)],
                     stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy(), start_new_session=True)
             write(args.output / 'supervisor.pid', child.pid)
         time.sleep(5)
@@ -392,7 +393,7 @@ def supervise(args):
     if any(row['status'] == 'needs_attention' for row in states.values()):
         write(args.output / 'progress.json', {'phase': 'needs_attention', 'cases': states, 'updated': time.time()})
         return
-    args.slot = 0
+    args.slot = getattr(args, 'slot', 0) % len(slots)
     write(args.output / 'progress.json', {'phase': 'merge', 'updated': time.time()})
     try:
         merge_worker(args)
