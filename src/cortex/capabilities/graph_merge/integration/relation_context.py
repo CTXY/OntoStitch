@@ -68,6 +68,11 @@ def relation_context(context, current, task, *, before=None, assessment=False):
             if (e.from_node_id in roots and e.to_node_id in roots)
             or e.from_node_id in changed_nodes or e.to_node_id in changed_nodes
         }
+        # A grounding repair must show the remaining canonical owner as well
+        # as the deleted assertion; otherwise the reviewer sees false loss.
+        physical_roots = {k for k in roots if k in nodes and nodes[k].node_type in PHYSICAL}
+        chosen |= {e.id for e in edges.values()
+                   if e.edge_type == "grounded_on" and e.to_node_id in physical_roots}
     else:
         chosen |= {e.id for e in edges.values()
                    if (e.from_node_id in roots or e.to_node_id in roots)

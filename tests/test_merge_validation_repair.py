@@ -50,3 +50,18 @@ def test_noop_contract_repair_stops_without_repeating_model_tasks():
     with pytest.raises(GraphRejected):
         engine._validate_for_publication("unit")
     assert len(tasks) == 1
+
+
+def test_grounding_deletion_assessment_shows_the_remaining_canonical_owner():
+    from cortex.capabilities.graph_merge.integration.relation_context import relation_context
+    from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+    engine = engine_with_contested_binding()
+    before = engine.current
+    after = before.model_copy(update={"graph": before.graph.model_copy(update={
+        "edges": tuple(e for e in before.graph.edges if e.id != "ground.B")
+    })})
+    ctx = SimpleNamespace(schema=load_root_schema(), evidence=[])
+    packet = relation_context(ctx, after, LocalTask("repair", "graph_assess", {"B"}),
+                              before=before, assessment=True)
+    assert "ground.A" in {e["id"] for e in packet["edges"]}
+    assert {"A", "B", "a"} <= {n["id"] for n in packet["nodes"]}
