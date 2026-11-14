@@ -22,6 +22,31 @@ def write(node, operation="update_node"):
     return {"operation": operation, "node": node}
 
 
+def test_generated_catalog_prose_does_not_prevent_exact_edge_deduplication():
+    from cortex.capabilities.graph_merge.integration.compiler import deduplicate_edges
+    from cortex.schema import GraphEdge, SourceReference
+
+    def catalog_edge(key, description, source, origin="default"):
+        return GraphEdge(id=key, edge_type="belongs_to", from_node_id="column",
+                         to_node_id="table", properties={"description": description},
+                         sources=(SourceReference(source_id=source),), reference_origin=origin)
+
+    edges = [catalog_edge("a", "input::n1 belongs_to its catalog owner input::n2.", "one"),
+             catalog_edge("b", "input::n50 belongs_to its catalog owner input::n60.", "two")]
+    result, mapping = deduplicate_edges(edges)
+    assert mapping == {"a": "a", "b": "a"}
+    assert {s.source_id for s in result["a"].sources} == {"one", "two"}
+    assert result["a"].properties["description"] == "column belongs_to its catalog owner table."
+
+    # Authored constraints and non-template descriptions are not rewritten.
+    custom = catalog_edge("c", "Ownership subject to an additional restriction.", "three")
+    explicit = catalog_edge("d", edges[0].properties["description"], "four", "explicit")
+    result, mapping = deduplicate_edges([*edges, custom, explicit])
+    assert len(result) == 3
+    assert result["c"].properties == custom.properties
+    assert result["d"].properties == explicit.properties
+
+
 def test_deleting_an_already_projected_source_does_not_delete_the_canonical():
     ctx = IntegrationContext(state(), state([*catalog(), concept("A", "a"), concept("B", "a")]), load_root_schema())
     a, b = (ctx.input_node_map[k] for k in ("A", "B"))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 from cortex.application.merge_graph import (
@@ -96,6 +97,22 @@ def deduplicate_edges(edges):
 
     by_signature, mappings = {}, {}
     for edge in edges:
+        # Only controller-generated catalog prose embeds temporary source IDs.
+        # Canonicalize that template after endpoint remapping so identical
+        # physical ownership assertions can share one edge and exact sources.
+        if (
+            edge.reference_origin == "default"
+            and edge.edge_type in {"belongs_to", "value_of"}
+            and isinstance(edge.properties.get("description"), str)
+            and re.fullmatch(
+                rf"\S+ {edge.edge_type} its catalog owner \S+\.",
+                edge.properties.get("description", ""),
+            )
+        ):
+            edge = edge.model_copy(update={"properties": {
+                **edge.properties,
+                "description": f"{edge.from_node_id} {edge.edge_type} its catalog owner {edge.to_node_id}.",
+            }})
         if edge.edge_type == "joins_with":
             signature = (edge.edge_type, join_edge_key(edge))
             previous = by_signature.get(signature)
