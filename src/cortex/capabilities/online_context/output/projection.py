@@ -73,74 +73,19 @@ def build_downstream_guidance(
         }
         for asset in assets
     )
-    content = []
-    automatic = any(
-        item.source in {"question_resolved", "database_equivalent"}
-        for item in interaction_guidance
-    )
-    if include_interaction_preamble:
-        content.append(
-            (
-                "生成 SQL 时先遵守已确定的任务 guidance；数据库等效观察仅适用于本次查询。"
-                if automatic
-                else "生成 SQL 时必须先遵守以下用户交互 guidance；其优先级高于 ontology assets。"
-            )
-            if chinese
-            else (
-                "Follow resolved task guidance first; database equivalence observations "
-                "apply only to this query."
-                if automatic
-                else "When generating SQL, you MUST follow the resolved user guidance first; "
-                "it has highest priority since it is user-confirmed."
-            )
-        )
-    if resolved_guidance_content.strip():
-        content.append(
-            (
-                ("已确定的任务 guidance：" if chinese else "Resolved task guidance:")
-                if automatic
-                else ("用户交互 guidance：" if chinese else "Resolved user guidance:")
-            )
-            + "\n"
-            + resolved_guidance_content.strip()
-        )
-    if resolved_join_paths:
-        content.append(
-            (
-                "相关 JOIN 路径（仅作参考）："
-                if chinese
-                else "Relevant join paths (reference only):"
-            )
-            + "\n"
-            + "\n".join(f"- {path}" for path in resolved_join_paths)
-        )
-    content.append(
-        (
-            "Ontology assets（仅作参考）："
-            if chinese
-            else "Ontology assets (reference only):"
-        )
-        + "\n"
-        + "\n".join(task_asset_summary(asset, chinese=chinese) for asset in assets)
-    )
-    grounding_ids = asset_ids | (relevant_grounding_node_ids or set())
-    bindings = []
-    for node in graph.nodes:
-        if node.node_type != "dimension_value" or node.id not in grounding_ids:
-            continue
-        column = _reference_label(
-            str(node.properties.get("column_ref") or ""), nodes_by_id
-        )
-        bindings.append(f"- {node.name}: {column} = {node.properties.get('value')!r}")
-    if bindings:
-        content.append(
-            "Selected schema value bindings (reference only):\n" + "\n".join(bindings)
-        )
-    from cortex.capabilities.online_context.output.query_examples import (
-        render_query_examples,
-    )
+    from cortex.capabilities.online_context.output.sql_handoff import render_sql_handoff
+    from cortex.capabilities.online_context.output.query_examples import render_query_examples
 
-    guidance_content = "\n\n".join(content)
+    automatic = any(item.source in {"question_resolved", "database_equivalent"}
+                    for item in interaction_guidance)
+    guidance_content = render_sql_handoff({
+        "ontology_assets": assets,
+        "interaction_guidance": [item.model_dump(mode="json") for item in interaction_guidance],
+    })
+    # Compatibility for callers that supplied resolved prose without typed choices.
+    # Do not restore automatic-equivalence prose as a mandatory SQL instruction.
+    if not interaction_guidance and resolved_guidance_content.strip():
+        guidance_content += "\n\n# Additional resolved guidance\n\n" + resolved_guidance_content.strip()
     guidance_content = render_query_examples(
         guidance_content, tuple(query_examples), chinese=chinese
     )

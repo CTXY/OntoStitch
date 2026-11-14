@@ -73,6 +73,7 @@ class OnlineContextCapability:
             Path(checkpoint_path),
             {
                 "prompts": prompt_version(),
+                "sql_handoff": "resolved_constraints_v1",
                 "schemas": {
                     "choice": ChoicePoint.model_json_schema(),
                     "answer": InteractionAnswer.model_json_schema(),

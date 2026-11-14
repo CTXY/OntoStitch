@@ -23,3 +23,11 @@ Rule 相关性须结合 condition 和业务作用域，不能只看 operation �
 对照使用同一 SQL 生成器、完整 schema 和相同执行比较器，仅移除 guidance。执行错误或结果不匹配保留，不按正确性重采样、不拼接不同轮次的成功预测。运输失败可恢复，并记录未知 usage。稳定 run ID 允许复用同版本已完成的检索/交互步骤。
 
 若根据 test 运行定位并修改通用行为，报告该事实；后续完整运行保证可复现，但不声称它是未用于开发的盲测。
+
+## SQL handoff 的默认导出
+
+Online Discovery 仍可读取规则以发现可选实现和提出局部问题；完整的 ontology_assets 与交互来源仍在结构化结果中保存。提供给 SQL 生成器的默认文字视图只包含：已解析的任务约束，以及 Concept/Metric/Event 的业务定义。未确认的历史 GenerationRule 原文不成为新任务指令；规则已经确认的行为通过对应交互 guidance 保留。
+
+数据库等价观察说明操作的可选实现，而不证明该操作必须出现，因此不把某个代表实现强制写进 SQL 指令。等价记录与 probe 来源继续保存在结构化交互结果中。手工调用者仅提供已解析文本而没有 typed guidance 时，保留该文本作为兼容输入；配置的 query examples 仍按原机制追加。
+
+公开 online checkpoint 身份包含 handoff 版本，避免旧文本被完成态缓存继续返回。一次实际 44-case 测试中，SQL-focused handoff 得到 34/44，完整旧 handoff 为 29/44；相同单次生成器无 guidance 为 30/44。固定对所有草稿追加一次 SQL review 的独立实验为 32/44，不作为默认流程。这些是 test-informed development 后的实测结果，并非未参与开发的盲测，也不能单独归因于图结构的修改。
