@@ -471,6 +471,25 @@ def test_selection_signal_uses_sql_dialect_and_preserves_implicit_source_choice(
     assert len(choices["variants"][0]["selected_physical_inputs"]) == 1
     assert len(choices["variants"][1]["selected_physical_inputs"]) == 2
 
+    # Lineage lookup has identical selection semantics but is performed only
+    # once for each current Concept, independent of evidence/source count.
+    from collections import Counter
+    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
+
+    lineage = LineageIndex(ctx, preview.node_map, preview.edge_map)
+    lookups = Counter()
+    original_lookup = lineage.origin_refs
+
+    def counted_lookup(kind, key):
+        lookups[kind, key] += 1
+        return original_lookup(kind, key)
+
+    lineage.origin_refs = counted_lookup
+    assert inspection_signals(ctx, preview, origins=lineage) == signals
+    assert lookups
+    assert max(lookups.values()) == 1
+    assert len(lookups) == sum(n.node_type == "concept" for n in preview.state.graph.nodes)
+
 
 def test_supported_reason_cannot_also_declare_unsupported_claims():
     from cortex.capabilities.graph_merge.integration.models import RationaleCheck

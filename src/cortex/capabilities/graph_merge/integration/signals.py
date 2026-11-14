@@ -129,6 +129,16 @@ def inspection_signals(context, preview, *, origins=None):
                 node_ids=sorted(members),
                 shared_operands=[operand],
             )
+    # Resolve the unchanged lineage once per scan, not inside the
+    # evidence × source-node × current-node loop. This is only an index over
+    # recorded provenance; it neither infers identity nor changes signals.
+    origin_concepts = defaultdict(set)
+    if origins is not None:
+        for key, node in nodes.items():
+            if node.node_type == "concept":
+                for ref in origins.origin_refs("node", key):
+                    if ref.kind == "node":
+                        origin_concepts[ref.id].add(key)
     choices = defaultdict(dict)
     for evidence in context.evidence:
         selected = projected_columns(
@@ -145,15 +155,7 @@ def inspection_signals(context, preview, *, origins=None):
                 continue
             candidates = {preview.node_map.get(source.id, source.id)}
             if origins is not None:
-                candidates.update(
-                    key
-                    for key, node in nodes.items()
-                    if node.node_type == "concept"
-                    and any(
-                        r.kind == "node" and r.id == source.id
-                        for r in origins.origin_refs("node", key)
-                    )
-                )
+                candidates.update(origin_concepts[source.id])
             refs = {
                 context.physical_map.get(ref, ref)
                 for group in source.properties.get("targets", [])

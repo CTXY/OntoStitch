@@ -6,7 +6,7 @@ workspace; final IDs, repository normalization and export happen exactly once.
 
 from uuid import uuid4
 
-from cortex.application.ontology_graph import GraphManager
+from cortex.application.ontology_graph import GraphManager, GraphRejected
 from cortex.capabilities.graph_merge.integration.batch import (
     ActiveBatch,
     alias_view,
@@ -208,6 +208,7 @@ class IncrementalGraphIntegrationEngine:
         self.reviewed_sources = {}
         self.identity_decision = None
         self.relation_coverage = set()
+        self.reconciliation_complete = False
         resume = getattr(self, "resume_snapshot", None)
         if resume:
             if resume.get("input_fingerprint") != input_fingerprint(ctx):
@@ -234,6 +235,7 @@ class IncrementalGraphIntegrationEngine:
             }
             self.identity_decision = resume.get("identity")
             self.relation_coverage = set(resume.get("relation_coverage", ()))
+            self.reconciliation_complete = resume.get("reconciliation_complete", False)
             normalized, edge_aliases = alias_view(self.current, {})
             if normalized != self.current:
                 self.lineage.observe(
@@ -349,8 +351,11 @@ class IncrementalGraphIntegrationEngine:
                 )
             # First structural pass covers ALL new/unchecked semantic knowledge,
             # not only topology signals. Later passes reopen actual impacts.
-            self._reconcile(run_id, first=True)
-        self._publish_checks()
+            if not (resume and resume.get("reconciliation_complete")):
+                self._reconcile(run_id, first=True)
+                self.reconciliation_complete = True
+                self._persist(run_id)
+        self._validate_for_publication(run_id)
         proposal = IntegrationProposal(
             changes=self.lineage.source_changes(self.current)
         )
@@ -719,6 +724,34 @@ class IncrementalGraphIntegrationEngine:
         for edge in self.current.graph.edges:
             require_concrete_relation(edge.edge_type)
 
+    def _validate_for_publication(self, run_id):
+        """Route strict, localized contract errors back to the existing Writer.
+
+        No second model review for a no-op and no deterministic semantic fix.
+        Accepted local work is retained; only validator-named objects are opened.
+        """
+        from cortex.capabilities.graph_merge.integration.validation_repair import (
+            validation_targets,
+        )
+
+        for attempt in range(self.max_rounds + 1):
+            try:
+                self._publish_checks()
+                return
+            except GraphRejected as error:
+                if attempt == self.max_rounds:
+                    raise
+                targets = validation_targets(self.current, error.issues)
+                if not targets:
+                    raise
+                before = self.current
+                self._run_task(LocalTask(
+                    f"contract-repair-{self._revision}", "reconcile", targets,
+                    feedback=[i.model_dump(mode="json") for i in error.issues],
+                ), run_id)
+                if self.current == before:
+                    raise error
+
     def _evidence_keys(self, references):
         import hashlib
         import json
@@ -790,6 +823,7 @@ class IncrementalGraphIntegrationEngine:
             "input_fingerprint": input_fingerprint(self.ctx),
             "identity": self.identity_decision,
             "relation_coverage": sorted(getattr(self, "relation_coverage", ())),
+            "reconciliation_complete": getattr(self, "reconciliation_complete", False),
             "reviewed_sources": {
                 k: [
                     r.model_dump(mode="json")
