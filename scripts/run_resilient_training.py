@@ -45,7 +45,8 @@ def read(path):
 
 
 def transient(reason):
-    return any(word in str(reason) for word in (
+    message = f'{type(reason).__name__}: {reason}' if isinstance(reason, BaseException) else str(reason)
+    return any(word in message for word in (
         'ConnectionError', 'Timeout', 'timed out', 'RateLimitError',
         'Error code: 408', 'Error code: 409', 'Error code: 429',
         'Error code: 500', 'Error code: 502', 'Error code: 503', 'Error code: 504',
@@ -243,13 +244,36 @@ def merge_worker(args):
           'edges': len(current.graph.edges), 'updated': time.time()})
 
 
+class AdoptedWorker:
+    """Observe a surviving child without spawning a duplicate writer."""
+    def __init__(self, pid, folder):
+        self.pid, self.folder = pid, folder
+
+    def poll(self):
+        try:
+            os.kill(self.pid, 0)
+            return None
+        except ProcessLookupError:
+            status = read(self.folder / 'status.json').get('status') if (self.folder / 'status.json').exists() else None
+            return 0 if status in ('passed', 'needs_review', 'needs_attention') else 1
+
+
 def supervise(args):
     slots = read_key_slots(args.keys)
     manifest = read(args.output / 'manifest.json')
     waiting = [str(x) for x in manifest['question_ids'] if not (args.output / 'cases' / str(x) / 'status.json').exists()
                or read(args.output / 'cases' / str(x) / 'status.json')['status'] not in ('passed', 'needs_review')]
     active = {}
+    registry = args.output / 'active_workers.json'
+    if registry.exists():
+        for slot, item in read(registry).items():
+            worker = AdoptedWorker(item['pid'], args.output / 'cases' / item['case'])
+            if worker.poll() is None:
+                active[int(slot)] = (item['case'], worker)
+                if item['case'] in waiting:
+                    waiting.remove(item['case'])
     logfiles = []
+    states = {str(i): read(args.output / 'cases' / str(i) / 'status.json') if (args.output / 'cases' / str(i) / 'status.json').exists() else {'status': 'queued'} for i in manifest['question_ids']}
     while waiting or active:
         for slot in range(len(slots)):
             if slot in active or not waiting:
@@ -269,6 +293,7 @@ def supervise(args):
                 write(args.output / 'cases' / ident / 'status.json', {'status': 'needs_attention', 'exit_code': process.returncode, 'slot': slot})
             del active[slot]
         states = {str(i): read(args.output / 'cases' / str(i) / 'status.json') if (args.output / 'cases' / str(i) / 'status.json').exists() else {'status': 'queued'} for i in manifest['question_ids']}
+        write(registry, {str(s): {'case': v[0], 'pid': v[1].pid} for s, v in active.items()})
         write(args.output / 'progress.json', {'phase': 'extraction', 'cases': states, 'active': {s: v[0] for s,v in active.items()}, 'updated': time.time()})
         time.sleep(5)
     if any(row['status'] == 'needs_attention' for row in states.values()):
