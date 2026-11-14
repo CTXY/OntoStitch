@@ -11,7 +11,7 @@ def test_repair_missing_document_once_with_explicit_handle_contract(monkeypatch,
     async def invoke(**kwargs):
         requests.append(dict(kwargs['human_payload']))
         rows=[{'document_id':'d0001','status':'relevant','reason':'Matches the requested meaning.'}]
-        if len(requests)>1 and repair_succeeds:rows.append({'document_id':'d0002','status':'irrelevant','reason':'Different meaning.'})
+        if len(requests)>1 and repair_succeeds:rows=[{'document_id':'d0002','status':'irrelevant','reason':'Different meaning.'}]
         return selection.RelevanceOutput.model_validate({'decisions':rows})
     monkeypatch.setattr(selection,'run_llm_extraction',invoke)
     docs=tuple(SimpleNamespace(document=SimpleNamespace(document_id=k,canonical_node_id=k,node_type='concept',structured_signals={'content':{'name':k}})) for k in ['first','second'])
@@ -21,4 +21,4 @@ def test_repair_missing_document_once_with_explicit_handle_contract(monkeypatch,
     else:
         with pytest.raises(ValueError,match='cover every input'):asyncio.run(run())
     assert len(requests)==2
-    assert requests[1]['format_feedback']['expected_handles']==['d0001','d0002']
+    assert requests[1]['format_feedback']['expected_handles']==['d0002']

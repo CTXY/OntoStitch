@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+import json
 from typing import Any
 
 from langchain_openai import ChatOpenAI
@@ -50,6 +52,23 @@ class SqlGenerator:
             downstream_guidance=downstream_guidance,
             reference_memory=reference_memory,
         )
+        response = self._llm.invoke(messages)
+        return _clean_sql(_content(response)), messages
+
+    def review(
+        self, *, question: str, evidence: str, schema_ddl: str,
+        draft_sql: str, resolved_guidance: list[dict], dialect: str,
+    ) -> tuple[str, list[dict[str, str]]]:
+        """Uniform request-only review; no Gold or evaluation-result argument."""
+        prompt = (Path(__file__).parent / "prompts/sql_review.md").read_text()
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": json.dumps({
+                "question": question, "evidence": evidence,
+                "database_schema": schema_ddl, "dialect": dialect,
+                "resolved_guidance": resolved_guidance, "draft_sql": draft_sql,
+            }, ensure_ascii=False)},
+        ]
         response = self._llm.invoke(messages)
         return _clean_sql(_content(response)), messages
 

@@ -141,6 +141,8 @@ class LlmRelevanceSelector:
             **payload,
         }
         expected = {item.document.document_id for item in representations}
+        accepted = {}
+        pending = set(expected)
         for attempt in range(2):
             result = await run_llm_extraction(
                 llm=self._llm,
@@ -149,21 +151,43 @@ class LlmRelevanceSelector:
                 human_payload=request,
             )
             decisions = handles.decode_decisions(result.decisions)
-            try:
-                _validate_partition(
-                    expected=expected,
-                    supplied=[item.document_id for item in decisions],
-                    label="relevance",
-                )
-                return decisions
-            except ValueError:
-                if attempt:
-                    raise
-                request["format_feedback"] = {
-                    "requirement": "Return each supplied document handle exactly once. Do not omit, duplicate or invent handles. Reuse the evidence above; no default relevance is inferred by code.",
-                    "expected_handles": [handles.encode(k) for k in sorted(expected)],
-                    "previous_decisions": result.model_dump(mode="json"),
-                }
+            supplied = [item.document_id for item in decisions]
+            invalid = len(supplied) != len(set(supplied)) or not set(supplied) <= pending
+            if not invalid:
+                accepted.update((item.document_id, item) for item in decisions)
+                pending -= set(supplied)
+                if not pending:
+                    return tuple(accepted[item.document.document_id] for item in representations)
+            if attempt:
+                raise ValueError("relevance output must cover every input exactly once")
+            if invalid:
+                # Ambiguous duplicates/foreign handles cannot be partially accepted.
+                accepted, pending = {}, set(expected)
+                request = {"question": question, "initial_sql": initial_sql or "", **payload}
+            else:
+                # Preserve valid decisions; ask only about missing documents. The
+                # model still judges every status, never a code-generated default.
+                wanted = {handles.encode(k) for k in pending}
+                if "assets" in payload:
+                    reduced = {"assets": [e for e in payload["assets"] if e["document_id"] in wanted]}
+                else:
+                    from copy import deepcopy
+                    groups = []
+                    for group in deepcopy(payload["column_groups"]):
+                        column = group["column"]
+                        values = [v for v in group["values"] if v["document_id"] in wanted]
+                        keep_column = column is not None and column["document_id"] in wanted
+                        if not keep_column and column is not None:
+                            for value in values:
+                                value["evidence"]["owner_column"] = column["evidence"]
+                        if keep_column or values:
+                            groups.append({"column": column if keep_column else None, "values": values})
+                    reduced = {"column_groups": groups}
+                request = {"question": question, "initial_sql": initial_sql or "", **reduced}
+            request["format_feedback"] = {
+                "requirement": "Return only these document handles exactly once. Earlier valid decisions are retained by the controller. Do not invent handles or infer a default status.",
+                "expected_handles": [handles.encode(k) for k in sorted(pending)],
+            }
 
 
 def _validate_partition(*, expected: set[str], supplied: list[str], label: str) -> None:
