@@ -328,3 +328,32 @@ def test_resume_reuses_exact_accepted_relation_coverage_without_model_calls(tmp_
     again = resumed.merge(state(), original, load_root_schema(), run_id="second")
     assert again.state == result.state
     assert agent.phases == []
+
+
+def test_resume_same_sqlite_run_restores_storage_revision_and_rejects_stale_snapshot(tmp_path):
+    import pytest
+
+    from cortex.capabilities.graph_merge.integration.workspace import (
+        WorkspaceRevisionMismatch,
+        WorkspaceStore,
+    )
+
+    original = state([*catalog(), concept("A", "a"), concept("B", "a")])
+    first = IncrementalGraphIntegrationEngine(IdentityOnlyAgent())
+    first.workspace_path = tmp_path / "workspace.sqlite"
+    result = first.merge(state(), original, load_root_schema(), run_id="same")
+    saved = WorkspaceStore(first.workspace_path).load("same")
+    agent = IdentityOnlyAgent()
+    resumed = IncrementalGraphIntegrationEngine(agent)
+    resumed.workspace_path = first.workspace_path
+    resumed.resume_snapshot = saved
+    again = resumed.merge(state(), original, load_root_schema(), run_id="same")
+    assert again.state == result.state
+    assert agent.phases == []
+    assert WorkspaceStore(first.workspace_path).load("same")["revision"] > saved["revision"]
+
+    stale = IncrementalGraphIntegrationEngine(IdentityOnlyAgent())
+    stale.workspace_path = first.workspace_path
+    stale.resume_snapshot = saved
+    with pytest.raises(WorkspaceRevisionMismatch):
+        stale.merge(state(), original, load_root_schema(), run_id="same")

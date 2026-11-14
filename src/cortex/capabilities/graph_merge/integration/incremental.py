@@ -214,6 +214,14 @@ class IncrementalGraphIntegrationEngine:
                 raise ValueError(
                     "Workspace source/schema/evidence fingerprint mismatch"
                 )
+            path = getattr(self, "workspace_path", None)
+            if path:
+                from cortex.capabilities.graph_merge.integration.workspace import (
+                    WorkspaceStore,
+                )
+
+                if WorkspaceStore(path).load(run_id) is not None:
+                    self._storage_revision = resume["revision"]
             self.current = GraphState.model_validate(resume["current"])
             self.lineage = LineageIndex.restore(ctx, resume["lineage"])
             self.history = list(resume["history"])

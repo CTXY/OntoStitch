@@ -335,7 +335,12 @@ def supervise(args):
         return
     args.slot = 0
     write(args.output / 'progress.json', {'phase': 'merge', 'updated': time.time()})
-    merge_worker(args)
+    try:
+        merge_worker(args)
+    except Exception as error:
+        write(args.output / 'progress.json', {'phase': 'needs_attention', 'stage': 'merge',
+            'error_type': type(error).__name__, 'log': 'supervisor.log', 'updated': time.time()})
+        raise
     write(args.output / 'progress.json', {'phase': 'finished', 'updated': time.time()})
 
 
@@ -354,6 +359,7 @@ def main():
     if args.mode == 'supervise':
         with (args.output / '.supervisor.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            write(args.output / 'supervisor.pid', os.getpid())
             supervise(args)
     else:
         {'case': case_worker, 'merge': merge_worker}[args.mode](args)
