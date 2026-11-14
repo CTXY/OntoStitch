@@ -1,6 +1,6 @@
 # Online：现有识别流程 review 与选择性澄清机制
 
-日期：2026-10-31
+更新日期：2026-11-14
 
 状态：设计讨论稿，尚未修改生产实现。本轮保留现有三阶段 discovery、每个 slot 至少两个 candidates、SQL fragment 选项、多选与自由说明。
 
@@ -274,7 +274,7 @@ p_s(c) 表示候选作为当前意图解释的估计支持分布。组概率为�
 
 这是机制中必须验证的一环，不能由来源权重冒充概率。
 
-建议的首个可复现实验版本：
+当前推荐方向是：训练一个跨数据库共享、以当前 memory 为条件的候选打分器，再在独立数据上做概率校准。具体训练与数据协议见第 11 节。重复评估保留为无需训练的 baseline：
 
 - 语义重复已合并后，用小规模重复评估估计候选选择分布。
 - 每次呈现同样的 question/evidence、SQL fragments 和支持说明，打乱候选顺序。
@@ -288,7 +288,7 @@ p_s(c) 表示候选作为当前意图解释的估计支持分布。组概率为�
 
     p_s(c) = (n_c + α) / (sum_j n_j + mα)
 
-这些是模型选择频率，不是自动校准的用户意图概率。需在独立开发集上评估校准；K、α、τ 不能用最终测试集调。用单次比较评分、均匀 p、现有候选强度归一化作为消融，而不是默认它们等价。
+这些是模型选择频率，不是自动校准的用户意图概率。需在独立开发集上评估校准；K、α、τ 不能用最终测试集调。用单次比较评分、均匀 p、现有候选强度归一化、可训练 scorer 作为对照，而不是默认它们等价。
 
 保留原 discovery 的 source_types/applicability/explanation 作为评估证据，不让 discovery 自己给一个“重要性分数”便结束排序。
 
@@ -420,3 +420,179 @@ Claim：新机制减少无效提问且保持最终准确率。Evidence：尚待�
 Claim：等效组风险比来源相关性分数更符合本次结果错误目标。Evidence：第 7 节目标与推导，在列明假设下成立。Status：analytic justification；实际收益 needs evidence。
 
 Claim：本方法具备充分研究创新性。Evidence：仅完成部分相关工作核查。Status：needs further literature review and experiments。
+
+## 11. Memory 条件化的通用候选 scorer
+
+本节回应 2026-11-14 的训练方案讨论。这里将用户提到的 jev 按“可训练 judge／候选评分器”理解，不假定它是某个已经确定的模型架构。
+
+### 11.1 先确定预测对象
+
+单个 benchmark Gold SQL 不提供“真实用户会如何选择所有解释”的完整概率分布。
+
+首版可以监督学习的是：给定当前问题、候选、schema 与可用 memory，哪个候选／结果等效组符合标注任务。论文中称为标注任务条件下的候选选择概率；不能直接宣称已经恢复真实用户的偏好分布。
+
+以结果等效组为主，可以避免多个不同 SQL 片段恰好实现同一正确结果时强行互相排斥。
+
+设组 g 的共享 scorer 输出为 z_g，则：
+
+    z_g = f_θ(question, evidence, slot, fragments_g, schema_g, memory_g, stats_g)
+    P_θ(g | context) = exp(z_g / T) / sum_h exp(z_h / T)
+
+θ 在多数据库训练样本上共享，T 是独立校准集上拟合的温度参数。若需要 candidate 层的 p，组内如何分配并不影响本方法使用的组总概率；不必额外声称辨别了等效 fragments 的唯一真值。
+
+候选／组在计算前先做语义去重。模型输入应对选项顺序不敏感，并在训练中随机化顺序。
+
+### 11.2 最小输入，不要求完整 graph encoder
+
+建议首先使用已有预训练语言编码器的 cross-encoder 或轻量微调模型，文本化当前相关的 ontology 内容并输入评分头。不从头训练大模型，不首先引入 GNN。
+
+输入包含：
+
+- question/evidence 和本 slot 的争议维度；
+- 原 SQL fragments、明确的共同上下文，以及相关 schema 绑定；
+- 每个选项实际使用的 Concept／Metric／Generation Rule／alternative 内容；
+- 少量可选来源统计，首版只考虑独立支持 case 数；
+- 若必要性判定已查库，可附线上同样可得的观察摘要。
+
+Memory 内容应保留定义、公式、条件、粒度、单位及绑定，不能只输入“有 20 个 case 支持”。模型需要判断这些支持是否适用于本题。
+
+不要把 Gold SQL、Gold-assisted 标注理由、由 Gold 模拟的最终用户确认或下游已知正确性放进 scorer 输入。原始无 Gold 的 discovery explanation 可以输入，线上与训练保持一致。
+
+不要求输入原始历史 query examples；它们可作为独立可选消融。关闭 examples 便于研究 ontology 知识本身的效果，但不能代替数据来源隔离。
+
+### 11.3 Memory 强度怎样使用
+
+以“实际支持当前候选所借用定义的独立 source cases”计数：
+
+    n_g = number of distinct source case IDs supporting the relevant definitions
+    strength_g = log(1 + n_g)
+
+当前 graph 的 node.sources 和 alternative.sources 可以提供来源。冲突节点的 owner sources 是来源 union，不应把对手 alternative 的来源也算成当前候选支持。多个引用来自同一个 case 只计一次。
+
+这只是来源覆盖特征，不是正确率。20 个月级案例不能投票推翻本题明确的日级要求；重复模板、同源派生和数据集规模也会影响计数。训练过程允许模型降低不适用强支持的权重，不强制“支持越多，概率越高”。
+
+当前 QueryExample.support_count 是“某个历史 case 被多少相关资产引用”，不是“某个资产有多少 cases 支持”，不能直接复用成该特征。
+
+首版只做“memory 内容”与“memory 内容 + 支持数”的对照。避免先堆积大量质量、覆盖和置信特征。
+
+### 11.4 训练样本如何得到
+
+一条样本对应一个真实 online slot：
+
+    输入：q、evidence、slot、候选 SQL fragments、schema、当时可用 memory 和统计
+    标签：符合标注任务的结果组，或一组可接受候选
+
+生成过程：
+
+1. 先按后文协议准备不包含当前样本及其派生信息的 memory。
+2. 用固定的初始 SQL 生成、检索、三阶段 discovery 和必要性判定产生真实 slots。生成输入中不出现当前 Gold。
+3. 冻结这些输入后，才让离线标注器读取当前样本的 Gold SQL，判断它在该 slot 的局部选择。
+4. 可以通过局部 Gold 语义匹配获得弱标签，再利用同一上下文下的查询执行核查。Gold 只用于标签，不用于把错误候选偷偷修成正确候选。
+5. 多个未决 slots 导致完整查询错误时，不能把一次完整执行失败分摊为所有局部候选错误；不能隔离该决定的样本留作未标注或人工核查。
+6. 自然候选作为主训练分布。若有合成负例，单独记录来源与比例，不编造支持 case 数，不让“人工构造”标记成为标签捷径。
+
+若多个选项属于相同正确结果组，就监督这个组。若存在多个可接受标签 Y，可用：
+
+    loss = -log(sum_{g in Y} P_θ(g | context))
+
+它只监督可接受集合，不提供各可接受解释的真实用户频率。不能仅凭该目标声称学习了偏好概率。
+
+若所有候选都不符合 Gold，不能强行把最高分候选标为正确。保留这类 candidate-coverage failure 统计，必要时单独训练内部 coverage／none-of-the-above 判定；这不要求向用户新增伪候选。候选闭集 softmax 风险始终要说明覆盖假设。
+
+Gold 也可能只有一种标注实现；语义等效、数据偶然相等和真正不同口径要在小规模人工审计集中区分。
+
+### 11.5 使用同一训练池是否合理
+
+同一训练池同时用于构建 memory 和学习 scorer，本身不构成测试泄漏：两个模块都可以使用合法的训练数据。
+
+但若样本 i 的 Gold 已被提取进 M，再用 (q_i, M) 训练 scorer，它是在带有自身答案衍生知识的输入上学习。它可能学到“认出已有答案”，而非估计新问题的候选风险。这属于训练内的自包含捷径与分布偏差，不应和“最终测试集被使用”混为一谈。
+
+删除原 query example 不能保证排除它：概念绑定、公式、规则条件、冲突合并结果、统计及模型生成的说明都可能保留该样本的信息。
+
+同样，删除一个 source_id 或将支持数减 1，不等于撤销它对合并图内容的贡献。可靠协议从源 case 划分开始生成 memory。
+
+### 11.6 两种数据协议
+
+**先验证可行性的简单协议：**
+
+    现有合法训练池 T → M（memory） + J（judge 训练） + V（校准）
+    memory = Build(M)
+    train scorer on slots from J using this memory
+    calibrate on V using the same frozen memory
+    evaluate on untouched test questions
+
+三个集合按原始 case／派生样本族划分，不按生成的 candidate 行随机拆分。
+
+优点是只需构建一次 memory。代价是没有充分复用训练池；所有对照都要使用相同 memory 规模，避免混淆。
+
+**充分复用训练池的推荐研究协议：**
+
+    T → F（模型拟合池） + V（独立校准池）
+    F → F1, F2, F3
+
+    对每个 k：
+        M_k = Build(F minus Fk)
+        仅用 M_k 为 Fk 生成 slots 和输入
+        用 Fk 的 Gold 生成监督标签
+
+    用所有折的评分样本训练共享 θ
+    M_final = Build(F)
+    用 V 在 M_final 下产生的样本校准 T 和提问阈值
+    冻结 θ、校准和 M_final，再评估最终 test
+
+三折是成本折中，可按资源评估。每个源 case 可以为别人的 memory 提供知识，也可以成为 scorer 监督样本，但它生成自己评分输入时不出现在自己的 memory 中。
+
+校准池 V 在这个协议中不进入 M_final。若改为用整个 T 重建 memory，必须重新说明校准数据来源和适用性，不能沿用包含自信息的校准成绩冒充独立验证。
+
+图构建成本主要在离线。可以复用冻结的 source-local case bundles，再按折重新合并；不能先合并全图再仅删除当前 provenance 冒充折外 memory。
+
+### 11.7 跨数据库与跨数据集的通用模型
+
+训练一个 θ，线上读取目标数据库的 schema 与 memory，不对每个数据库再微调 θ，是合理的目标。
+
+需要区分两个评估设置：
+
+- **已见数据库的新问题**：scorer 训练见过数据库的其他问题；测试 query 与训练 query 分开。
+- **未见数据库迁移**：目标数据库的 query 标签不参与 θ 的拟合，也不参与温度／阈值选择；只在测试时作为上下文提供该库允许的 memory。
+
+后者允许目标库的历史样本用于构建 memory，属于“有目标库历史知识的 scorer 迁移”，不能宣称整个系统没有使用目标数据库监督数据。
+
+数据库划分应先于候选生成和模型选择。可留一数据库／一数据集作为 scorer 测试域，其他数据库训练，另留数据库校准。使用目标库的支持数作为输入可以，使用其最终测试表现调参数不可以。
+
+BIRD 与 mini-clean-BIRD 等可能共享原始问题或派生内容，不能只按数据集名称认为它们独立。应按原始 source lineage 和近重复问题分组，防止跨数据集泄漏。相同问题的所有候选行与派生标签保持在同一划分中。
+
+通用 scorer 的泛化是要验证的结论。相关预印本已观察到 Text-to-SQL verifier 的跨 schema 退化：
+[What Predicts Correctness in Text-to-SQL?](https://arxiv.org/abs/2607.06799)。
+不能因为混合多个数据集训练就默认解决。
+
+### 11.8 校准与风险公式的连接
+
+只会排序还不够：相同排序下，概率 0.55 和 0.95 会导致不同的免问行为。
+
+在独立校准集拟合温度或其他简单校准器，报告 NLL、Brier、置信分桶与预算—准确率曲线。温度缩放是标准基线：
+[On Calibration of Modern Neural Networks](https://proceedings.mlr.press/v70/guo17a.html)。
+Text-to-SQL 中也已有利用结构信号和校准器的工作：
+[Calibrating LLMs for Text-to-SQL Parsing by Leveraging Sub-clause Frequencies](https://aclanthology.org/2025.emnlp-main.859/)。
+
+得到 P_θ(g | context) 后，沿用第 7 节：
+
+    risk_s = 1 - max_g P_θ(g | context)
+
+但它是在候选覆盖、当前等效关系和标注目标下的局部风险估计。不能把它当作无条件 SQL 真实错误率；多选、不充分回答、候选覆盖不足和完整 SQL 中其他错误仍需另外处理。
+
+### 11.9 最小实验矩阵
+
+至少比较：
+
+1. 无 memory 的 scorer；
+2. memory 内容，不含 query examples；
+3. memory 内容 + 独立支持数；
+4. 可选加入历史 examples；
+5. 自包含 memory 与折外 memory 的训练差异；
+6. 同数据库新问题与未见数据库；
+7. 训练后是否校准；
+8. 与前述无需训练的重复评估 baseline 比较总计算成本。
+
+当前结果包 BIRD 的 train_ids/test_ids manifest 为 769/765，注明上游 dev 在包内命名为 test。这 765 条及其 Gold-assisted online 决策不能因为目录名不同就转作 scorer 训练数据再沿用原测试成绩。多数据集汇集前同样应检查底层 source lineage。
+
+研究主张：共享 scorer 是否能利用 ontology 内容与来源统计得到可迁移、可校准的风险估计。Status：设计假设，需要上述隔离与实验；不预先声称训练有效或 memory 支持数一定有益。

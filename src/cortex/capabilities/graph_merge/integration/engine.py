@@ -66,6 +66,7 @@ def implementation_version():
         *root.glob("*.py"),
         root.parent / "llm/integration.py",
         root.parent / "llm/incremental.py",
+        root.parent / "llm/reconciliation.py",
         *root.parent.glob("llm/prompts/incremental_*.md"),
         root.parent / "llm/submission.py",
         *root.parent.glob("llm/prompts/integration_*.md"),

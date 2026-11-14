@@ -160,6 +160,7 @@ class IncrementalGraphIntegrationEngine:
         self.model_call_budget = model_call_budget
         self.history = []
         self.last_session = None
+        self.relation_coverage = set()
 
     def merge(self, existing, incoming, schema, *, run_id=None):
         run_id = run_id or uuid4().hex
@@ -206,6 +207,7 @@ class IncrementalGraphIntegrationEngine:
         self.open_tasks = []
         self.reviewed_sources = {}
         self.identity_decision = None
+        self.relation_coverage = set()
         resume = getattr(self, "resume_snapshot", None)
         if resume:
             if resume.get("input_fingerprint") != input_fingerprint(ctx):
@@ -223,6 +225,7 @@ class IncrementalGraphIntegrationEngine:
                 for k, refs in resume.get("reviewed_sources", {}).items()
             }
             self.identity_decision = resume.get("identity")
+            self.relation_coverage = set(resume.get("relation_coverage", ()))
         self._persist(run_id)
         seed = getattr(self, "reviewed_node_seed", None)
         if seed:
@@ -429,7 +432,7 @@ class IncrementalGraphIntegrationEngine:
 
         def validate(candidate, changes, result):
             found = [c.inspection_id for c in result.inspection_checks]
-            if set(found) != set(checks) or len(found) != len(set(found)):
+            if task.phase != "reconcile" and (set(found) != set(checks) or len(found) != len(set(found))):
                 raise ValueError(
                     f"Conclude each active inspection once: {sorted(checks)}"
                 )
@@ -452,38 +455,8 @@ class IncrementalGraphIntegrationEngine:
                     raise ValueError(
                         "Conflict is not resolved by listing ordinary competing Rules. Put complete sourced alternatives on the relevant current Rule with conflicts; replace obsolete copies and repair consumers in this batch. Extend the task for any required read-only Rule. A different label cannot substitute for fixing the same decision."
                     )
-            # Validate only actual task Rules (including newly created Rules),
-            # never unrelated Rules merely seen in an earlier phase.
-            rule_ids = {
-                k
-                for k in delta(before, candidate)["nodes"]["created"]
-                + delta(before, candidate)["nodes"]["updated"]
-                if k in nodes
-                and nodes[k].node_type == "generation_rule"
-                and (
-                    k not in _nodes(before)
-                    or _nodes(before)[k].model_dump(exclude={"sources"})
-                    != nodes[k].model_dump(exclude={"sources"})
-                )
-            }
-            if getattr(task, "review_retained_rules", False):
-                rule_ids |= {
-                    k
-                    for k in task.targets
-                    if k in nodes and nodes[k].node_type == "generation_rule"
-                }
-            rule_ids |= {
-                k
-                for k in delta(before, candidate)["nodes"]["created"]
-                if nodes[k].node_type == "generation_rule"
-            }
-            actual = [r.node_id for r in result.rationale_checks]
-            if task.phase == "reconcile" and (
-                set(actual) != rule_ids or len(actual) != len(set(actual))
-            ):
-                raise ValueError(
-                    f"Compare each active Rule reason with supplied evidence once: {sorted(rule_ids)}"
-                )
+            # Relation Writer checks its region; actual changes receive the
+            # targeted graph review below, not a retained-Rule checklist.
             if any(not r.supported for r in result.rationale_checks):
                 raise ValueError("Repair unsupported Rule reasons before accepting")
             # Origin ledger checks are staged on a clone, so invalid patches do
@@ -500,124 +473,112 @@ class IncrementalGraphIntegrationEngine:
         batch.extra_check = validate
         for attempt in range(self.max_rounds + 1):
             ctx.candidate = batch.preview or batch.seed
-            payload = build_task_context(
-                ctx, ctx.candidate, task, origins=self.lineage, before=before
-            )
-            payload["new_id_prefix"] = new_id_prefix
-            payload["task_scope"]["writable_ids"] = sorted(batch.allowed)
-            payload["identity_aliases"] = batch.aliases
-            payload["provisional_identity_projection"] = bool(batch.aliases)
-            payload["pending_revision"] = batch.revision
-            payload["rationale_review_ids"] = (
-                sorted(
-                    k
-                    for k in task.targets
-                    if k in _nodes(ctx.candidate)
-                    and _nodes(ctx.candidate)[k].node_type == "generation_rule"
-                )
-                if getattr(task, "review_retained_rules", False)
-                else []
-            )
-            payload["rationale_scope"] = (
-                "Check these retained Rules and any Rule meaning you actually change; sources-only maintenance needs no repeated reason review."
-            )
-            if batch.pending or batch.changes or batch.contracts:
-                from cortex.capabilities.graph_merge.integration.submission import (
-                    edit_key,
+            if task.phase == "reconcile":
+                from cortex.capabilities.graph_merge.integration.relation_context import (
+                    relation_context,
                 )
 
-                payload["saved_patch"] = {
-                    "edits": [
-                        {
-                            "kind": edit_key(e)[0],
-                            "id": edit_key(e)[1],
-                            "operation": e["operation"],
-                        }
-                        for e in batch.pending.values()
-                    ],
-                    "changes": batch.changes,
-                    "relation_contract_ids": sorted(batch.contracts),
-                    "edge_merges": [
-                        m.model_dump(mode="json") for m in batch.edge_merges.values()
-                    ],
-                }
+                payload = relation_context(ctx, ctx.candidate, task)
+            else:
+                payload = build_task_context(
+                    ctx, ctx.candidate, task, origins=self.lineage, before=before
+                )
+            payload["new_id_prefix"] = new_id_prefix
+            if task.phase != "reconcile":
+                payload.setdefault("task_scope", {})["writable_ids"] = sorted(batch.allowed)
+                payload["identity_aliases"] = batch.aliases
+                payload["provisional_identity_projection"] = bool(batch.aliases)
+                payload["pending_revision"] = batch.revision
+                payload["rationale_review_ids"] = (
+                    sorted(
+                        k
+                        for k in task.targets
+                        if k in _nodes(ctx.candidate)
+                        and _nodes(ctx.candidate)[k].node_type == "generation_rule"
+                    )
+                    if getattr(task, "review_retained_rules", False)
+                    else []
+                )
+                payload["rationale_scope"] = (
+                    "Check these retained Rules and any Rule meaning you actually change; sources-only maintenance needs no repeated reason review."
+                )
+                if batch.pending or batch.changes or batch.contracts:
+                    from cortex.capabilities.graph_merge.integration.submission import (
+                        edit_key,
+                    )
+
+                    payload["saved_patch"] = {
+                        "edits": [
+                            {
+                                "kind": edit_key(e)[0],
+                                "id": edit_key(e)[1],
+                                "operation": e["operation"],
+                            }
+                            for e in batch.pending.values()
+                        ],
+                        "changes": batch.changes,
+                        "relation_contract_ids": sorted(batch.contracts),
+                        "edge_merges": [
+                            m.model_dump(mode="json") for m in batch.edge_merges.values()
+                        ],
+                    }
             ctx.output_validator = batch.submit
             result = self.agent.invoke(task.phase, ctx, payload)
             # Injected test agents use the same validation path.
             if batch.result is not result and batch.preview is None:
                 batch.submit(result)
             candidate = batch.preview
-            impact = semantic_review_targets(before, candidate, task.targets)
-            if impact["requires_evidence_check"] and self._needs_evidence_review(
-                before, candidate
-            ):
-                impact = semantic_review_targets(
-                    before, candidate, task.targets, evidence_changed=True
-                )
-            # Node consolidation always receives independent assessment. Graph
-            # structure is self-reviewed; semantic/core dependency edits reopen A.
-            review_ids = set(impact["targets"])
-            review_ids |= {
-                key
-                for key in delta(before, candidate)["nodes"]["deleted"]
-                if _nodes(before)[key].node_type not in PHYSICAL
-            }
-            for check in task.checks:
-                if check["kind"] in {"related_decisions", "source_selection_variants"}:
-                    review_ids |= {
-                        k
-                        for k in _signal_targets(check, candidate)
-                        if k in _nodes(candidate)
-                        and _nodes(candidate)[k].node_type
-                        in {"concept", "generation_rule"}
-                    }
-            if task.phase == "consolidate":
-                review_ids |= {k for k in task.targets if k in _nodes(candidate)}
-            if getattr(task, "review_retained_rules", False):
-                review_ids |= {
-                    k
-                    for k in task.targets
-                    if k in _nodes(candidate)
-                    and _nodes(candidate)[k].node_type == "generation_rule"
-                }
-            if review_ids:
-                reviewtask = LocalTask(
-                    task.id + "-node-review",
-                    "node_assess",
-                    review_ids,
-                    groups=task.groups,
-                    checks=task.checks,
-                    feedback=list(task.feedback),
-                )
-                reviewpayload = build_task_context(
-                    ctx,
-                    candidate,
-                    reviewtask,
-                    origins=batch.lineage_preview,
-                    before=before,
-                )
-                # Latest findings are already in feedback. Retain older findings
-                # separately so a later review cannot unknowingly reverse a fix.
-                reviewpayload["earlier_findings"] = review_history[:-1]
-                ctx.output_validator = None
-                review = self.agent.invoke("node_assess", ctx, reviewpayload)
-                if review.verdict != "accept":
-                    if review.verdict == "revisit_identity":
-                        raise IntegrationIncomplete(
-                            "Concrete identity counterexample: rebuild this unpublished input batch; do not guess a reverse split"
-                        )
-                    review_history.append(
-                        {
-                            "issues": list(review.issues),
-                            "issue_refs": [
-                                r.model_dump(mode="json") for r in review.issue_refs
-                            ],
-                        }
+            review = None
+            review_ids = set()
+            if task.phase == "reconcile":
+                if candidate != batch.seed:
+                    from cortex.capabilities.graph_merge.integration.relation_context import (
+                        relation_context,
                     )
-                    task.feedback = list(review.issues)
-                    task.targets.update(r.id for r in review.issue_refs)
-                    batch.allowed.update(task.targets)
-                    continue
+
+                    reviewtask = LocalTask(
+                        task.id + "-graph-review", "graph_assess", task.targets,
+                        feedback=list(task.feedback),
+                    )
+                    ctx.candidate = candidate
+                    reviewpayload = relation_context(
+                        ctx, candidate, reviewtask, before=batch.seed, assessment=True
+                    )
+                    ctx.output_validator = None
+                    review = self.agent.invoke("graph_assess", ctx, reviewpayload)
+            else:
+                impact = semantic_review_targets(before, candidate, task.targets)
+                if impact["requires_evidence_check"] and self._needs_evidence_review(before, candidate):
+                    impact = semantic_review_targets(before, candidate, task.targets, evidence_changed=True)
+                review_ids = set(impact["targets"]) | {
+                    k for k in delta(before, candidate)["nodes"]["deleted"]
+                    if _nodes(before)[k].node_type not in PHYSICAL
+                }
+                review_ids |= {k for k in task.targets if k in _nodes(candidate)}
+                if review_ids:
+                    reviewtask = LocalTask(
+                        task.id + "-node-review", "node_assess", review_ids,
+                        groups=task.groups, checks=task.checks, feedback=list(task.feedback),
+                    )
+                    reviewpayload = build_task_context(
+                        ctx, candidate, reviewtask, origins=batch.lineage_preview, before=before
+                    )
+                    reviewpayload["earlier_findings"] = review_history[:-1]
+                    ctx.output_validator = None
+                    review = self.agent.invoke("node_assess", ctx, reviewpayload)
+            if review is not None and review.verdict != "accept":
+                if review.verdict == "revisit_identity":
+                    raise IntegrationIncomplete(
+                        "Concrete identity counterexample: rebuild this unpublished input batch"
+                    )
+                review_history.append({
+                    "issues": list(review.issues),
+                    "issue_refs": [r.model_dump(mode="json") for r in review.issue_refs],
+                })
+                task.feedback = list(review.issues)
+                task.targets.update(r.id for r in review.issue_refs)
+                batch.allowed.update(task.targets)
+                continue
             # No model transaction remains open while persistence runs.
             self.lineage = batch.lineage_preview
             self.current = candidate
@@ -631,6 +592,7 @@ class IncrementalGraphIntegrationEngine:
                     "delta": delta(before, candidate),
                     "extensions": extensions,
                     "node_review_ids": sorted(review_ids),
+                    "assessment": ("graph_assess" if task.phase == "reconcile" else "node_assess") if review is not None else "skipped_no_change",
                     "changes": [
                         c.model_dump(mode="json") for c in batch.result.changes
                     ],
@@ -688,8 +650,17 @@ class IncrementalGraphIntegrationEngine:
                 task = LocalTask(
                     f"structure-{cycle}-{index}", "reconcile", ids, checks=cs
                 )
-                task.review_retained_rules = True
+                from cortex.capabilities.graph_merge.integration.relation_context import (
+                    relation_signature,
+                )
+
+                signature = relation_signature(self.ctx, self.current, task)
+                if signature in getattr(self, "relation_coverage", set()):
+                    reviewed.update(c["id"] for c in cs)
+                    continue
                 impacts |= self._run_task(task, run_id)
+                self.relation_coverage.add(relation_signature(self.ctx, self.current, task))
+                self._persist(run_id)
                 reviewed.update(c["id"] for c in cs)
             # A newly introduced pattern still needs an explicit conclusion,
             # even when all its endpoints were part of the writer's own patch.
@@ -803,6 +774,7 @@ class IncrementalGraphIntegrationEngine:
             "accepted_revision": self._revision,
             "input_fingerprint": input_fingerprint(self.ctx),
             "identity": self.identity_decision,
+            "relation_coverage": sorted(getattr(self, "relation_coverage", ())),
             "reviewed_sources": {
                 k: [
                     r.model_dump(mode="json")

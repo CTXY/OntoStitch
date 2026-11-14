@@ -36,6 +36,16 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
+    parser.add_argument(
+        "--streaming",
+        action="store_true",
+        help="Stream long provider responses while retaining final usage",
+    )
+    parser.add_argument(
+        "--expected-host",
+        default="api.deepseek.com",
+        help="Expected previously authorized host; refuse accidental endpoint changes",
+    )
     parser.add_argument("--reviewed-node-stage", type=Path)
     parser.add_argument("--feedback-file", type=Path)
     parser.add_argument(
@@ -63,10 +73,16 @@ def main():
     os.environ["LANGSMITH_TRACING"] = "false"
     os.environ["LANGCHAIN_TRACING_V2"] = "false"
     cfg = load_config(args.config)
-    model = create_chat_model(cfg.llm, profile="graph_merge")
-    if urlparse(str(model.openai_api_base)).hostname != "api.deepseek.com":
+    model = create_chat_model(
+        cfg.llm.model_copy(update={"max_retries": 0}), profile="graph_merge"
+    )
+    if args.streaming:
+        model.streaming = True
+        model.stream_usage = True
+    host = urlparse(str(model.openai_api_base)).hostname
+    if host != args.expected_host:
         raise ValueError(
-            "This authorized experiment requires the official api.deepseek.com endpoint"
+            "Configured endpoint differs from the expected authorized host"
         )
     schema = load_root_schema(cfg.root_schema.external_path)
     incoming = GraphState.model_validate_json(
@@ -111,7 +127,9 @@ def main():
                 else None,
                 "model": model.model_name,
                 "implementation_version": implementation_version(),
-                "host": "api.deepseek.com",
+                "host": host,
+                "sdk_max_retries": model.max_retries,
+                "streaming": model.streaming,
             },
             indent=2,
         )

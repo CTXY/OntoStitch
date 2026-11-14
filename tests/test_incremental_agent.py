@@ -30,6 +30,72 @@ def test_valid_plain_json_is_validated_without_repeating_the_model():
     assert len(model.requests) == 1
 
 
+def test_connection_retry_preserves_messages_and_is_bounded():
+    import httpx
+    import pytest
+    from langchain_openai.chat_models.base import OpenAIConnectionError
+
+    class Disconnected(Chat):
+        def __init__(self, failures):
+            super().__init__([AIMessage(content='{"groups":[],"distinctions":[]}')])
+            self.failures = failures
+
+        def invoke(self, messages, config=None):
+            if self.failures:
+                self.requests.append(list(messages))
+                self.failures -= 1
+                raise OpenAIConnectionError(
+                    message="connection dropped",
+                    request=httpx.Request("POST", "https://example.invalid"),
+                )
+            return super().invoke(messages, config=config)
+
+    ctx = IntegrationContext(state(), state(), load_root_schema())
+    model = Disconnected(1)
+    assert not IncrementalIntegrationAgent(model).invoke("identity", ctx, {}).groups
+    assert len(model.requests) == 2
+    assert model.requests[0] == model.requests[1]
+    model = Disconnected(2)
+    with pytest.raises(OpenAIConnectionError):
+        IncrementalIntegrationAgent(model).invoke("identity", ctx, {})
+    assert len(model.requests) == 2
+
+
+def test_upstream_retry_excludes_balance_or_auth_errors():
+    import httpx
+    import pytest
+    from langchain_openai.chat_models.base import OpenAIAPIError
+
+    class Failed(Chat):
+        def __init__(self, status):
+            super().__init__([AIMessage(content='{"groups":[],"distinctions":[]}')])
+            self.status = status
+            self.failed = False
+
+        def invoke(self, messages, config=None):
+            if not self.failed:
+                self.failed = True
+                self.requests.append(list(messages))
+                response = httpx.Response(
+                    self.status,
+                    request=httpx.Request("POST", "https://example.invalid"),
+                )
+                raise OpenAIAPIError(
+                    message="upstream failed", response=response, body={}
+                )
+            return super().invoke(messages, config=config)
+
+    ctx = IntegrationContext(state(), state(), load_root_schema())
+    model = Failed(502)
+    IncrementalIntegrationAgent(model).invoke("identity", ctx, {})
+    assert len(model.requests) == 2
+    for status in [401, 402]:
+        model = Failed(status)
+        with pytest.raises(OpenAIAPIError):
+            IncrementalIntegrationAgent(model).invoke("identity", ctx, {})
+        assert len(model.requests) == 1
+
+
 def test_malformed_tool_json_receives_matching_tool_error_before_retry():
     malformed = AIMessage(
         content="",
@@ -94,7 +160,7 @@ def test_acceptance_requires_atomic_decisions_and_exact_rule_coverage():
 def test_empty_pending_tool_is_not_advertised():
     model = Chat([AIMessage(content='{"edits":[]}')])
     ctx = IntegrationContext(state(), state(), load_root_schema())
-    IncrementalIntegrationAgent(model).invoke("reconcile", ctx, {})
+    IncrementalIntegrationAgent(model).invoke("consolidate", ctx, {})
     assert "inspect_pending" not in [getattr(t, "name", None) for t in model.tools]
 
 

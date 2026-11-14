@@ -80,6 +80,20 @@ def validate_graph_space(graph: GraphSpace, schema: SchemaDefinition, *, metadat
         target = node_by_id.get(edge.to_node_id)
         if source is None or target is None:
             raise GraphSchemaError(f"edge {edge.id!r} references an unknown endpoint")
+        if "alternative_ids" in edge.properties:
+            scope = edge.properties["alternative_ids"]
+            owned = {a.alternative_id for a in source.alternatives}
+            if (
+                not isinstance(scope, list)
+                or not scope
+                or any(not isinstance(x, str) or not x.strip() for x in scope)
+                or len(set(scope)) != len(scope)
+                or not set(scope) <= owned
+            ):
+                raise GraphSchemaError(
+                    f"edge {edge.id!r} alternative_ids must name distinct branches "
+                    "of its source node; omit branch metadata for a normal source"
+                )
         if not isinstance(edge.properties.get("description"), str) or not edge.properties["description"].strip():
             raise GraphSchemaError(f"edge {edge.id!r} requires a nonempty description")
         if any(k in edge.properties for k in ("qualifier", "qualifiers", "role", "condition")):

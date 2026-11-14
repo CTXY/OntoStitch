@@ -62,12 +62,10 @@ def test_first_structural_pass_covers_unmatched_nodes_without_signals():
     assert {"A", "B"} <= covered
 
 
-def test_no_edit_decision_judgment_still_requires_independent_content_review():
-    import pytest
+def test_no_edit_decision_judgment_skips_independent_assessment():
     from test_graph_integration import edge
 
     from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-    from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
     from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
     from cortex.capabilities.graph_merge.integration.task_context import LocalTask
     from cortex.schema import GraphNode
@@ -135,12 +133,12 @@ def test_no_edit_decision_judgment_still_requires_independent_content_review():
     engine.reviewed_sources = {}
     engine.history = []
     before = engine.current
-    with pytest.raises(IntegrationIncomplete):
-        engine._run_task(
-            LocalTask("decision", "reconcile", set(ids), checks=[signal]), "unit"
-        )
-    assert phases == ["reconcile", "node_assess"]
-    assert engine.current == before and not engine.history
+    engine._run_task(
+        LocalTask("decision", "reconcile", set(ids), checks=[signal]), "unit"
+    )
+    assert phases == ["reconcile"]
+    assert engine.current == before and len(engine.history) == 1
+    assert engine.history[0]["assessment"] == "skipped_no_change"
 
 
 def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
@@ -199,8 +197,8 @@ def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
                 )
                 context.output_validator(result)
                 return result
-            assert payload["reviewed_deleted_ids"] == [r]
-            assert any(n["id"] == r for n in payload["deleted_nodes"])
+            assert phase == "graph_assess"
+            assert any(n["id"] == r for n in payload["before_nodes"])
             return NodeReview(
                 verdict="revise",
                 issues=("The independent supported presentation choice was erased.",),
@@ -216,7 +214,7 @@ def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
     old = engine.current
     with pytest.raises(IntegrationIncomplete):
         engine._run_task(LocalTask("delete", "reconcile", {r, e}), "unit")
-    assert phases == ["reconcile", "node_assess"] and engine.current == old
+    assert phases == ["reconcile", "graph_assess"] and engine.current == old
 
 
 def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path):
@@ -313,3 +311,20 @@ def test_later_identity_batch_does_not_reproject_a_consumed_member():
     )
     assert active_identity_projection(after, {a: a, b: a}, ledger) == {a: a}
     assert any(r.id == b for r in ledger.origin_refs("node", a))
+
+
+def test_resume_reuses_exact_accepted_relation_coverage_without_model_calls(tmp_path):
+    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+
+    original = state([*catalog(), concept("A", "a"), concept("B", "a")])
+    first = IncrementalGraphIntegrationEngine(IdentityOnlyAgent())
+    first.workspace_path = tmp_path / "first.sqlite"
+    result = first.merge(state(), original, load_root_schema(), run_id="first")
+    saved = WorkspaceStore(first.workspace_path).load("first")
+    assert saved["relation_coverage"]
+    agent = IdentityOnlyAgent()
+    resumed = IncrementalGraphIntegrationEngine(agent)
+    resumed.resume_snapshot = saved
+    again = resumed.merge(state(), original, load_root_schema(), run_id="second")
+    assert again.state == result.state
+    assert agent.phases == []

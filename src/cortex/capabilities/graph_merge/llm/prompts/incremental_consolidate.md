@@ -12,6 +12,8 @@ Integrate this task's confirmed identity groups into the current graph. Preserve
 
 Separate the business identity from its descriptions and implementations. Reconcile synonyms, complementary information and supported generalization. When names/codes refer to an object or role, label that referent and document the fields as representations; a genuine name property remains distinct.
 
+Use the preloaded Concept guide's canonical-name and identifier rules. Choose the representative business term for the integrated identity, not a source-order or field-name default; normalize name/definition/description together where needed. Retain useful synonyms and representation roles without inventing identifier uniqueness or resolving behavior conflicts through naming. Same labels alone neither require merging nor globally unique replacements; keep graph IDs stable when only labels change.
+
 Targets are supported representations, not a SELECT-all policy. A supported subset-selection policy does not make other representations invalid. Compare supplied cases and conditions rather than inventing unseen counterexamples. Preserve complete incompatible behaviors as alternatives; incidental case filters or field suffixes cannot hide competition. Correct unsupported claims explicitly, without discarding supported actions.
 
 ## Local result

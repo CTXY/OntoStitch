@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Final, Literal
 
-ONTOLOGY_ASSET_DEFINITION_VERSION: Final = "database_ontology_assets_v66_business_roles"
+ONTOLOGY_ASSET_DEFINITION_VERSION: Final = "database_ontology_assets_v67_canonical_referent_naming"
 
 CONCEPT_DEFINITION: Final = "A Concept expresses one minimal, complete, reusable business meaning supported by the case. It may describe an object, attribute or category; choose from meaning, data and evidence rather than a fixed role taxonomy. Targets are representations, not SELECT lists: groups imply neither select-all/one/coalesce nor output formatting. Every case-level Concept needs nonempty Column/Value targets; no Table targets or Concept-to-Table grounded_on. Table grain and coverage belong in metadata. Prefer Question terms. Identifier/name may represent one object in different roles; explain roles without assuming interchangeability or requiring separate Concepts. Keep names, definitions, tags and incident relation roles consistent with that business referent. A full-name field group can represent a person/role without making the Concept a name attribute or proving unique person identity. A supported business category may be a subclass even when defined by an attribute restriction; do not require extra attributes, relations, actions, documents or Rules beyond the case. Unfolding a category definition alone is not an NL split. Choose class or attribute meaning from the Question, SQL and available database evidence; neither overlap nor changeability decides this. A unique row key establishes record identity, not a homogeneous business-object type; describe mixed record kinds accurately rather than equating every row with the requested object. A stored business quantity remains a Concept; only a defining business calculation belongs to Metric. Different Concepts may share target inputs, but one physical endpoint may have a direct grounded_on connection from at most one Concept in the active graph."
 
@@ -74,9 +74,16 @@ OWNER_BOUNDARIES: Final = """## Owner Boundaries
 Choose from business meaning and evidence, not SQL syntax or a domain-specific role decision tree. A useful graph need not contain every type. Explicit edges carry relationships; targets and formula bindings are not substitutes for saved edges.
 """
 
+CANONICAL_REFERENT_NAMING: Final = """### Canonical name and representations
+
+- Determine the business referent before choosing its canonical name. For the same identity, choose the Question-grounded business term that best represents the integrated meaning, not automatically the first, shortest, most frequent source title or selected field name. Keep name, definition, description and incident roles consistent. Preserve useful synonyms as aliases; describe representation-specific wording as such, not automatically as an equivalent business identity.
+- A name/code field may represent its bearer; a genuinely independent name/code attribute remains distinct. Explain each representation's role and identity scope. A display name or name-field group does not prove a unique identifier, person identity, slot correspondence or source interchangeability. Distinguish a graph node ID, a source record identifier and a business name. Changing a canonical label does not itself change the graph ID or bindings.
+- Same labels do not prove same identity, and different labels do not prove different identity. Keep different meanings separate and qualify labels by evidenced scope when useful; do not force globally unique labels, invent distinctions or collapse supported competing interpretations just to choose one name.
+"""
+
 CONCEPT_CONTRACT: Final = """## Concept Contract
 
-""" + CONCEPT_DEFINITION + """
+""" + CONCEPT_DEFINITION + "\n\n" + CANONICAL_REFERENT_NAMING + """
 
 ### Minimal meaning and matching
 

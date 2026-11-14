@@ -1,5 +1,7 @@
 # Ontology graph 结构与约束设计草案
 
+> 2026-11-14：历史调研与提案，包含未采用的通用 constraint registry 等设想，不作为当前实施要求。统一规范见 [ontology graph 设计](ontology-graph-design.md)。
+
 > 历史提案，未采纳其中独立 Constraint 类型的设计。本轮决定不新增 Constraint，以关系 description 说明业务联系与限制，结构要求由 schema/validator 执行。参见 [当前设计规范](ontology-graph-design.md) 与 [实施方案](ontology-graph-implementation-plan.md)。下文保留用于追溯，不作为当前实施依据。
 
 本文提出在当前实现上统一管理节点、关系、物理绑定和 Constraint 的设计。Constraint 用于表达业务语义中必须成立的限制，可以涉及节点、关系、属性以及多个元素组成的模式。本文是设计草案，尚未改动运行时实现。

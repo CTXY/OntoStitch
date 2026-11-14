@@ -22,6 +22,21 @@ def write(node, operation="update_node"):
     return {"operation": operation, "node": node}
 
 
+@pytest.mark.parametrize("scope", [["foreign-branch"], [], "foreign-branch", [None]])
+def test_batch_rejects_branch_scope_on_a_normal_source_before_acceptance(scope):
+    _ctx, batch, a, b = setup_batch()
+    raw = {
+        "id": "bad_scope",
+        "edge_type": "has_feature",
+        "from_node_id": a,
+        "to_node_id": b,
+        "properties": {"description": "An explicit feature relationship.", "alternative_ids": scope},
+    }
+    with pytest.raises(ValueError, match="alternative_ids"):
+        batch.submit(BatchResult.model_validate({"edits": [{"operation": "create_edge", "edge": raw}]}))
+    assert batch.preview is None
+
+
 def test_invalid_pending_repair_does_not_apply_partial_objects():
     ctx, batch, a, b = setup_batch()
     good = ctx.nodes[a].model_dump(mode="json")

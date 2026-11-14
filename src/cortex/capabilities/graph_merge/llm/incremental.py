@@ -6,6 +6,7 @@ from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
+from langchain_openai.chat_models.base import OpenAIAPIError, OpenAIConnectionError
 from pydantic import Field, model_validator
 
 from cortex.capabilities.graph_merge.integration.batch import BatchResult
@@ -55,6 +56,12 @@ class IncrementalIntegrationAgent:
         self.call_budget = None
 
     def invoke(self, phase, context, payload):
+        if phase in {"reconcile", "graph_assess"}:
+            from cortex.capabilities.graph_merge.llm.reconciliation import (
+                invoke_relation,
+            )
+
+            return invoke_relation(self, phase, context, payload)
         output = (
             IdentityDecision
             if phase == "identity"
@@ -232,6 +239,13 @@ class IncrementalIntegrationAgent:
                 .joinpath("incremental_writes.md")
                 .read_text()
             )
+        if phase in {"consolidate", "node_assess", "reconcile"}:
+            system += (
+                "\n\n"
+                + files("cortex.capabilities.graph_merge.llm.prompts")
+                .joinpath("incremental_evidence.md")
+                .read_text()
+            )
         messages = [
             SystemMessage(system),
             HumanMessage(
@@ -249,6 +263,7 @@ class IncrementalIntegrationAgent:
             "inspect_pending",
         }
         budget_announced = False
+        connection_retries = 0
         try:
             for _ in range(self.max_calls):
                 batch = getattr(context, "active_batch", None)
@@ -280,7 +295,24 @@ class IncrementalIntegrationAgent:
                     if allowed
                     else self.llm
                 )
-                response = bound.invoke(messages, config={"callbacks": [trace]})
+                try:
+                    response = bound.invoke(messages, config={"callbacks": [trace]})
+                except (OpenAIConnectionError, OpenAIAPIError) as exc:
+                    status = getattr(
+                        getattr(exc, "response", None), "status_code", None
+                    )
+                    transient = isinstance(exc, OpenAIConnectionError) or status in {
+                        502,
+                        503,
+                        504,
+                    }
+                    if not transient or connection_retries >= 1:
+                        raise
+                    # No response/tool execution occurred. Retry the exact
+                    # conversation once, within both call limits. Callbacks
+                    # record each failed/successful attempt separately.
+                    connection_retries += 1
+                    continue
                 messages.append(response)
                 calls = response.tool_calls
                 reads_allowed = read_rounds < read_limit

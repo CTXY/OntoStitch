@@ -1,0 +1,11 @@
+# Shared evidence and rejection standard
+
+The local task checks business relationships against the ontology contract and the meaning of the supplied Question, SQL and evidence together.
+
+- Reject a semantic assertion only for a concrete ontology-contract violation or an identified contradiction with a supplied evidence fact in the same scope. State the affected assertion, the contract/evidence and the incompatible roles, direction, population, condition or meaning. Missing explicit description, missing SELECT columns, or an unobserved fact is not by itself a contradiction.
+- Reasonable business interpretation and generalization may remain when the supplied training evidence contains no counterexample. A question asking for an object's or role's attribute can express the bearer relationship without selecting the bearer's name/identifier. Distinguish evidence for that relationship from evidence for a particular physical representation. Do not require every supporting case to SELECT all fields bound to every endpoint.
+- A short label or ambiguous prose can merit clarification; do not reject it merely for missing detail. If actual endpoint meanings conflict with a retained predicate's roles, identify that contract inconsistency. Names/identifiers may represent their business referent; use aliases, current meanings, inspected details and the full QA together rather than choosing a literal reading solely from a field name.
+- This standard is not a proof of universal truth. Do not silently turn an ordinary type-level association into mandatory participation, cardinality, a slot priority or exhaustive coverage. Distinguish these stronger assertions and assess their actual meaning against the contract/evidence; omission alone is not a refutation.
+- Preserve original attribution when the relationship is compatible; do not remove a source solely because its SQL projects another related attribute. Source coverage is a mechanical requirement, not proof of semantic truth. New attribution still needs a meaningful connection to the particular relationship, not proximity in the graph.
+
+These rules govern both Writer and Assessment. They replace a demand for explicit per-case proof of every relationship; they do not weaken structural validation, protected node fields, branch preservation or declared endpoint contracts.

@@ -1,5 +1,7 @@
 # 语义匹配、使用决策与输出形式
 
+> 2026-11-14：本文件保留决策边界的详细讨论；共同节点、关系及推导要求统一见 [ontology graph 规范](ontology-graph-design.md)。与该规范冲突的历史表述不再作为当前要求。
+
 日期：2026-11-10。本文补充 ontology graph 与 merge 设计；实现测试结果另行记录。
 
 ## 1. 所有者与准入
@@ -93,3 +95,13 @@ has_attribute 只作为抽象基类。实际边必须复用/声明具体业务�
 ## 11. Two-stage merge implementation
 
 2026-11-12: production merge uses matched-node consolidation with independent Node Assessment, followed by Graph Reconciliation that inspects and repairs structure. See [two-stage contract](ontology-merge-two-stage.md) for role inputs/tools/outputs, buffered repair, intermediate versus final validation and logging. A graph rewrite that changes core node semantics or declared dependencies invalidates the prior node review for those objects and triggers targeted reassessment. No additional mandatory Graph Assessment role is introduced.
+
+## 12. 节点内容整合中的规范名称与 identifier
+
+在已确认 identity 的前提下，先确定合并后业务指代，再选择最能代表该含义、符合 Question 业务用语的规范名称；不按源顺序、频次、最短标题或 SELECT 字段机械选择。同步整理名称、定义、描述及关联角色。真正同义词保留为 aliases；只描述某种表示方式的原名称不自动视为全局同义。
+
+复用 extraction 的 Concept 指导：姓名/编码可表示业务对象或角色，不等于名称属性必须独立建节点；独立讨论名称属性时保持区分。图节点 ID、来源记录 identifier、业务名称是不同层次，改标题不自动改 ID/绑定。姓名不证明唯一人物身份，记录键不自动证明跨源/跨时间业务身份，多个槽位不证明多个不同人物或同一人物。
+
+同名不决定同 identity，不同名也不决定不同 identity；不强制全图名称唯一。真实含义不同可按有依据的范围消歧，不能为命名而编造区别或消除冲突。Node Assessment 检查实际指代/关系角色不一致，不因纯风格差异或缺少某句话判错。Reconciliation 复核结果，不应常规承担上游名称选择。
+
+本次指引通过 extraction 的共享 Concept contract 注入节点合并和 Node Assessment，不为角色各维护一份定义。局部验证见 semantic_region_lab_v7：复用四案例的已确认 identity 及既有冲突检查点，重整3组9个原始成员对应的名称/定义/表示角色；再接局部关系修复。不重跑 extraction、identity 检索或完整 merge，不声称从零重建冲突。
