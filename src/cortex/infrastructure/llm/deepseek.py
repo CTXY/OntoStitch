@@ -6,6 +6,19 @@ from langchain_openai import ChatOpenAI
 
 
 class DeepSeekChatOpenAI(ChatOpenAI):
+    def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
+        if any((c.get("delta") or {}).get("role") == "" for c in chunk.get("choices", [])):
+            chunk = deepcopy(chunk)
+            for choice in chunk.get("choices", []):
+                if (choice.get("delta") or {}).get("role") == "":
+                    choice["delta"]["role"] = "assistant"
+        result = super()._convert_chunk_to_generation_chunk(chunk, default_chunk_class, base_generation_info)
+        if result is not None and chunk.get("choices"):
+            reasoning = (chunk["choices"][0].get("delta") or {}).get("reasoning_content")
+            if reasoning is not None:
+                result.message.additional_kwargs["reasoning_content"] = reasoning
+        return result
+
     def _create_chat_result(self, response, generation_info=None):
         data = response if isinstance(response, dict) else response.model_dump()
         # Some compatible gateways omit the assistant role while returning

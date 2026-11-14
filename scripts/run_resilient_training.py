@@ -69,7 +69,7 @@ def configuration(args, workspace):
             'api_key': slots[args.slot].api_key, 'timeout': 3600, 'max_retries': 8}),
     })
     model = create_chat_model(cfg.llm, profile='sql_training')
-    model.streaming = model.stream_usage = False
+    model.streaming = model.stream_usage = getattr(args, 'streaming', False)
     return cfg, model
 
 
@@ -77,7 +77,7 @@ def observe(model, folder):
     """Count wire attempts, including SDK retries; never record auth headers."""
     lock, starts = Lock(), {}
     wire = folder / 'wire'
-    wire.mkdir(exist_ok=True)
+    wire.mkdir(parents=True, exist_ok=True)
     offset = max((int(p.stem.split('_')[0]) for p in wire.glob('*_request.json')), default=0)
     counter = [offset]
 
@@ -93,11 +93,47 @@ def observe(model, folder):
 
     def response(resp):
         ident = resp.request.extensions.get('audit_id', 0)
+        if 'text/event-stream' in resp.headers.get('content-type', ''):
+            upstream = resp.stream
+            # Respect the SDK's actual HTTP client namespace (some gateways
+            # bundle an httpx-compatible fork); its stream type is checked by
+            # isinstance inside Response.read/close.
+            stream_base = next(t for t in type(upstream).__mro__ if t.__name__ == 'SyncByteStream')
+
+            class RecordingStream(stream_base):
+                def __iter__(self):
+                    with (wire / f'{ident:06}_stream.sse').open('wb') as output:
+                        for chunk in upstream:
+                            output.write(chunk)
+                            output.flush()
+                            yield chunk
+
+                def close(self):
+                    upstream.close()
+
+            resp.stream = RecordingStream()
         resp.read()
         try:
             body = resp.json()
         except ValueError:
-            body = {'non_json_response': True, 'characters': len(resp.content)}
+            if 'text/event-stream' in resp.headers.get('content-type', '') or resp.text.lstrip().startswith('data:'):
+                from cortex.infrastructure.llm.stream_audit import (
+                    completion_from_sse,
+                    normalize_sse_frames,
+                )
+
+                (wire / f'{ident:06}_stream.sse').write_text(resp.text)
+                try:
+                    body = completion_from_sse(resp.text)
+                except (ValueError, TypeError, KeyError) as error:
+                    body = {'stream_decode_error': type(error).__name__, 'characters': len(resp.content)}
+                # The body is already buffered for audit. Normalize only
+                # malformed SSE framing in this SDK read buffer, never graph
+                # data or the raw saved response. Some gateways prepend a
+                # heartbeat JSON line without its required event separator.
+                resp._content = normalize_sse_frames(resp.text).encode()
+            else:
+                body = {'non_json_response': True, 'characters': len(resp.content)}
         write(wire / f'{ident:06}_response.json', {'status': resp.status_code,
             'seconds': time.monotonic() - starts.get(ident, time.monotonic()), 'body': body})
 
@@ -361,7 +397,8 @@ def watch(args):
                 child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
                     '--output', str(args.output), '--config', str(args.config),
                     '--keys', str(args.keys), '--model', args.model, '--slot', str(slot),
-                    '--merge-batch-size', str(args.merge_batch_size)],
+                    '--merge-batch-size', str(args.merge_batch_size),
+                    *(['--streaming'] if args.streaming else [])],
                     stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy(), start_new_session=True)
             write(args.output / 'supervisor.pid', child.pid)
         time.sleep(5)
@@ -393,7 +430,8 @@ def supervise(args):
             logfiles.append(log)
             command = [sys.executable, str(Path(__file__).resolve()), '--mode', 'case', '--case', ident,
                 '--slot', str(slot), '--output', str(args.output), '--config', str(args.config),
-                '--keys', str(args.keys), '--model', args.model]
+                '--keys', str(args.keys), '--model', args.model,
+                *(['--streaming'] if getattr(args, 'streaming', False) else [])]
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy())
             active[slot] = (ident, process)
         for slot, (ident, process) in list(active.items()):
@@ -446,6 +484,7 @@ def main():
     parser.add_argument('--case')
     parser.add_argument('--merge-batch-size', type=int, default=10,
         help='Case graphs per merge invocation; 0 combines all remaining cases')
+    parser.add_argument('--streaming', action='store_true', help='Use streamed completions to keep long gateway responses active; preserve SSE/usage in wire audit')
     args = parser.parse_args()
     if args.merge_batch_size < 0:
         parser.error('--merge-batch-size must be nonnegative')
