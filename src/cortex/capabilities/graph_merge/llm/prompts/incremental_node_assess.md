@@ -10,6 +10,8 @@ Compact conflict owners may have placeholder common names/descriptions because t
 
 `source_equals_candidate` lists archived IDs whose complete records equal the supplied current records. They are shared records, not absent evidence. Tool replies marked `already_supplied` reference the full record/evidence already in this conversation; do not fetch it again.
 
+Assess node-owned meaning, targets, formulas, condition/action and complete conflict alternatives. Targets may overlap between distinct, correctly defined Concepts. Do not reject content solely for direct-edge ownership contests, parallel assertions, hierarchy or attribute-attachment choices: the controller schedules these for Graph Reconciliation and checks the final graph. Do not prescribe an arbitrary grounding owner here. Reject a genuinely incorrect referent, binding or formula (including required casts/NULL policy), and explain that content defect rather than a preferred edge layout.
+
 ## Checks
 
 Evaluate action integrity BEFORE checking whether its reason matches Gold. For every `decision_review_ids` Rule, return one `decision_checks` item: `node_id`, `independent_decisions`, and concrete `issues` (empty only when valid). List independently variable business obligations, not SQL clauses or alternative implementations of one decision. Holding the chosen records fixed while changing requested fields tests selection versus ranking; holding chosen fields fixed while changing row/column arrangement tests presentation versus selection. Multiple intent tags do not resolve a compound action. A multi-decision Rule requires revision even if every clause matches Gold.

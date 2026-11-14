@@ -76,6 +76,9 @@ def inspection_signals(context, preview, *, origins=None):
                 [endpoint],
                 node_ids=sorted(claimants),
                 physical_id=endpoint,
+                edge_ids=sorted(e.id for e in preview.state.graph.edges
+                    if e.edge_type == "grounded_on" and e.to_node_id == endpoint
+                    and e.from_node_id in claimants),
             )
     pairs = defaultdict(list)
     neighbors = defaultdict(list)

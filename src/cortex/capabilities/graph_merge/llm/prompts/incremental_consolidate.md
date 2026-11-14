@@ -8,6 +8,7 @@ Integrate this task's confirmed identity groups into the current graph. Preserve
 - `source_equals_candidate` lists archived IDs whose COMPLETE records are identical to the supplied current records; use those current records for both views. Tool replies marked `already_supplied` refer to those complete supplied records. Do not re-read them or re-retrieve confirmed identity groups without a concrete missing fact.
 - Write only within `task_scope` targets. Neighbours and consumers are read-only context. Use `extend_task(ids, reason)` before an additional edit is necessary; read access does not grant write scope.
 - Compare every complete matched member and necessary dependency. Use preloaded guidance, contracts and operation definitions; read only material missing information, not the same registry again.
+- Integrate node content and necessary identity/reference retargeting. Distinct correct Concepts may retain overlapping targets; shared-endpoint edge ownership, redundant assertions and business hierarchy are resolved by the following Graph Reconciliation phase. Do not repeatedly rewrite sound node definitions to enforce one preferred edge layout.
 
 ## Content decisions
 

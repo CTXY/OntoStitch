@@ -10,6 +10,7 @@ A five-case batch took51 HTTP/model calls:1 identity,12 consolidation,10 node as
 - When a read returns an identical complete supplied object, return its ID/location instead of repeating its body. Candidate scores/signals remain. Do not suppress newly changed objects or absent evidence.
 - Node evidence reads identify evidence already in the initial packet. Relation field/guidance reads reuse earlier results within the same unmodified local transaction. No semantic read is replaced by an inferred fact.
 - Every inspected edge includes its actual predicate and endpoint types. Invalid endpoint errors identify the actual ID/type and the permitted types from the schema. Metric refs to physical inputs use grounded_on; refs to Concept/Metric use depends_on. No constraint is relaxed and no edge is automatically semantically rewritten.
+- Node Assessment reviews node-owned meaning/binding/formula/behavior, not a preferred intermediate edge layout. Shared-endpoint ownership and redundant assertions are structural signals handled by the following Reconciliation phase; signals include all claimant edge IDs so a repair is not limited to one example edge. Intrinsic formula defects still block node acceptance, and final graph constraints remain mandatory.
 - Use ten case graphs per operator invocation, with all source mappings and per-batch accepted checkpoints. Keep previously accepted batches. Agent-internal groups/regions remain independent of input-case partitioning.
 
 ## Validation limits

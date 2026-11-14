@@ -628,7 +628,10 @@ def build_task_context(
                 for e in edges.values()
                 if e.edge_type == "grounded_on" and e.to_node_id == endpoint
             )
-            contests.append({"physical_id": endpoint, "owners": sorted(owners)})
+            contests.append({"physical_id": endpoint, "owners": sorted(owners),
+                "edge_ids": sorted(e.id for e in edges.values()
+                    if e.edge_type == "grounded_on" and e.to_node_id == endpoint
+                    and e.from_node_id in owners)})
     required_nodes.update(k for k in selected_nodes if nodes[k].alternatives)
     required_nodes.update(
         key
