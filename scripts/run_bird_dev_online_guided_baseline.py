@@ -460,6 +460,7 @@ async def _online_case(
     graph_state,
     column_context,
     case: dict[str, Any],
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     question = _question_with_evidence(case)
     record: dict[str, Any] = {
@@ -475,6 +476,7 @@ async def _online_case(
             graph_state=graph_state,
             dialect="sqlite",
             column_context=column_context,
+            **({"run_id": run_id} if run_id is not None else {}),
         )
         record["online_before_interaction"] = current.model_dump(mode="json")
         interaction_rounds = []

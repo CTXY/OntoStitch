@@ -4,7 +4,7 @@ Gold SQL is available only to the existing simulated user and SQL evaluator.
 No per-case success retries, graph writes, or answer selection are performed.
 """
 from __future__ import annotations
-import argparse, asyncio, dataclasses, json, os, threading, time
+import argparse, asyncio, dataclasses, hashlib, json, os, sqlite3, threading, time
 from pathlib import Path
 from types import SimpleNamespace
 import yaml
@@ -119,12 +119,18 @@ async def evaluate(args):
                     'retrieve_db':cfg.services.retrieve_db.model_copy(update={'workspace':folder/'retrieval','embedding_model':None})})})
             model=create_chat_model(casecfg.llm,profile='online_context');model.callbacks=[CallAudit(folder)];audit_http(model,folder/'wire')
             traces=[];worker=SimpleNamespace(service=build_online_context_service(config=casecfg,llm=model,embeddings=None,trace_sink=lambda stage,payload: traces.append({"stage":stage,"payload":payload})),simulator=build_simulated_user_agent(config=casecfg,llm=model),traces=traces)
+            run_id=hashlib.sha256(str(case['source_id']).encode()).hexdigest()
+            if (folder/'online.sqlite').exists():
+                with sqlite3.connect(folder/'online.sqlite') as connection:
+                    previous=connection.execute('SELECT DISTINCT thread_id FROM checkpoints').fetchall()
+                    if len(previous)==1:run_id=previous[0][0]
             p=folder/'online.json'
             record=read(p) if p.exists() else None
             if not record or record.get('status')=='error':
                 for attempt in range(3):
-                    record=await _online_case(worker,graph_state=graph,column_context=context,case=case)
-                    write(folder/f'online_attempt_{attempt+1}.json',record)
+                    record=await _online_case(worker,graph_state=graph,column_context=context,case=case,run_id=run_id)
+                    next_attempt=len(list(folder.glob('online_attempt_*.json')))+1
+                    write(folder/f'online_attempt_{next_attempt}.json',record)
                     if record.get('status')!='error' or not is_transport_failure(record):break
                     await asyncio.sleep(15)
                 write(p,record)

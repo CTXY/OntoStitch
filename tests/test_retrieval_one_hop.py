@@ -30,3 +30,21 @@ def test_metric_reference_chain_is_retained_beyond_business_hop():
     refs = expand_context(graph, {'outer'})
     assert {'outer', 'inner', 'operand', 'a', 'table'} <= refs
     assert len(build_retrieved_graph_state(graph, refs).graph.nodes) == len(refs)
+
+
+def test_public_contract_accepts_only_exact_relation_group_projection():
+    import pytest
+    from cortex.application.retrieve_db import RetrieveDbResult, RetrieveDbError, _validate_result
+    from cortex.schema import load_root_schema
+    b=concept('owner','b').model_copy(update={'properties':{'targets':[['b']], 'relation_metadata':[{'id':'group','edges':['two','three'],'description':'These categories can overlap.'}]}})
+    original=state([*catalog(),concept('root','a'),b,concept('left','c'),concept('right','a')],
+                   [edge('one','root','owner','has_feature'),edge('two','owner','left','has_feature'),edge('three','owner','right','has_feature')])
+    projected=build_retrieved_graph_state(original,expand_context(original,{'root'}))
+    raw=RetrieveDbResult(status='completed',question='request',graph_fingerprint='fingerprint',retrieved_graph_state=projected)
+    validate=lambda r:_validate_result(r,original.graph,'request','fingerprint',load_root_schema())
+    assert validate(raw).retrieved_graph_state==projected
+    for field,value in [('name','Changed identity'),('description','Invented description')]:
+        nodes=tuple(n.model_copy(update={field:value}) if n.id=='owner' else n for n in projected.graph.nodes)
+        bad=projected.model_copy(update={'graph':projected.graph.model_copy(update={'nodes':nodes})})
+        with pytest.raises(RetrieveDbError,match='modified or unknown node'):
+            validate(raw.model_copy(update={'retrieved_graph_state':bad}))

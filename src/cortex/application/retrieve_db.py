@@ -335,7 +335,7 @@ class RetrieveDbService:
             **call_kwargs,
         )
         expected = tuple(
-            node
+            _retrieval_node_view(node, {edge.id for edge in raw.subgraph.edges})
             for node in graph_state.conflict_nodes
             if raw.subgraph and node.id in {n.id for n in raw.subgraph.nodes}
         )
@@ -393,6 +393,12 @@ def _validate_answers(
             raise RetrieveDbError(
                 f"answer is outside clarification candidates: {slot_id}"
             )
+
+
+def _retrieval_node_view(node, retained_edge_ids):
+    """Only complete relation groups survive a task-local edge projection."""
+    from cortex.schema.relation_metadata import filter_metadata
+    return node.model_copy(update={"properties": filter_metadata(node.properties, retained_edge_ids)})
 
 
 def _validate_result(
@@ -453,8 +459,9 @@ def _validate_result(
             "relevant ontology assets must equal selected semantic asset nodes"
         )
     if result.subgraph is not None:
+        retained_edge_ids = {edge.id for edge in result.subgraph.edges}
         for node in result.subgraph.nodes:
-            if node.id not in nodes or node != nodes[node.id]:
+            if node.id not in nodes or node != _retrieval_node_view(nodes[node.id], retained_edge_ids):
                 raise RetrieveDbError(
                     f"subgraph contains a modified or unknown node: {node.id}"
                 )
