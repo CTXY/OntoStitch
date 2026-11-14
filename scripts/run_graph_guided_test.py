@@ -44,6 +44,14 @@ class CallAudit(BaseCallbackHandler):
 
 def audit_http(model, folder):
     """Count actual SDK requests as well as logical LangChain calls; no headers."""
+    # LangChain may cache an HTTP client across models sharing a base URL.
+    # Give this case its own transports before installing per-case audit hooks.
+    sync=type(model.root_client._client)(timeout=3600)
+    asynchronous=type(model.root_async_client._client)(timeout=3600)
+    model.root_client=model.root_client.with_options(http_client=sync)
+    model.client=model.root_client.chat.completions
+    model.root_async_client=model.root_async_client.with_options(http_client=asynchronous)
+    model.async_client=model.root_async_client.chat.completions
     folder.mkdir(parents=True,exist_ok=True);lock=threading.Lock();offset=max((int(x.name.split('_')[0]) for x in folder.glob('*_request.json')),default=0);counter=[offset];starts={}
     def request(req):
         with lock:counter[0]+=1;key=counter[0];starts[key]=time.monotonic()
@@ -110,7 +118,7 @@ async def evaluate(args):
                     'online_context':cfg.services.online_context.model_copy(update={'checkpoint_path':folder/'online.sqlite','query_example_top_k':0}),
                     'retrieve_db':cfg.services.retrieve_db.model_copy(update={'workspace':folder/'retrieval','embedding_model':None})})})
             model=create_chat_model(casecfg.llm,profile='online_context');model.callbacks=[CallAudit(folder)];audit_http(model,folder/'wire')
-            traces=[];worker=SimpleNamespace(service=build_online_context_service(config=casecfg,llm=model,embeddings=None,trace_sink=traces.append),simulator=build_simulated_user_agent(config=casecfg,llm=model),traces=traces)
+            traces=[];worker=SimpleNamespace(service=build_online_context_service(config=casecfg,llm=model,embeddings=None,trace_sink=lambda stage,payload: traces.append({"stage":stage,"payload":payload})),simulator=build_simulated_user_agent(config=casecfg,llm=model),traces=traces)
             p=folder/'online.json'
             record=read(p) if p.exists() else None
             if not record or record.get('status')=='error':
