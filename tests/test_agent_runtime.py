@@ -64,7 +64,7 @@ def session_for(case_graph, **config):
         database=database,
         database_url=database.url,
         dialect="sqlite",
-        config=SqlTrainingConfig(**config),
+        config=SqlTrainingConfig(**{"agent_max_steps": 10, **config}),
     )
 
 
@@ -495,7 +495,7 @@ def test_model_receives_graph_edit_structure_not_an_untyped_object(case_graph):
             import json
 
             # The bounded contract definition is now part of the authoring API.
-            assert len(json.dumps(parameters)) < 6000
+            assert len(json.dumps(parameters)) < 6100
             assert (
                 edit_tool.args_schema.model_json_schema()["additionalProperties"]
                 is False
@@ -840,3 +840,38 @@ def test_interrupted_nested_episode_restarts_edits_on_restored_graph(case_graph)
         workflow.invoke({'done': False}, config, durability='sync')
     assert workflow.invoke(None, config, durability='sync')['done']
     assert [a.id for a in store.working.semantic_assets] == [make_rule().id]
+
+
+def test_uncapped_episode_can_exceed_previous_default_and_handoff(case_graph):
+    session = session_for(case_graph, agent_max_steps=None, agent_episode_timeout=None)
+    model = ScriptModel([
+        *[message(call('inspect_graph', {'mode': 'nodes', 'node_type': 'concept',
+                                        'offset': i, 'limit': 1}, str(i))) for i in range(12)],
+        finish(),
+    ])
+    result = LearningAgent(model).run(session)
+    assert result.direct_completed
+    assert result.model_calls == 13
+    assert 'model_calls_left' not in session.context()['budget']
+
+
+def test_uncapped_episode_can_correct_errors_without_three_error_stop(case_graph):
+    session = session_for(case_graph, agent_max_steps=None, agent_episode_timeout=None)
+    model = ScriptModel([
+        *[message(call('inspect_graph', {'mode': 'node', 'node_id': 'concept.missing'}, str(i)))
+          for i in range(3)], finish(),
+    ])
+    assert LearningAgent(model).run(session).direct_completed
+
+
+def test_tool_argument_constraints_match_existing_backend_checks(case_graph):
+    from cortex.capabilities.sql_training.learning.tools import build_tools
+
+    tools = {t.name: t for t in build_tools(session_for(case_graph))}
+    handoff = tools['handoff'].args_schema.model_json_schema()['properties']
+    edit = tools['edit_graph'].args_schema.model_json_schema()['properties']
+    assert handoff['summary']['maxLength'] == 2000
+    assert edit['edit_id']['pattern'] == r'^[A-Za-z0-9_-]+$'
+    assert SqlTrainingConfig().agent_max_steps is None
+    assert SqlTrainingConfig().agent_episode_timeout is None
+    assert SqlTrainingConfig().max_iterations == SqlTrainingConfig().max_rounds == 5

@@ -20,11 +20,12 @@ services:
   sql_training:
     workspace: workspace/sql_training
     case_max_workers: 1
-    agent_max_steps: 10
+    agent_max_steps: null  # No model-call cap; training is bounded by rounds.
+    agent_episode_timeout: null
     agent_read_concurrency: 4
     agent_context_characters: 64000
-    max_rounds: 3
-    max_iterations: 3
+    max_rounds: 5
+    max_iterations: 5
     required_consecutive_correct_replays: 3
     validation:
       dialect: sqlite

@@ -123,6 +123,19 @@ class InteractionQuestion(ClarificationPriority):
     requires_explanation_when_no_option: Literal[True] = True
 
 
+class ClarificationFilterDecision(_Model):
+    choice_point_id: str
+    outcome: Literal["keep", "question_resolved", "database_equivalent", "not_relevant"]
+    reason: str = Field(min_length=1)
+    selected_option_id: str | None = None
+    question_evidence: str = ""
+    excluded_options: dict[str, str] = Field(default_factory=dict)
+    covered_option_ids: tuple[str, ...] = ()
+    data_property: str = ""
+    applicability_reason: str = ""
+    probe_ids: tuple[str, ...] = ()
+
+
 class InteractionAnswer(_Model):
     question_id: str
     selected_option_ids: tuple[str, ...] = ()
@@ -147,6 +160,7 @@ class InteractionGuidance(ClarificationPriority):
         "user_choice",
         "user_explanation",
         "question_resolved",
+        "database_equivalent",
         "ownership_contract",
     ]
 
@@ -155,6 +169,7 @@ class InteractionGuidance(ClarificationPriority):
             "user_choice": "经过用户选择",
             "user_explanation": "根据用户说明",
             "question_resolved": "根据问题的明确要求",
+            "database_equivalent": "根据基础字段属性验证",
             "ownership_contract": "根据资产职责约束",
         }[self.source]
         base = (
@@ -242,6 +257,7 @@ class OnlineContextResult(_Model):
     unresolved_choice_point_ids: tuple[str, ...] = ()
     run_id: str | None = None
     interaction_guidance: tuple[InteractionGuidance, ...] = ()
+    filter_decisions: tuple[ClarificationFilterDecision, ...] = ()
     downstream_guidance: DownstreamGuidance | None = None
     projection_trace: tuple[ProjectionDecision, ...] = ()
     diagnostics: OnlineContextDiagnostics = Field(

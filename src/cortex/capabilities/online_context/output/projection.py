@@ -74,18 +74,33 @@ def build_downstream_guidance(
         for asset in assets
     )
     content = []
+    automatic = any(
+        item.source in {"question_resolved", "database_equivalent"}
+        for item in interaction_guidance
+    )
     if include_interaction_preamble:
         content.append(
-            "生成 SQL 时必须先遵守以下用户交互 guidance；其优先级高于 ontology assets。"
+            (
+                "生成 SQL 时先遵守已确定的任务 guidance；数据库等效观察仅适用于本次查询。"
+                if automatic
+                else "生成 SQL 时必须先遵守以下用户交互 guidance；其优先级高于 ontology assets。"
+            )
             if chinese
             else (
-                "When generating SQL, you MUST follow the resolved user guidance first; "
+                "Follow resolved task guidance first; database equivalence observations "
+                "apply only to this query."
+                if automatic
+                else "When generating SQL, you MUST follow the resolved user guidance first; "
                 "it has highest priority since it is user-confirmed."
             )
         )
     if resolved_guidance_content.strip():
         content.append(
-            ("用户交互 guidance：" if chinese else "Resolved user guidance:")
+            (
+                ("已确定的任务 guidance：" if chinese else "Resolved task guidance:")
+                if automatic
+                else ("用户交互 guidance：" if chinese else "Resolved user guidance:")
+            )
             + "\n"
             + resolved_guidance_content.strip()
         )
@@ -132,10 +147,16 @@ def build_downstream_guidance(
     return DownstreamGuidance(
         usage=(
             (
-                "必须先遵守用户交互 guidance；ontology assets 仅作为补充参考。"
+                (
+                    "先遵守已确定的任务 guidance；ontology assets 作为补充参考。"
+                    if automatic
+                    else "必须先遵守用户交互 guidance；ontology assets 仅作为补充参考。"
+                )
                 if chinese
                 else (
-                    "Follow resolved user guidance first; ontology assets are supplementary "
+                    "Follow resolved task guidance first; ontology assets are reference only."
+                    if automatic
+                    else "Follow resolved user guidance first; ontology assets are supplementary "
                     "reference only."
                 )
             )
@@ -749,7 +770,11 @@ def project_graph_state(
                 )
         retained_edges.append(edge)
     projected = GraphState(
-        graph=GraphSpace(nodes=tuple(nodes.values()), edges=tuple(retained_edges), relation_contracts=graph.relation_contracts),
+        graph=GraphSpace(
+            nodes=tuple(nodes.values()),
+            edges=tuple(retained_edges),
+            relation_contracts=graph.relation_contracts,
+        ),
     )
     # Validate the explicitly retained edges and branch ownership; no relations
     # are reconstructed and no fields from separate candidates are combined.

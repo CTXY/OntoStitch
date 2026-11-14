@@ -175,6 +175,7 @@ def default_runtime(directory, *, on_retrieved=None):
     from cortex.bootstrap.online_context import build_online_context_service
     from cortex.config import load_config
     from cortex.infrastructure.llm import create_chat_model
+    from cortex.infrastructure.online_context.probes import SQLiteFilterDatabase
 
     project = Path(
         os.environ.get("CORTEX_PROJECT_ROOT", Path(__file__).resolve().parents[4])
@@ -202,6 +203,11 @@ def default_runtime(directory, *, on_retrieved=None):
     return agent, build_online_context_service(
         config=config,
         on_retrieved=on_retrieved,
+        filter_database=SQLiteFilterDatabase(
+            directory / "database.sqlite",
+            timeout=online.clarification_filter.sql_timeout,
+            max_rows=online.clarification_filter.max_rows,
+        ),
         **({"embeddings": None} if lexical_only else {}),
     )
 

@@ -247,14 +247,14 @@ class SqlTrainingConfig(_ConfigModel):
     dimension_value_expansion: DimensionValueExpansionConfig = Field(
         default_factory=DimensionValueExpansionConfig
     )
-    max_rounds: int = Field(default=3, ge=1)
-    max_iterations: int = Field(default=3, ge=1)
+    max_rounds: int = Field(default=5, ge=1)
+    max_iterations: int = Field(default=5, ge=1)
     sql_timeout: float = Field(default=30.0, gt=0)
     required_consecutive_correct_replays: int = Field(default=3, ge=1)
     case_max_workers: int | None = Field(default=None, ge=1)
-    agent_max_steps: int = Field(default=10, ge=1)
+    agent_max_steps: int | None = Field(default=None, ge=1, description="Optional episode model-call cap; null leaves calls uncapped.")
     agent_read_concurrency: int = Field(default=4, ge=1, le=4)
-    agent_episode_timeout: float = Field(default=180.0, gt=0)
+    agent_episode_timeout: float | None = Field(default=None, gt=0)
     agent_context_characters: int = Field(default=64_000, ge=4_000)
     agent_notes_characters: int = Field(default=4_000, ge=256)
     agent_tool_characters: int = Field(default=12_000, ge=1_000)
@@ -298,9 +298,20 @@ class GraphMergeConfig(_ConfigModel):
     max_evidence_characters: int = Field(default=48_000, ge=1)
 
 
+class ClarificationFilterConfig(_ConfigModel):
+    enabled: bool = True
+    max_rounds: int = Field(default=6, ge=1)
+    max_probes: int = Field(default=8, ge=0)
+    sql_timeout: float = Field(default=8.0, gt=0)
+    max_rows: int = Field(default=200, ge=1)
+
+
 class OnlineContextConfig(_ConfigModel):
     checkpoint_path: Path = Path("workspace/checkpoints/online_context.sqlite")
     questions_per_round: int = Field(default=1, ge=1)
+    clarification_filter: ClarificationFilterConfig = Field(
+        default_factory=ClarificationFilterConfig
+    )
 
     question_budget: int | None = Field(default=None, ge=0, strict=True)
     concept_limit: int = Field(default=12, ge=1)

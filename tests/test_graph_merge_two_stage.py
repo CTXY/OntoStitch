@@ -616,3 +616,18 @@ def test_reasoning_survives_response_and_following_tool_turn():
     )
     assert payload["messages"][1]["reasoning_content"] == "External model reasoning"
     assert "reasoning_content" not in payload["messages"][0]
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_deepseek_thinking_protocol_survives_proxy_host(monkeypatch, enabled):
+    from cortex.config.models import LLMConfig
+    from cortex.infrastructure.llm import providers
+
+    monkeypatch.setattr(providers, "ChatOpenAI", lambda **kw: kw)
+    monkeypatch.setattr(providers, "DeepSeekChatOpenAI", lambda **kw: kw)
+    model = providers.create_chat_model(LLMConfig(
+        model="deepseek-v4-pro", base_url="https://proxy.example/v1", api_key="test-only",
+        enable_thinking=enabled, reasoning_effort="high",
+    ))
+    assert model["extra_body"] == {"thinking": {"type": "enabled" if enabled else "disabled"}}
+    assert model["reasoning_effort"] == ("high" if enabled else "none")

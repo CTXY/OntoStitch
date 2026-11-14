@@ -679,7 +679,7 @@ def test_compact_guides_reduce_context_without_changing_runtime_contract(case_gr
         compact_total += len(json.dumps(guide))
         expanded = dict(guide, asset_envelope=contract["output_schema"]["asset_envelope"], properties_schema=model.model_json_schema())
         raw_total += len(json.dumps(expanded))
-        assert len(json.dumps(guide)) < 7800
+        assert len(json.dumps(guide)) < 8000
     assert compact_total < raw_total - 5000
     assert contract == before
 
@@ -705,3 +705,32 @@ def test_edge_extra_field_error_identifies_edge_operation(case_graph):
     assert result["status"] == "rejected"
     assert result["errors"][0]["path"] == "edge_operations.0.edge.description"
     assert session.graph.working_revision == before
+
+
+def test_case_semantics_contract_reaches_learning_and_assessment():
+    from cortex.capabilities.sql_training.learning.prompt_rendering import (
+        render_write_guide,
+    )
+    from cortex.capabilities.sql_training.llm.prompts import load_prompt
+    from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
+        CONCEPT_DEFINITION,
+        RELATION_SCOPE_RULE,
+    )
+    from cortex.capabilities.sql_training.training.quality_contract import (
+        QUALITY_CRITERIA,
+    )
+    from cortex.schema import load_root_schema
+
+    contract = ontology_contract(load_root_schema())
+    concept = render_type_guide(contract, "concept")["guidance"]
+    relations = render_write_guide(contract, "relations")["guidance"]
+    assessment = load_prompt("learning_assessment")
+    assert CONCEPT_DEFINITION in concept and CONCEPT_DEFINITION in assessment
+    assert RELATION_SCOPE_RULE in relations and RELATION_SCOPE_RULE in assessment
+    assert "task-relevant specific business objects" in concept
+    assert "is_a(C,B) and r(B,p)" in relations
+    assert "an unselected endpoint" in relations
+    for key in ("minimality", "metric_minimality"):
+        assert "Do not fail merely because indivisibility has not been proved" in QUALITY_CRITERIA[key]
+    assert "a specific material gap prevents checking a mandatory requirement" in assessment
+    assert "Source differences" not in assessment

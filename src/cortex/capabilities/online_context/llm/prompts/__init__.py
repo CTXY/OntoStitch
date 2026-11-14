@@ -8,6 +8,7 @@ _PROMPT_FILES = {
     "initial_sql_memory_conflicts": "initial_sql_memory_conflicts.md",
     "cross_node_conflicts": "cross_node_conflicts.md",
     "audit_slot_relevance": "audit_slot_relevance.md",
+    "filter_clarifications": "filter_clarifications.md",
     "guidance": "guidance.md",
     "simulated_user": "simulated_user.md",
     "simulated_user_review": "simulated_user_review.md",

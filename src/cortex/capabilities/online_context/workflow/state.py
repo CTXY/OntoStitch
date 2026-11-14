@@ -8,6 +8,9 @@ class OnlineState(TypedDict, total=False):
     points: list[dict]
     notes: list[str]
     answers: list[dict]
+    automatic_guidance: list[dict]
+    filter_decisions: list[dict]
+    filter_observations: list[dict]
     remaining_budget: int | None
     questions: list[dict]
     result: dict

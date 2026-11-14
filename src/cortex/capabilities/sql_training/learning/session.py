@@ -95,18 +95,25 @@ class LearningSession:
                     snapshot, context["gold_bindings"], str(self.record["question"]), pinned
                 ),
                 "budget": {
-                    "model_calls_left": self.config.agent_max_steps - self.model_calls,
+                    **({"model_calls_left": self.config.agent_max_steps - self.model_calls}
+                       if self.config.agent_max_steps is not None else {}),
                     "database_calls_left": self.config.agent_database_calls
                     - self.database_calls,
                     "remaining_trials": self.remaining_trials,
                     "read_concurrency": self.config.agent_read_concurrency,
-                    "repeated_read_decisions_left": max(0, 3 - self.no_progress),
+                    **({"repeated_read_decisions_left": max(0, 3 - self.no_progress)}
+                       if self.config.agent_max_steps is not None else {}),
                 },
             }
         )
         if self.loaded_type_guides:
             context["loaded_type_guides"] = sorted(self.loaded_type_guides)
-        if self.no_progress:
+        if self.no_progress and self.config.agent_max_steps is None:
+            context["next_action_hint"] = (
+                "Repeated unchanged reads have not advanced the task. Use gathered evidence "
+                "to edit the graph or hand off; do not reread unchanged guides."
+            )
+        elif self.no_progress:
             context["next_action_hint"] = (
                 f"{self.no_progress} consecutive repeated-read decisions; "
                 f"{max(0, 3 - self.no_progress)} remain before stagnation stops the episode. "
@@ -132,12 +139,12 @@ class LearningSession:
         return context
 
     def exhausted(self, *, include_model_limit: bool = True) -> bool:
+        bounded = self.config.agent_max_steps is not None
         return (
-            include_model_limit
-            and self.model_calls >= self.config.agent_max_steps
-            or monotonic() - self.started >= self.config.agent_episode_timeout
-            or self.errors >= 3
-            or self.no_progress >= 3
+            (include_model_limit and bounded and self.model_calls >= self.config.agent_max_steps)
+            or (self.config.agent_episode_timeout is not None
+                and monotonic() - self.started >= self.config.agent_episode_timeout)
+            or (bounded and (self.errors >= 3 or self.no_progress >= 3))
         )
 
     def summarize(self, payload: Any, *, evidence_id: str | None = None) -> Any:

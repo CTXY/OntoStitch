@@ -14,6 +14,7 @@ from cortex.application.online_context import OnlineContextService
 from cortex.bootstrap.retrieve_db import build_retrieve_db_service
 from cortex.capabilities.online_context.discovery.organizer import LlmChoiceOrganizer
 from cortex.capabilities.online_context.engine import OnlineContextCapability
+from cortex.capabilities.online_context.filtering import ClarificationFilterAgent
 from cortex.capabilities.online_context.interaction.simulated_user import (
     SimulatedUserAgent,
 )
@@ -32,6 +33,10 @@ from cortex.infrastructure.llm.pool import (
 )
 from cortex.infrastructure.llm.providers import LLMInvocationError
 from cortex.infrastructure.online_context import load_query_example_index
+from cortex.infrastructure.online_context.probes import (
+    MySQLFilterDatabase,
+    SQLiteFilterDatabase,
+)
 from cortex.schema import load_root_schema
 
 _UNSET = object()
@@ -47,9 +52,30 @@ def build_online_context_service(
     document_vector_cache: DocumentVectorCache | None = None,
     embedding_identity: EmbeddingSpaceIdentity | None = None,
     embeddings: Embeddings | None | object = _UNSET,
+    filter_database: object = _UNSET,
 ) -> OnlineContextService:
     resolved = config or load_config(config_path)
     model = llm or create_chat_model(resolved.llm, profile="online_context")
+    settings = resolved.services.online_context.clarification_filter
+    if filter_database is _UNSET:
+        filter_database = None
+        if settings.enabled and resolved.database.type == "sqlite":
+            if resolved.database.path.is_file():
+                filter_database = SQLiteFilterDatabase(
+                    resolved.database.path,
+                    timeout=settings.sql_timeout,
+                    max_rows=settings.max_rows,
+                )
+        elif (
+            settings.enabled
+            and resolved.database.type == "mysql"
+            and resolved.database.url is not None
+        ):
+            filter_database = MySQLFilterDatabase(
+                resolved.database.url.get_secret_value(),
+                timeout=settings.sql_timeout,
+                max_rows=settings.max_rows,
+            )
     resolved_embeddings = (
         create_embedding_model(resolved.llm, model=resolved.embedding_model)
         if embeddings is _UNSET
@@ -75,7 +101,18 @@ def build_online_context_service(
             "retrieval": resolved.services.retrieve_db.model_dump(mode="json"),
         },
         choice_organizer=LlmChoiceOrganizer(
-            model, trace_sink=trace_sink, audit_slots=True
+            model, trace_sink=trace_sink, audit_slots=not settings.enabled
+        ),
+        clarification_filter=(
+            ClarificationFilterAgent(
+                model,
+                database=filter_database,
+                trace_sink=trace_sink,
+                max_rounds=settings.max_rounds,
+                max_probes=settings.max_probes,
+            )
+            if settings.enabled
+            else None
         ),
         question_budget=resolved.services.online_context.question_budget,
         guidance_synthesizer=GuidanceAgent(model),

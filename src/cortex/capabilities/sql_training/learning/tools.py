@@ -390,7 +390,7 @@ def build_tools(session: LearningSession):
 
     @tool
     def edit_graph(
-        edit_id: str,
+        edit_id: Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")],
         expected_revision: str,
         upserts: list[
             Annotated[dict[str, Any], WithJsonSchema(semantic_asset_schema())]
@@ -614,7 +614,7 @@ def build_tools(session: LearningSession):
     @tool
     def handoff(
         outcome: Literal["ready_for_validation", "unable_to_continue"],
-        summary: str = "",
+        summary: Annotated[str, Field(max_length=2000, description="Short handoff status; saved graph content need not be repeated.")] = "",
         direct_type_coverage: list[str] | None = None,
     ) -> dict:
         """End this episode and hand the current revision to the controller.

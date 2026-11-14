@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from uuid import uuid4
 
 from langchain.agents import create_agent
@@ -88,7 +89,7 @@ class EpisodeHooks(AgentMiddleware):
                     session.stop_detail = "Stopped after three consecutive tool/request errors without an explicit handoff."
                 elif session.no_progress >= 3:
                     session.stop_detail = "Stopped after three consecutive repeated-read decisions without new evidence, a saved edit or an explicit handoff."
-                elif session.model_calls >= session.config.agent_max_steps:
+                elif session.config.agent_max_steps is not None and session.model_calls >= session.config.agent_max_steps:
                     session.stop_detail = "Stopped at the model-call budget without an explicit handoff."
                 else:
                     session.stop_detail = "Stopped at the episode timeout without an explicit handoff."
@@ -162,7 +163,8 @@ class EpisodeHooks(AgentMiddleware):
         # Reserve the final decision for an explicit, model-authored handoff.
         # The model still chooses ready versus unable; budget exhaustion never
         # promotes an unfinished graph or synthesizes type coverage.
-        final_decision = session.model_calls == session.config.agent_max_steps - 1
+        final_decision = (session.config.agent_max_steps is not None
+                          and session.model_calls == session.config.agent_max_steps - 1)
         # Inject one fresh context per request, outside the trimmable conversation.
         # It is not accumulated in the agent's message history.
         override = {
@@ -226,7 +228,8 @@ class EpisodeHooks(AgentMiddleware):
             return None
         names = [call["name"] for call in calls]
         restricted = (
-            {"handoff"} if self.session.model_calls >= self.session.config.agent_max_steps
+            {"handoff"} if (self.session.config.agent_max_steps is not None
+                          and self.session.model_calls >= self.session.config.agent_max_steps)
             else {"edit_graph", "handoff"} if self.session.no_progress >= 2
             else None
         )
@@ -406,7 +409,8 @@ class LearningAgent:
                         "mode": session.mode,
                     },
                     "max_concurrency": session.config.agent_read_concurrency,
-                    "recursion_limit": session.config.agent_max_steps * 5 + 10,
+                    "recursion_limit": (session.config.agent_max_steps * 5 + 10
+                                        if session.config.agent_max_steps is not None else sys.maxsize),
                 },
             )
         transcript_ref = session.evidence.put(

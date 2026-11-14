@@ -16,7 +16,7 @@ from cortex.capabilities.online_context.workflow.graph import build_online_graph
 from cortex.infrastructure.observability import native_tracing
 from cortex.infrastructure.workflow.locking import workflow_writer
 
-WORKFLOW_VERSION = "online-context-v3-inline"
+WORKFLOW_VERSION = "online-context-v4-clarification-filter"
 
 
 class OnlineWorkflow:

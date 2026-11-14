@@ -5,7 +5,9 @@ from langgraph.types import interrupt
 
 from cortex.application.online_context import (
     ChoicePoint,
+    ClarificationFilterDecision,
     InteractionAnswer,
+    InteractionGuidance,
     InteractionQuestion,
 )
 from cortex.application.retrieve_db import RetrieveDbResult
@@ -45,6 +47,28 @@ def build_online_graph(engine, saver, *, run_id, identity):
             "notes": list(notes),
         }
 
+    async def filter_questions(state):
+        result = await engine._filter(state["request"], retrieval(state), points(state))
+        return {
+            "points": [p.model_dump(mode="json") for p in result.choice_points],
+            "automatic_guidance": [g.model_dump(mode="json") for g in result.guidance],
+            "filter_decisions": [d.model_dump(mode="json") for d in result.decisions],
+            "filter_observations": list(result.observations),
+            "notes": [*state["notes"], *result.notes],
+        }
+
+    def filter_context(state):
+        return {
+            "automatic_guidance": tuple(
+                InteractionGuidance.model_validate(g)
+                for g in state.get("automatic_guidance", ())
+            ),
+            "filter_decisions": tuple(
+                ClarificationFilterDecision.model_validate(d)
+                for d in state.get("filter_decisions", ())
+            ),
+        }
+
     def plan(state):
         prior = answers(state)
         answered = {a.question_id for a in prior}
@@ -71,6 +95,7 @@ def build_online_graph(engine, saver, *, run_id, identity):
             run_id,
             identity,
             tuple(state["notes"]),
+            **filter_context(state),
         )
         return {
             "questions": [q.model_dump(mode="json") for q in questions],
@@ -103,6 +128,7 @@ def build_online_graph(engine, saver, *, run_id, identity):
             points(state),
             answers(state),
             tuple(state["notes"]),
+            **filter_context(state),
         )
         return {
             "result": result.model_copy(update={"run_id": run_id}).model_dump(
@@ -114,6 +140,7 @@ def build_online_graph(engine, saver, *, run_id, identity):
     for name, node in (
         ("retrieve", retrieve),
         ("discover", discover),
+        ("filter_questions", filter_questions),
         ("plan_questions", plan),
         ("await_answers", await_answers),
         ("finalize", finish),
@@ -121,7 +148,8 @@ def build_online_graph(engine, saver, *, run_id, identity):
         graph.add_node(name, node)
     graph.add_edge(START, "retrieve")
     graph.add_edge("retrieve", "discover")
-    graph.add_edge("discover", "plan_questions")
+    graph.add_edge("discover", "filter_questions")
+    graph.add_edge("filter_questions", "plan_questions")
     graph.add_conditional_edges(
         "plan_questions", lambda s: "await_answers" if s["questions"] else "finalize"
     )

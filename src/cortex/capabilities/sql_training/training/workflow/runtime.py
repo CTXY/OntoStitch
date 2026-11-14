@@ -1,6 +1,7 @@
 """Synchronous execution/resume boundary with a persistent case checkpointer."""
 
 import fcntl
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -52,10 +53,11 @@ class CaseWorkflow:
             "configurable": {"thread_id": self.thread_id},
             # Framework safety bound, not an extra Learning budget. Each filtering
             # pass removes at least one tentative semantic change (50 per edit).
-            "recursion_limit": 20
+            "recursion_limit": (sys.maxsize
+            if self.runtime.services.config.train.agent_max_steps is None else 20
             + self.runtime.max_rounds
             * (self.runtime.max_iterations + 1)
-            * (12 + 4 * 50 * self.runtime.services.config.train.agent_max_steps),
+            * (12 + 4 * 50 * self.runtime.services.config.train.agent_max_steps)),
         }
         self.state = None
 

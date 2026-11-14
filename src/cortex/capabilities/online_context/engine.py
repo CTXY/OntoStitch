@@ -7,6 +7,7 @@ from pathlib import Path
 
 from cortex.application.online_context import (
     ChoicePoint,
+    ClarificationFilterDecision,
     InteractionAnswer,
     InteractionQuestion,
     OnlineContextDiagnostics,
@@ -40,6 +41,7 @@ class OnlineContextCapability:
         retrieval_service: RetrieveDbService,
         choice_organizer,
         guidance_synthesizer,
+        clarification_filter=None,
         question_budget=None,
         questions_per_round=1,
         checkpoint_path="workspace/checkpoints/online_context.sqlite",
@@ -54,6 +56,7 @@ class OnlineContextCapability:
         self._ontology_schema = ontology_schema or load_root_schema()
         self._choice_organizer = choice_organizer
         self._guidance_synthesizer = guidance_synthesizer
+        self._clarification_filter = clarification_filter
         select_questions((), question_budget)
         if (
             isinstance(questions_per_round, bool)
@@ -86,6 +89,10 @@ class OnlineContextCapability:
                 "retrieval_context": getattr(
                     retrieval_service, "context_fingerprint", None
                 ),
+                "clarification_filter": getattr(
+                    clarification_filter, "context_fingerprint", None
+                ),
+                "filter_schema": ClarificationFilterDecision.model_json_schema(),
             },
         )
 
@@ -144,13 +151,32 @@ class OnlineContextCapability:
             initial_sql=retrieval.initial_sql,
             retrieved_graph_state=retrieval.retrieved_graph_state,
         )
-        points = rank_choice_points(organization.choice_points)
+        points = organization.choice_points
         notes = tuple(
             a.reason
             for a in organization.intra_node_assessments
             if a.status == "uncertain"
         )
         return points, notes
+
+    async def _filter(self, request, retrieval, points):
+        from cortex.capabilities.online_context.filtering import (
+            ClarificationFilterResult,
+        )
+
+        if self._clarification_filter is None or not points:
+            return ClarificationFilterResult(choice_points=rank_choice_points(points))
+        result = await self._clarification_filter.filter(
+            question=request["question"],
+            initial_sql=retrieval.initial_sql,
+            retrieved_graph_state=retrieval.retrieved_graph_state,
+            choice_points=points,
+            dialect=request["dialect"],
+        )
+        # The source-based scoring formula and all existing budgets are unchanged.
+        return result.model_copy(
+            update={"choice_points": rank_choice_points(result.choice_points)}
+        )
 
     def _pending_result(
         self,
@@ -163,6 +189,8 @@ class OnlineContextCapability:
         run_id,
         identity,
         notes,
+        automatic_guidance=(),
+        filter_decisions=(),
     ):
         state = retrieval.retrieved_graph_state
         pending = OnlineContextPending(
@@ -197,6 +225,8 @@ class OnlineContextCapability:
             choice_points=points,
             interaction_questions=questions,
             pending=pending,
+            interaction_guidance=automatic_guidance,
+            filter_decisions=filter_decisions,
             diagnostics=_diagnostics(
                 retrieval.representations,
                 retrieval.relevance,
@@ -206,7 +236,16 @@ class OnlineContextCapability:
             ),
         )
 
-    async def _finish(self, request, retrieval, points, answers, notes):
+    async def _finish(
+        self,
+        request,
+        retrieval,
+        points,
+        answers,
+        notes,
+        automatic_guidance=(),
+        filter_decisions=(),
+    ):
         if retrieval.retrieved_graph_state is None:
             return OnlineContextResult(
                 status="no_match",
@@ -235,6 +274,8 @@ class OnlineContextCapability:
             representations=retrieval.representations,
             relevance=retrieval.relevance,
             diagnostic_notes=notes,
+            automatic_guidance=automatic_guidance,
+            filter_decisions=filter_decisions,
         )
 
     async def _terminal_from_selections(
@@ -256,6 +297,8 @@ class OnlineContextCapability:
         representations,
         relevance,
         diagnostic_notes=(),
+        automatic_guidance=(),
+        filter_decisions=(),
     ) -> OnlineContextResult:
         relevant_grounding_node_ids = relevant_grounding_node_ids or set()
         synthesis = await self._guidance_synthesizer.synthesize(
@@ -267,6 +310,15 @@ class OnlineContextCapability:
                 if point.choice_point_id in selected_by_point
             ),
             answers=answers,
+        )
+        combined_guidance = (*synthesis.interaction_guidance, *automatic_guidance)
+        resolved_content = "\n".join(
+            text
+            for text in (
+                synthesis.guidance_content,
+                *(item.should_be for item in automatic_guidance),
+            )
+            if text.strip()
         )
         projected, trace = project_graph_state(
             schema=self._ontology_schema,
@@ -301,8 +353,8 @@ class OnlineContextCapability:
             excluded_alternative_ids={
                 ref for item in trace for ref in item.removed_graph_refs
             },
-            interaction_guidance=synthesis.interaction_guidance,
-            resolved_guidance_content=synthesis.guidance_content,
+            interaction_guidance=combined_guidance,
+            resolved_guidance_content=resolved_content,
             resolved_join_paths=tuple(resolved_join_paths),
             query_examples=query_example_selection.examples,
         )
@@ -340,7 +392,8 @@ class OnlineContextCapability:
             processed_graph_state=projected,
             retrieved_graph_state=state,
             unresolved_choice_point_ids=unresolved,
-            interaction_guidance=synthesis.interaction_guidance,
+            interaction_guidance=combined_guidance,
+            filter_decisions=filter_decisions,
             downstream_guidance=downstream_guidance,
             projection_trace=trace,
             diagnostics=_diagnostics(
