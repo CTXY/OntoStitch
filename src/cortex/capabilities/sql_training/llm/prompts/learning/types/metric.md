@@ -1,21 +1,13 @@
 # Metric
 
-{metric_atomicity}
-
-Use Concept for named stored inputs. Keep intrinsic formula details; separate request operations.
-
-{count_semantics_rule}
-
-## Split test
-
-Apply the shared NL split test to name, definition and implementation. Renaming or hiding request operations in plans does not fix metric_minimality.
+Apply shared NL minimality and calculation admission. Stored inputs are Concepts; preserve defining coupled operations, not independent request operators.
 
 ## Write the properties
 
-- `expression.expr` is the complete calculation using `${key}` placeholders. `expression.refs` maps every key to an exact Concept, Metric or supported physical ID, with no unused keys.
-- There is no general `references` field. Write depends_on for direct semantic operands and grounded_on for direct physical inputs through edge_operations. An indirect path cannot replace a required formula edge. Repeated uses of one operand share one edge; formula positions and description explain its roles. A prose plan does not create dependencies.
-- `pattern` explains the same formula. Optional `sql_generation_plans` have local id/application/steps implementing only that calculation. Physical plan tokens use `<table.column>`, not graph IDs.
-- For ratios, explain numerator, denominator, unit and compatible grain. Do not invent zero-denominator or NULL handling absent from the evidence.
+- expression.expr contains the complete calculation with ${key} operands; expression.refs maps every key to an exact supported ID, with no unused keys. An object/label does not become a precomputed count through its placeholder name.
+- Author depends_on for direct Concept/Metric operands and grounded_on for physical inputs. No general references field; indirect paths do not replace operands.
+- pattern and optional sql_generation_plans implement the same calculation. Plans use <table.column>, not graph IDs, and cannot hide missing expression operations.
+- Preserve supported population, units and grain. COUNT(nullable_field), COUNT(*), conditional counts and DISTINCT are not interchangeable from current result equality. Do not invent NULL, imputation or zero-denominator policies.
 
 ## Complete node example
 
@@ -73,5 +65,3 @@ Create the two Concept operands and their physical bindings first or in the same
   }
 ]
 ```
-
-A deterministic missing-edge check may recognize formula references, but the Agent should generate the complete explicit relationships. Do not change a formula merely to obtain a business edge.

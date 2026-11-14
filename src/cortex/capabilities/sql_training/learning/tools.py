@@ -123,7 +123,8 @@ def build_tools(session: LearningSession):
                              if edge["type"] == "grounded_on" else edge for edge in relations]
             total = len(relations)
             page = relations[offset : offset + limit]
-            guide = render_write_guide(contract, "relations")
+            # The index is lightweight; exact-contract reads supply authoring guidance.
+            guide = render_write_guide(contract, "relations") if edge_type else {}
             # The scoped index below replaces the guide's unscoped inventory.
             guide.pop("predicates", None)
             result = {

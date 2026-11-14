@@ -51,7 +51,7 @@ def create_chat_model(
     # A proxy changes the host, not the model protocol. DeepSeek defaults to
     # thinking and some gateways honor reasoning_effort but ignore thinking.
     deepseek = urlparse(base_url).hostname == "api.deepseek.com" or model.lower().startswith("deepseek-")
-    chat_class = DeepSeekChatOpenAI if deepseek and resolved.enable_thinking else ChatOpenAI
+    chat_class = DeepSeekChatOpenAI if deepseek else ChatOpenAI
     reasoning_effort = "none" if deepseek and resolved.enable_thinking is False else resolved.reasoning_effort
     return chat_class(
         model=model,

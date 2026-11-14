@@ -15,6 +15,8 @@ class DeepSeekChatOpenAI(ChatOpenAI):
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        if (self.extra_body or {}).get("thinking", {}).get("type") == "disabled":
+            return payload
         for encoded, message in zip(
             payload["messages"], self._convert_input(input_).to_messages()
         ):

@@ -70,9 +70,19 @@ class AssessmentFeedback(NodeModel):
         locations = {item["id"] for item in definitions}
         relation_contracts = {item["type"] for item in payload["related_knowledge"].get("relation_definitions", [])}
 
-        def validate_feedback(rows):
-            if any(f.location not in locations or not all(v.strip() for v in (f.gap, f.required_change, f.preserve)) for f in rows):
-                raise ValueError("Learning feedback requires an existing location, gap, required change and preserved behavior")
+        def validate_feedback(rows, owner):
+            for index, feedback in enumerate(rows):
+                path = f"{owner}.feedback[{index}]"
+                if feedback.location not in locations:
+                    raise ValueError(
+                        f"{path}.location={feedback.location!r} is not a node/relation ID. "
+                        "A target_id belongs in target_results.target_id, not feedback.location. "
+                        f"Use an affected node/relation from: {sorted(locations)}"
+                    )
+                missing = [key for key in ("gap", "required_change", "preserve")
+                           if not getattr(feedback, key).strip()]
+                if missing:
+                    raise ValueError(f"{path} requires nonempty fields: {missing}")
 
         for result in self.unit_results:
             unit = units[result.unit_id]
@@ -117,13 +127,13 @@ class AssessmentFeedback(NodeModel):
                 raise ValueError("unsuccessful quality needs specific quality feedback")
             if result.application not in {"applied", "not_applicable"} and not kinds & {"retrieval", "selection", "application"}:
                 raise ValueError("unsuccessful application needs specific Learning feedback")
-            validate_feedback(result.feedback)
+            validate_feedback(result.feedback, f"unit_results[{result.unit_id}]")
         for target in self.target_results:
             if target.status == "resolved" and not attempts:
                 raise ValueError("target resolution requires validation attempts")
             if target.status != "resolved" and not any(f.kind == "target" for f in target.feedback):
                 raise ValueError("an unresolved target needs specific target feedback")
-            validate_feedback(target.feedback)
+            validate_feedback(target.feedback, f"target_results[{target.target_id}]")
         refs = {p["evidence_ref"] for p in payload["prior_evidence"]}
         for regression in self.regressions:
             if regression.prior_evidence_ref not in refs or not set(regression.attributable_unit_ids) <= units.keys():
@@ -132,7 +142,7 @@ class AssessmentFeedback(NodeModel):
                 raise ValueError("supported regression attribution requires a unit")
             if any(f.kind != "regression" for f in regression.feedback):
                 raise ValueError("a regression needs specific regression feedback")
-            validate_feedback(regression.feedback)
+            validate_feedback(regression.feedback, f"regressions[{regression.prior_evidence_ref}]")
         if any(len(row) < 2 or len(set(row)) != len(row) or not set(row) <= units.keys() for row in self.coupled_unit_ids):
             raise ValueError("coupled_unit_ids must name distinct known units")
 

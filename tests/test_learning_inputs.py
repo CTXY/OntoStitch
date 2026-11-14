@@ -108,8 +108,8 @@ def test_agent_gets_only_the_needed_guide_before_writing(case_graph):
     def choose(messages):
         system = messages[0].content
         assert system.startswith("# Task background")
-        assert "**Event**" in system and "no type or node-count quota" in system
-        assert len(system) < 4600
+        assert "**Event:**" in system and "no type or node-count quota" in system
+        assert len(system) < 9000
         assert "MetricExpression" not in system
         assert "ordinary join-fact Rules" in system
         context = read_case_context(messages)
@@ -137,10 +137,10 @@ def test_startup_has_unambiguous_delivery_and_no_full_contract_dump(case_graph):
     system = system_prompt("direct", session.graph.schema)
     assert "INPUT_CONTEXT_SENTINEL" not in system
     assert "INPUT_CONTEXT_SENTINEL" in json.dumps(session.context())
-    headings = ["# Task background", "# Graph model", "# Extraction steps", "# On-demand guidance", "# Delivery"]
+    headings = ["# Task background", "# Shared ontology contract", "# Workflow and tools", "# Direct extraction", "# Delivery"]
     assert [system.index(h) for h in headings] == sorted(system.index(h) for h in headings)
     assert "case-level ontology knowledge" in system
-    assert "**Event**" in system and "Tables, Columns and governed Values" in system
+    assert "**Event:**" in system and "Tables, Columns and governed Values" in system
     assert "no type or node-count quota" in system
     assert "edge_operations" in system
     assert "{stage_task}" not in system
@@ -372,23 +372,14 @@ def test_assessment_response_schema_change_invalidates_resume_context(case_graph
 
 def test_atomic_metric_definition_is_shared_by_authoring_and_assessment(case_graph):
     from cortex.capabilities.sql_training.llm.prompts import load_prompt
-    from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
-        METRIC_ATOMICITY,
-        METRIC_CONTRACT,
-    )
-    contract = ontology_contract(case_graph[0].schema)
-    guide = render_type_guide(contract, "metric")
-    assert METRIC_ATOMICITY in guide["guidance"]
-    assert METRIC_ATOMICITY in METRIC_CONTRACT
-    assert METRIC_ATOMICITY in load_prompt("learning_assessment")
-    assert "distinct field/value/operation matches" in load_prompt("learning_assessment")
-    assert "An indirect path cannot replace a required formula edge" in guide["guidance"]
+    shared = load_prompt("learning_system").split("# Shared ontology contract", 1)[1].split("# Workflow and tools", 1)[0]
+    assert shared in load_prompt("learning_assessment")
+    assert "independently meaningful units" in shared
+    assert "formula expansion" in shared
+    guide = render_type_guide(ontology_contract(case_graph[0].schema), "metric")
+    assert "indirect paths do not replace operands" in guide["guidance"]
+    assert node_example(guide)["id"] == "metric.profit_margin_percentage"
     assert "a calculated average can be a Metric" not in load_prompt("learning_type_concept")
-    example = node_example(guide)
-    assert example["id"] == "metric.profit_margin_percentage"
-    assert "SUM(" not in guide["guidance"]
-    assessor = load_prompt("learning_assessment")
-    assert "independently applicable complete behaviors" in assessor and "condition/action/reason" in assessor
 
 
 def test_direct_and_repair_share_registry_and_taxonomy(case_graph):
@@ -433,7 +424,7 @@ def test_error_driven_column_correction_rule_can_coexist_with_concept(case_graph
     result = edit.invoke({"edit_id": "repair-binding", "expected_revision": session.graph.working_revision, "upserts": [concept, rule]})
     assert result["status"] == "ok", result
     assert {a.id for a in session.graph.working.semantic_assets} == {concept["id"], rule["id"]}
-    assert "confirmed SQL error" in load_prompt("learning_repair")
+    assert "confirmed error signals" in load_prompt("learning_repair")
 
 
 def test_repair_has_targeted_investigation_and_visible_unchanged_read_budget(case_graph):
@@ -444,37 +435,26 @@ def test_repair_has_targeted_investigation_and_visible_unchanged_read_budget(cas
     assert not session.exhausted()
     prompt = system_prompt("repair", session.graph.schema)
     assert "fixed Diagnosis targets" in prompt
-    assert "Inspect only relevant nodes or database facts" in prompt
+    assert "material" in prompt and "read-only" in prompt
     session.no_progress = 3
     assert session.exhausted()
 
 
 def test_concept_definition_is_shared_without_case_specific_owner_exceptions(case_graph):
     from cortex.capabilities.sql_training.llm.prompts import load_prompt
-    from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
-        CONCEPT_CONTRACT,
-        CONCEPT_DEFINITION,
-        CONCEPT_MATCHING_EXAMPLE,
-        ONTOLOGY_ASSET_DEFINITIONS,
-    )
+    learning = system_prompt("direct", case_graph[0].schema)
+    assessment = load_prompt("learning_assessment")
+    shared = learning.split("# Shared ontology contract", 1)[1].split("# Workflow and tools", 1)[0]
+    assert shared in assessment
+    for text in (learning, assessment):
+        assert "Stored quantities are Concepts" in text
+        assert "never Tables" in text
+        assert "display name or full-name group" in text
     guide = render_type_guide(ontology_contract(case_graph[0].schema), "concept")
-    assert CONCEPT_DEFINITION in guide["guidance"]
-    assert CONCEPT_DEFINITION in CONCEPT_CONTRACT
-    assert CONCEPT_MATCHING_EXAMPLE in guide["guidance"]
-    assert CONCEPT_MATCHING_EXAMPLE in CONCEPT_CONTRACT
-    assert CONCEPT_MATCHING_EXAMPLE in load_prompt("learning_assessment")
-    assert CONCEPT_DEFINITION in load_prompt("learning_assessment")
-    assert "stored business quantity remains a Concept" in CONCEPT_DEFINITION
-    assert "nonempty Column/Value targets" in CONCEPT_DEFINITION
-    instructions = "\n".join([
-        ONTOLOGY_ASSET_DEFINITIONS,
-        system_prompt("direct", case_graph[0].schema),
-        load_prompt("learning_assessment"),
-        load_prompt("learning_type_generation_rule"),
-    ])
+    assert "Illustration: School" in guide["guidance"]
+    assert "Illustration: School" not in assessment
     for obsolete in ("outside that phrase", "Metric is the sole owner", "has no ontology owner", "enrollment", "frpm", "DOCType"):
-        assert obsolete not in instructions
-    assert "{concept_definition}" not in guide["guidance"]
+        assert obsolete not in learning + assessment
 
 
 def test_concept_expression_normalization_preserves_literals_and_aliases(case_graph):
@@ -494,14 +474,13 @@ def test_concept_expression_normalization_preserves_literals_and_aliases(case_gr
 
 def test_rule_atomicity_is_shared_by_authoring_and_assessment():
     from cortex.capabilities.sql_training.llm.prompts import load_prompt
-    from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
-        GENERATION_RULE_CONTRACT,
-        RULE_ATOMICITY,
-    )
-    assert RULE_ATOMICITY in load_prompt("learning_type_generation_rule")
-    assert RULE_ATOMICITY in load_prompt("learning_assessment")
-    assert RULE_ATOMICITY in GENERATION_RULE_CONTRACT
-    assert "do not guess abbreviation expansions" in load_prompt("learning_system")
+    for prompt in (load_prompt("learning_system"), load_prompt("learning_assessment")):
+        assert "Rule atomicity concerns its action" in prompt
+        assert "independently applicable complete decisions" in prompt
+        assert "hypothetical alternatives" in prompt
+    guide = load_prompt("learning_type_generation_rule")
+    assert "Multiple" not in guide or "multiple labels" in guide.lower()
+    assert "field suffixes" in guide
 
 
 def test_case_metadata_is_scoped_and_full_text_remains_on_node(case_graph):
@@ -565,76 +544,48 @@ def test_concept_normalization_uses_requested_dialect_for_required_quotes():
 
 
 def test_business_scope_checks_are_shared_by_authoring_and_assessment():
-    """Independent review must inspect the same scope/binding contract as authoring."""
     from cortex.capabilities.sql_training.llm.prompts import load_prompt
-    from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
-        COMPOSITION_RULE,
-        EVENT_BINDING_RULE,
-        RELATION_SCOPE_RULE,
-    )
+    for prompt in (load_prompt("learning_system"), load_prompt("learning_assessment")):
+        assert "business edges do not automatically transfer" in prompt
+        assert "JOINs and dates alone do not prove workflow" in prompt
+        assert "participating objects/roles" in prompt
     event = load_prompt("learning_type_event")
-    relations = load_prompt("learning_relations")
-    assessment = load_prompt("learning_assessment")
-    assert EVENT_BINDING_RULE in event and EVENT_BINDING_RULE in assessment
-    assert RELATION_SCOPE_RULE in event and RELATION_SCOPE_RULE in relations
-    assert RELATION_SCOPE_RULE in assessment
-    assert COMPOSITION_RULE in relations and COMPOSITION_RULE in assessment
-    assert "isolated timestamp" in EVENT_BINDING_RULE
-    assert "current request filters" in RELATION_SCOPE_RULE
-    assert "numeric comparison" in COMPOSITION_RULE
+    assert "isolated timestamp" in event
+    assert "empty-shell Event" in event
+    assert "historical location" in event
 
 
 def test_quantity_atomicity_and_count_contract_reach_author_and_assessor():
     from cortex.capabilities.sql_training.llm.prompts import load_prompt
-    from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
-        COUNT_SEMANTICS_RULE,
-        EVENT_BINDING_RULE,
-        METRIC_ATOMICITY,
-    )
+    for prompt in (load_prompt("learning_system"), load_prompt("learning_assessment")):
+        assert "defining coupled calculations" in prompt
+        assert "do not invent helper Metrics" in prompt
+        assert "current result equality" in prompt
     metric = load_prompt("learning_type_metric")
-    assessment = load_prompt("learning_assessment")
-    assert METRIC_ATOMICITY in metric and METRIC_ATOMICITY in assessment
-    assert "intrinsic normalization, division and time base" in METRIC_ATOMICITY
-    assert "do not invent helper Metrics" in METRIC_ATOMICITY
-    assert COUNT_SEMANTICS_RULE in metric
-    assert COUNT_SEMANTICS_RULE in load_prompt("learning_type_generation_rule")
-    assert COUNT_SEMANTICS_RULE in assessment
-    assert "complete occurrence definition" in EVENT_BINDING_RULE
-    assert "empty-shell Event" in EVENT_BINDING_RULE
+    assert "COUNT(nullable_field)" in metric and "COUNT(*)" in metric
+    assert "zero-denominator policies" in metric
 
 
 def test_rule_scope_and_count_labels_preserve_generalization_boundaries():
     from cortex.capabilities.sql_training.llm.prompts import load_prompt
-    from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
-        COUNT_SEMANTICS_RULE,
-        RULE_ATOMICITY,
-    )
     guide = load_prompt("learning_type_generation_rule")
-    assessor = load_prompt("learning_assessment")
-    assert RULE_ATOMICITY in guide and RULE_ATOMICITY in assessor
-    assert "independently applicable complete behaviors" in RULE_ATOMICITY
-    assert "multiple tags are allowed" in RULE_ATOMICITY
-    assert "no existing intent covers" in RULE_ATOMICITY
-    assert "one minimal, complete, reusable generation behavior" in RULE_ATOMICITY
-    assert COUNT_SEMANTICS_RULE in guide and COUNT_SEMANTICS_RULE in assessor
-    assert "missing label does not prove a missing business object" in COUNT_SEMANTICS_RULE
-    assert "non-NULL does not mean nonempty" in COUNT_SEMANTICS_RULE
+    assert "multiple labels" in guide
+    assert "An arbitrary maximum does not imply COUNT" in guide
+    assert "parameterize incidental request values and K" in guide
+    for prompt in (load_prompt("learning_system"), load_prompt("learning_assessment")):
+        assert "intrinsic constants" in prompt
+        assert "NULL behavior" in prompt
 
 
 def test_event_requires_related_participants_and_occurrence_context(case_graph):
     from cortex.capabilities.sql_training.llm.prompts import load_prompt
-    from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
-        EVENT_DEFINITION,
-    )
+    for prompt in (system_prompt("direct", case_graph[0].schema), load_prompt("learning_assessment")):
+        assert "participating objects/roles" in prompt
+        assert "occurrence time or place" in prompt
     guide = render_type_guide(ontology_contract(case_graph[0].schema), "event")
-    assert EVENT_DEFINITION in guide["guidance"]
-    assert EVENT_DEFINITION in load_prompt("learning_assessment")
-    assert "participating objects and their roles" in EVENT_DEFINITION
-    assert "participating objects/roles" in system_prompt("direct", case_graph[0].schema)
     example = node_example(guide)
     assert example["properties"]["targets"] == []
     assert example["description"]
-    assert "event structure is evidenced" in load_prompt("learning_direct")
 
 
 def test_compact_authoring_schema_preserves_property_names_and_validation():
@@ -707,30 +658,20 @@ def test_edge_extra_field_error_identifies_edge_operation(case_graph):
     assert session.graph.working_revision == before
 
 
-def test_case_semantics_contract_reaches_learning_and_assessment():
-    from cortex.capabilities.sql_training.learning.prompt_rendering import (
-        render_write_guide,
-    )
+def test_case_semantics_contract_reaches_learning_and_assessment(case_graph):
     from cortex.capabilities.sql_training.llm.prompts import load_prompt
-    from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
-        CONCEPT_DEFINITION,
-        RELATION_SCOPE_RULE,
-    )
     from cortex.capabilities.sql_training.training.quality_contract import (
         QUALITY_CRITERIA,
     )
-    from cortex.schema import load_root_schema
-
-    contract = ontology_contract(load_root_schema())
-    concept = render_type_guide(contract, "concept")["guidance"]
-    relations = render_write_guide(contract, "relations")["guidance"]
+    learning = system_prompt("direct", case_graph[0].schema)
     assessment = load_prompt("learning_assessment")
-    assert CONCEPT_DEFINITION in concept and CONCEPT_DEFINITION in assessment
-    assert RELATION_SCOPE_RULE in relations and RELATION_SCOPE_RULE in assessment
-    assert "task-relevant specific business objects" in concept
-    assert "is_a(C,B) and r(B,p)" in relations
-    assert "an unselected endpoint" in relations
-    for key in ("minimality", "metric_minimality"):
-        assert "Do not fail merely because indivisibility has not been proved" in QUALITY_CRITERIA[key]
-    assert "a specific material gap prevents checking a mandatory requirement" in assessment
+    shared = learning.split("# Shared ontology contract", 1)[1].split("# Workflow and tools", 1)[0]
+    assert shared in assessment
+    for text in (learning, assessment):
+        assert "task-relevant specific objects" in text
+        assert "an unselected endpoint" in text
+        assert "same-scope contradictions" in text
+    assert "specific material gap" in assessment
     assert "Source differences" not in assessment
+    assert "lack of an indivisibility proof is not failure" in QUALITY_CRITERIA["minimality"]
+    assert len(assessment) < 12500

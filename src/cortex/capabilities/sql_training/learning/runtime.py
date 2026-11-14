@@ -64,6 +64,38 @@ def compact_repeated_guides(messages):
             })})
         else:
             seen[key] = message.tool_call_id
+    # Relation pages/contracts differ, but their write guide and schemas often do
+    # not. Preserve every row/contract and compact only identical common fields.
+    relation_calls = {
+        call["id"] for message in messages if isinstance(message, AIMessage)
+        for call in message.tool_calls
+        if call["name"] == "inspect_graph" and call["args"].get("mode") == "relations"
+    }
+    common_fields = ("guidance", "edge_operation_schema", "relation_contract_schema", "custom_relations")
+    seen_fields = {}
+    for index in range(len(result) - 1, -1, -1):
+        message = result[index]
+        if not isinstance(message, ToolMessage) or message.status == "error" or message.tool_call_id not in relation_calls:
+            continue
+        try:
+            content = json.loads(message.content)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(content, dict):
+            continue
+        reused = {}
+        for field in common_fields:
+            if field not in content:
+                continue
+            key = (field, json.dumps(content[field], sort_keys=True))
+            if key in seen_fields:
+                content.pop(field)
+                reused[field] = seen_fields[key]
+            else:
+                seen_fields[key] = message.tool_call_id
+        if reused:
+            content["reused_guidance_from"] = reused
+            result[index] = message.model_copy(update={"content": json.dumps(content, ensure_ascii=False)})
     return result
 
 

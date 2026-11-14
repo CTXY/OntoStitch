@@ -1,19 +1,18 @@
 # Generation Rule
 
-{rule_atomicity}
+Apply shared Rule admission and action minimality. Static term matching belongs in Concept; defining calculations in Metric. Multiple targets alone need no Rule.
+
+Content selection changes represented fields/groups/objects; presentation holds content fixed and changes format/order; row filtering changes the population. Split only independently applicable complete decisions. Do not hide binding choices inside ranking/formatting or infer primary roles from field suffixes.
 
 ## Properties
 
-- `condition`: prerequisites and linked business scope.
-- `action`: one complete behavior with operands and a local SQL pattern.
-- `reason`: evidence, implementation choice and any registry gap.
-- `triggers`: retrieval signals. Direct uses contiguous Question phrases and empty SQL signals; Repair may use actual errors.
+- condition: supported prerequisites and linked business scope.
+- action: one implementable behavior with operands and a local SQL pattern when useful.
+- reason: evidence, consequential choice and any registry gap; never invent alternatives/error history.
+- operation_intents: reuse fitting registry labels; multiple labels and meaningful new labels are allowed. Extensions explain meaning, gap and evidenced consequential alternatives. Registry membership is not admission.
+- triggers: Direct uses contiguous Question phrases and empty SQL-side signals. Repair may use actual observed error signals. Ordinary NULL pass-through or an absent filter needs no Rule.
 
-## Scope
-
-Recheck scope when rebinding. Author applies_to explicitly; no refs field. Group selection does not request member details; nullable output alone needs no NULL filter.
-
-{count_semantics_rule}
+Preserve supported direction, operands, grain, NULL/tie semantics and intrinsic constants; parameterize incidental request values and K. An arbitrary maximum does not imply COUNT. Optional prerequisites must match the behavior. The supplied schema defines exact fields.
 
 ## Complete node example
 

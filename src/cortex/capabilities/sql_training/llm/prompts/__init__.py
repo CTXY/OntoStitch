@@ -63,6 +63,7 @@ def load_prompt(name: str) -> str:
     except KeyError as exc:
         raise ValueError(f"Unknown prompt: {name}") from exc
     prompt = (_PROMPT_DIR / filename).read_text(encoding="utf-8").strip()
+    prompt = prompt.replace("{shared_extraction_contract}", (_PROMPT_DIR / "learning/shared_contract.md").read_text(encoding="utf-8").strip())
     prompt = prompt.replace("{metric_atomicity}", METRIC_ATOMICITY)
     prompt = prompt.replace("{concept_definition}", CONCEPT_DEFINITION)
     prompt = prompt.replace("{concept_matching_example}", CONCEPT_MATCHING_EXAMPLE)

@@ -1,22 +1,18 @@
 # Concept
 
-{concept_definition}
-
-## Minimal meaning
-
-Test the NL meaning for two or more complete Concept/Metric/NL-term units with distinct field/value/operation matching roles that reconstruct the whole meaning. Give those units, matches and composition when rejecting. Units need not exist as nodes. Joint fields for one term, shared targets and definition expansion alone do not prove a split. Do not bundle a filtered request or split by words. Choose a useful representation from case meaning, metadata and data evidence without a fixed state/attribute/category decision tree.
-
-Keep dataset-profile row counts and current filter results in investigation notes, not permanent business definitions. Preserve relevant qualitative limits. A name/label field is not an identifier without evidence of identity semantics.
+Apply the shared business-referent and NL minimality rules. A name/label is not an identifier without evidence. Keep profile counts in investigation notes, not permanent definitions.
 
 ## Write the properties
 
-- Require nonempty `targets`, with nonempty lists of exact Column or governed DimensionValue IDs. `[[A, B], [C]]` means two matching groups; A and B jointly form the first.
-- Use optional `target_expressions` with zero-based index keys such as `"0"` when a matching group requires a complete executable condition or correlation. Use actual catalog SQL names, not graph IDs or undeclared query aliases. Do not invent a predicate merely to fill this field.
-- No Table targets or Concept-to-Table grounded_on. Table grain/coverage belong in metadata. Outer items may realize the same object through identifier/name roles; explain their uses. Inner members must be jointly necessary; a governed Value already identifies its Column, so do not repeat that Column merely to express equality. Do not assume role-specific matches are interchangeable or that a name is a unique identifier.
-- Targets may overlap across Concepts. Direct grounded_on connections are unique per physical endpoint across active Concepts; one Concept can connect to several endpoints. Targets are not an automatic out-edge list.
-- Reuse existing verified Values. Propose missing Values through edit_graph.values, then use the returned canonical IDs; do not guess Value IDs or write raw physical nodes.
+- targets contains nonempty joint Column/Value matching groups. No Table targets. Identifier/name representations can be separate outer groups; explain their roles without assuming interchangeability. Repeating a Value's owner Column does not form a joint match.
+- Use target_expressions with zero-based group index keys only for a necessary executable condition/correlation. Use catalog SQL names, not graph IDs or undeclared aliases.
+- Reuse verified Values; propose missing ones via edit_graph.values and use returned IDs.
+- Author grounded_on explicitly where this Concept owns the direct binding. Targets do not create edges.
+- Optional relation_metadata groups existing adjacent edges; use the relation guide when needed.
 
-{concept_matching_example}
+### Illustration: School
+
+If evidence supports these roles, School.targets = [[column.schools.CDSCode], [column.schools.School]]. These represent one School through identifier/name roles, not a joint key or interchangeable count operands. Do not rename it School name merely because SQL uses the name field. This is an illustration, not a domain-specific rule.
 
 ## Complete node example
 

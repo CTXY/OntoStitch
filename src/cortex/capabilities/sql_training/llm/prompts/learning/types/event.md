@@ -1,21 +1,14 @@
 # Event
 
-{event_definition}
-
-## Creation threshold
-
-Identify the occurrence, participating objects and their roles, and its time or place together. Verify that the context describes this event rather than another object or occurrence. Merely seeing a verb, status, timestamp or JOIN is insufficient. A Concept may represent an object or status without an Event. Do not invent stages or create every possible event type.
-
-{relation_scope_rule}
+Apply shared Event admission: occurrence, participant roles, and related occurrence time or place jointly supported. Do not infer an event solely from a timestamp/status/JOIN.
 
 ## Write the properties and relations
 
-- Require a nonempty top-level `description` explaining what occurs and the evidenced participant/context structure.
-- Optional `targets` uses the same physical matching-group format as Concept; optional `target_expressions` preserves complete supported conditions. An isolated date or non-NULL test is not automatically a complete event realization.
-- When targets are empty, generate explicit relations to bound Concepts that establish the participating object and occurrence time/place. Empty targets are not permission for a name-only event.
-- Use precise business predicates to distinguish roles. For example, a sender and recipient should not become two unexplained has_participant edges. Do not add role or qualifier fields.
+Describe the actual structure; do not invent workflow, stages, instance grain or historical location from a participant's current location. Use role-specific business predicates, not an ambiguous participant label.
 
-{event_binding_rule}
+Optional targets must represent supported occurrence matching groups, not an isolated timestamp/identifier or a non-NULL test. An Event may instead be anchored through explicitly related bound participant and time/place Concepts. Empty targets do not justify an empty-shell Event.
+
+Composition does not imply sequence or causality. Grounding/date presence does not prove countability, completion or complete history. Use actual catalog IDs and author edges explicitly.
 
 ## Complete node example
 
@@ -59,5 +52,3 @@ The names are illustrative business predicates, not mandatory labels. Use only m
   }
 ]
 ```
-
-Composition does not imply sequence or causality. Sharing a table does not prove participation. Grounding or a recorded date does not prove countability, completion, complete history or exhaustive stages.
