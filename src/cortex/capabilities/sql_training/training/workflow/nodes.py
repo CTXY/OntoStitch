@@ -123,8 +123,12 @@ class CaseRuntime:
     def diagnose(self, s: CaseState):
         s.round_number += 1
         s.iteration = 0
+        s.completion_reason = None
         s.baseline_revision = self.graph.accepted_revision
         validated = self.evidence.read(s.validation_ref)["payload"]
+        # Diagnose the graph that actually produced the failure. A tentative
+        # repair is useful evidence even though it has not earned acceptance.
+        self.graph.restore(validated["graph_revision"], self.graph.accepted_revision)
         s.targets, s.diagnosis_ref, status = self.services.diagnose(
             self.graph.read(validated["graph_revision"]), s.validation_ref
         )
@@ -162,7 +166,9 @@ class CaseRuntime:
                 result.proposed_groups, self.graph.accepted, self.graph.working
             )
         else:
-            s.stop_case = True
+            # No edit is not a resolution of an observed SQL failure. Let the
+            # next outer round diagnose the latest failed candidate instead.
+            s.stop_case = self.correct(s)
             s.completion_reason = "unable_to_continue" if changed else "no_progress"
 
     def validate_trial(self, s: CaseState):
@@ -350,6 +356,12 @@ class CaseRuntime:
 
     def correct(self, s: CaseState):
         return self.services.replay(s.validation_ref).correct
+
+    def targets_resolved_but_sql_failed(self, s: CaseState):
+        if self.correct(s):
+            return False
+        targets = self.assessed_feedback(s).target_results
+        return bool(targets) and all(t.status == "resolved" for t in targets)
 
     def round_finished(self, s: CaseState):
         return s.iteration >= self.max_iterations or (

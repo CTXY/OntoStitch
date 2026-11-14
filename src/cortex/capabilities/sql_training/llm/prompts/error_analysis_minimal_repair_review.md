@@ -26,6 +26,7 @@ Do not reassess whether an error should be learned, invent unrelated errors, des
 The supplied error points have already been established upstream.
 
 - Analyze every supplied error point and preserve it in `confirmed_errors`.
+- Ground explanations in the actual SQL fragments and execution evidence. Check the input population, scope and operators of competing implementations; do not claim DISTINCT, filtering or tie behavior that the SQL does not implement. A previous target or a reasonable existing Rule does not excuse a new observed failure.
 - Do not discard an error point based on whether the Question states it explicitly, whether it comes from Gold SQL or evaluation evidence, or whether its SQL shape looks procedural.
 - Every supplied error point must appear in exactly one Repair Group.
 - `confirmed_errors` and `repair_groups` must both be non-empty.

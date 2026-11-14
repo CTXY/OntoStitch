@@ -30,9 +30,13 @@ For Concepts check request-relevant meaning, population and required matching be
 
 Return applied only for complete behavior and recorded inclusion in every attempt. Distinguish partial application, included-but-unimplemented behavior and missing attribution using the schema. not_applicable is allowed for deletions or semantic units without a current SQL obligation. An unrelated SQL error does not negate complete local application; whole-query equality does not prove it. Never combine behaviors from different attempts into one success.
 
+Inspect every failed attempt's actual error or result difference. Do not dismiss a failure as merely a SQL-generator problem. If it prevents a unit's required output or behavior, that unit is not completely applied; identify the minimal actionable knowledge gap. A valid definition alone does not establish successful application. Preserve unrelated valid units and do not invent causality or business facts.
+
 ## 3. Targets and regression
 
 Assess every supplied fixed target across all attempts; return no target conclusions when none exist. Whole-query correctness cannot override a local target difference.
+
+Resolve a target only when its complete required behavior is demonstrated; a matching function or a locally correct fragment is insufficient when the target's output cannot be produced. If old targets are resolved but another SQL error remains, report the remaining error through applicable unit feedback, without inventing new target IDs. The controller will re-diagnose the latest failed candidate; resolved old targets do not mean the case is complete.
 
 Report only observed deterioration against supplied prior_evidence. Attribute it to candidate units only when supported; otherwise retain attribution uncertainty. Do not invent regression or causality.
 

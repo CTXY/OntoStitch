@@ -2,14 +2,13 @@
 
 from langgraph.graph import END, START, StateGraph
 
-from cortex.infrastructure.progress import emit_progress
-
 from cortex.capabilities.sql_training.training.observability import (
     ExtractTracer,
     case_payload,
 )
 from cortex.capabilities.sql_training.training.workflow.nodes import CaseRuntime
 from cortex.capabilities.sql_training.training.workflow.state import CaseState
+from cortex.infrastructure.progress import emit_progress
 
 
 def build_case_graph(runtime: CaseRuntime, checkpointer, *, skip_direct=False):
@@ -121,8 +120,12 @@ def build_case_graph(runtime: CaseRuntime, checkpointer, *, skip_direct=False):
     )
     builder.add_conditional_edges(
         "repair",
-        lambda s: "validate_trial" if s.candidate_ready else "retain",
-        ["validate_trial", "retain"],
+        lambda s: (
+            "validate_trial" if s.candidate_ready else
+            "diagnose" if not s.stop_case and s.round_number < runtime.max_rounds
+            else "retain"
+        ),
+        ["validate_trial", "diagnose", "retain"],
     )
     builder.add_conditional_edges(
         "validate_trial",
@@ -144,8 +147,12 @@ def build_case_graph(runtime: CaseRuntime, checkpointer, *, skip_direct=False):
     )
     builder.add_conditional_edges(
         "accept",
-        lambda s: "retain" if runtime.round_finished(s) else "repair",
-        ["retain", "repair"],
+        lambda s: (
+            ("diagnose" if s.round_number < runtime.max_rounds else "retain")
+            if runtime.targets_resolved_but_sql_failed(s)
+            else "retain" if runtime.round_finished(s) else "repair"
+        ),
+        ["retain", "repair", "diagnose"],
     )
     builder.add_edge("retain", "validate_final")
     builder.add_conditional_edges(

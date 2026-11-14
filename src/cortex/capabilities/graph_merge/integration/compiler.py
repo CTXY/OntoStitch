@@ -69,9 +69,18 @@ def identity_map(context, decision):
 
 
 def deduplicate_edges(edges):
-    """Exact assertion equality only, including descriptions and branch scope."""
+    """Exact semantic assertions; physical JOIN identity is direction independent."""
+    from cortex.schema.physical_joins import join_edge_key, merge_join_edges
+
     by_signature, mappings = {}, {}
     for edge in edges:
+        if edge.edge_type == "joins_with":
+            signature = (edge.edge_type, join_edge_key(edge))
+            previous = by_signature.get(signature)
+            merged = merge_join_edges([previous] if previous else [], [edge])[0]
+            by_signature[signature] = merged
+            mappings[edge.id] = merged.id
+            continue
         signature = (
             edge.edge_type,
             edge.from_node_id,
@@ -271,9 +280,8 @@ def compile_proposal(context, decision, proposal, *, strict=True):
             edge.id in edited_edges
             or edge.from_node_id in affected_nodes
             or edge.to_node_id in affected_nodes
-        ):
-            if strict:
-                require_concrete_relation(edge.edge_type)
+        ) and strict:
+            require_concrete_relation(edge.edge_type)
     # Validate correspondence references, including actual alternative selection.
     for change in proposal.changes:
         for element in change.before:

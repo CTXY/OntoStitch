@@ -226,6 +226,13 @@ class IncrementalGraphIntegrationEngine:
             }
             self.identity_decision = resume.get("identity")
             self.relation_coverage = set(resume.get("relation_coverage", ()))
+            normalized, edge_aliases = alias_view(self.current, {})
+            if normalized != self.current:
+                self.lineage.observe(
+                    self.current, normalized, edge_aliases=edge_aliases,
+                    explanation="Canonicalize duplicate assertions using declared physical JOIN identity",
+                )
+                self.current = normalized
         self._persist(run_id)
         seed = getattr(self, "reviewed_node_seed", None)
         if seed:

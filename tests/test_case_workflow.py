@@ -246,10 +246,36 @@ def test_no_changes_ends_inner_without_free_repeated_episode(case_graph):
     state = ctrl.run()
     assert ctrl.runtime.agent.calls == 2
     assert state.iteration == 0
-    assert state.completion_reason == "no_progress"
+    assert state.completion_reason == "round_limit_reached"
     assert (
         validator.generate_calls == 2
     )  # tentative and accepted physical snapshots differ
+
+
+def test_no_edit_on_failed_sql_rediagnoses_same_candidate_within_outer_budget(case_graph):
+    workflow, services, _validator = make_workflow(
+        case_graph,
+        EditingAgent([[make_rule(action="first")], [], [make_rule(action="fixed")]]),
+        Validator(lambda graph: "SELECT COUNT(*) FROM orders" if any(
+            n.node_type == "generation_rule" and n.properties["action"] == "fixed"
+            for n in graph.nodes
+        ) else "SELECT 0"),
+        rounds=2,
+    )
+    diagnosed = []
+    original = services.diagnose
+
+    def diagnose(snapshot, ref):
+        diagnosed.append([a.properties.action for a in snapshot.semantic_assets])
+        assert snapshot.revision == services.evidence.read(ref)["payload"]["graph_revision"]
+        return original(snapshot, ref)
+
+    services.diagnose = diagnose
+    result = workflow.run()
+    assert result.completion_reason == "stable_correct"
+    assert result.round_number == 2
+    assert diagnosed == [["first"], ["first"]]
+    assert workflow.runtime.graph.accepted.semantic_assets[0].properties.action == "fixed"
 
 
 def test_safe_checkpoint_resume_keeps_acceptance_and_reuses_gate(case_graph):
@@ -416,7 +442,7 @@ def test_resume_context_mismatch_refuses_without_mutating_checkpoint(case_graph)
     assert not (ctrl.root / "progress.json").exists()
 
 
-def test_failed_sql_never_accepts_and_next_round_rolls_back_to_physical(case_graph):
+def test_failed_sql_never_accepts_and_new_diagnosis_uses_failed_candidate(case_graph):
     baselines = []
 
     def assessor(model, **payload):
@@ -462,12 +488,12 @@ def test_failed_sql_never_accepts_and_next_round_rolls_back_to_physical(case_gra
     assert state.completion_reason == "stable_correct"
     assert state.round_number == 2 and state.iteration == 1
     assert baselines == [[], []]
-    assert diagnosed == [["m1"], []]
+    assert diagnosed == [["m1"], ["m2"]]
     proofs = [services.evidence.read(ref)["payload"] for ref in state.acceptance_refs]
     assert proofs[0]["accepted_member_ids"] == []
     assert not proofs[0]["sql_stable_correct"]
     assert proofs[1]["accepted_member_ids"] == [make_rule().id]
-    assert validator.generate_calls == 6
+    assert validator.generate_calls == 5  # No empty accepted-graph replay between diagnoses.
 
 
 def test_incomplete_direct_does_not_promote_legal_partial_semantics(case_graph):

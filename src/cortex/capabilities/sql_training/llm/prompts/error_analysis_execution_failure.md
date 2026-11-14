@@ -18,6 +18,8 @@ You analyze a candidate SQL failure and identify reusable failed logic.
 
 Identify reusable failed logic in `confirmed_errors`. Return at least one confirmed error and cover every confirmed error exactly once in `repair_groups`.
 
+Treat the latest execution failure as learning evidence even if previous targets were resolved or existing Rules appear reasonable. Identify the missing or ineffective executable guidance; do not dismiss it as solely a SQL-generator problem. Preserve correct knowledge and express the smallest reusable repair, not a generic instruction to produce valid SQL.
+
 # Confirmed Error Requirements
 
 For every item in `confirmed_errors`:
