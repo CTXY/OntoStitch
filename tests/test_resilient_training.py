@@ -105,3 +105,50 @@ def test_transient_connection_exception_does_not_require_class_name_in_message()
     spec.loader.exec_module(runner)
     assert runner.transient(ConnectionError('peer closed'))
     assert not runner.transient(ValueError('invalid field'))
+
+
+def test_completed_adopted_worker_releases_slot_even_if_pid_still_exists(tmp_path):
+    import importlib.util
+    import os
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location('completed_worker', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    runner.write(tmp_path / 'status.json', {'status': 'passed'})
+    assert runner.AdoptedWorker(os.getpid(), tmp_path).poll() == 0
+
+
+def test_supervisor_adopts_live_worker_without_popen_returncode_attribute(tmp_path, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location('adoption_protocol', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    keys = tmp_path / 'pool.keys'
+    keys.write_text('test-credential')
+    runner.write(tmp_path / 'manifest.json', {'question_ids': ['one']})
+    runner.write(tmp_path / 'cases/one/status.json', {'status': 'running'})
+    runner.write(tmp_path / 'active_workers.json', {'0': {'case': 'one', 'pid': 123}})
+
+    class Worker:
+        def __init__(self, pid, folder):
+            self.pid, self.folder, self.reads = pid, folder, 0
+
+        def poll(self):
+            self.reads += 1
+            if self.reads == 1:
+                return None
+            runner.write(self.folder / 'status.json', {'status': 'passed'})
+            return 0
+
+    merged = []
+    monkeypatch.setattr(runner, 'AdoptedWorker', Worker)
+    monkeypatch.setattr(runner.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(runner, 'merge_worker', lambda args: merged.append(True))
+    monkeypatch.setattr(runner.subprocess, 'Popen', lambda *a, **k: pytest.fail('Do not duplicate live workers'))
+    runner.supervise(SimpleNamespace(output=tmp_path, keys=keys))
+    assert merged == [True]
+    assert runner.read(tmp_path / 'active_workers.json') == {}

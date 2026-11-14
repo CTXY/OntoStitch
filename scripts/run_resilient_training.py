@@ -250,12 +250,14 @@ class AdoptedWorker:
         self.pid, self.folder = pid, folder
 
     def poll(self):
+        status = read(self.folder / 'status.json').get('status') if (self.folder / 'status.json').exists() else None
+        if status in ('passed', 'needs_review', 'needs_attention'):
+            return 0  # Completed adopted children may remain as unreaped OS entries.
         try:
             os.kill(self.pid, 0)
             return None
         except ProcessLookupError:
-            status = read(self.folder / 'status.json').get('status') if (self.folder / 'status.json').exists() else None
-            return 0 if status in ('passed', 'needs_review', 'needs_attention') else 1
+            return 1
 
 
 def supervise(args):
@@ -287,10 +289,11 @@ def supervise(args):
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy())
             active[slot] = (ident, process)
         for slot, (ident, process) in list(active.items()):
-            if process.poll() is None:
+            exit_code = process.poll()
+            if exit_code is None:
                 continue
-            if process.returncode:
-                write(args.output / 'cases' / ident / 'status.json', {'status': 'needs_attention', 'exit_code': process.returncode, 'slot': slot})
+            if exit_code:
+                write(args.output / 'cases' / ident / 'status.json', {'status': 'needs_attention', 'exit_code': exit_code, 'slot': slot})
             del active[slot]
         states = {str(i): read(args.output / 'cases' / str(i) / 'status.json') if (args.output / 'cases' / str(i) / 'status.json').exists() else {'status': 'queued'} for i in manifest['question_ids']}
         write(registry, {str(s): {'case': v[0], 'pid': v[1].pid} for s, v in active.items()})
