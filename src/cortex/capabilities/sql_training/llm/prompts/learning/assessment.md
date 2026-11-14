@@ -12,6 +12,10 @@ case and physical_context supply business/database evidence. attempts supplies a
 
 # Evaluation
 
+First inspect the supplied SQL attempts and their actual execution/result differences. Then compare the responsible knowledge and fixed targets. Function names or agreement with a Diagnosis explanation do not prove semantic application or error: verify the actual populations, groups, comparisons and NULL behavior. SQL patterns are illustrative unless their particular behavior is required; equivalent implementations remain valid. Result equality alone still does not prove equivalence beyond the observed data.
+
+Diagnosis identifies observed failures; its causal explanation is not an axiom. If that explanation or a candidate Rule prohibits a valid implementation without evidence, report the unsupported restriction as a knowledge defect. Do not reinforce it by declaring the implementation wrong merely because the Rule or target says so.
+
 ## 1. Content and consistency
 
 Evaluate exactly each unit's quality_requirements using the shared contract and rubric. Review Metric/Rule content before lengthy edge inventories; valid edges do not prove node quality.

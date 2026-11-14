@@ -147,8 +147,21 @@ DEFAULT_GENERATION_RULE_TAXONOMY: tuple[GenerationRuleTaxonomyItem, ...] = (
             "Return entity rows associated with the leading or trailing K values. K may be one. "
             "This fixes ranking and row inclusion, not which physical field representations are output. "
             "Passing requested attributes through is allowed; an additional fixed field-set policy is a separate decision."
+            " For competition ranking, rank is one plus the number of eligible rows strictly ahead: "
+            "counting strictly better rows can preserve ties. Check identical eligibility, grouping and NULL ordering "
+            "before treating an alternative to a window function as incorrect."
         ),
         reference_implementations=(
+            GenerationRuleReferenceImplementation(
+                "tie_aware_group_rank",
+                ("SELECT <output> FROM (SELECT <columns>, RANK() OVER (PARTITION BY <group> ORDER BY <score> DESC) AS r FROM <eligible_rows>) ranked WHERE r <= <k>",),
+                "Competition rank retains all rows sharing a qualifying rank; preserve the eligible population and NULL ordering.",
+            ),
+            GenerationRuleReferenceImplementation(
+                "strict_superior_count",
+                ("(SELECT COUNT(*) FROM <eligible_rows> other WHERE <same_group> AND <strictly_better_in_requested_order>) < <k>",),
+                "Competition rank equals one plus the number of eligible rows strictly ahead, so this can implement rank <= K and retain ties. Eligibility, grouping and NULL ordering must match; ordinary SQL comparisons with NULL do not automatically implement the requested ordering.",
+            ),
             GenerationRuleReferenceImplementation(
                 "ordered_row_limit",
                 (

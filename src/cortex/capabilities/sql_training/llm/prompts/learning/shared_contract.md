@@ -11,6 +11,8 @@ Reject concrete contract violations, same-scope contradictions or material loss 
 - **Concept:** one minimal complete business meaning: object, attribute, category or task-relevant object. Stored quantities are Concepts.
 - **Metric:** a minimal business meaning with an actual defining calculation. Stored fields, formatting casts and field * 1 do not qualify.
 - **GenerationRule:** one complete reusable generation decision beyond static Concept matching or Metric formulas. Ordinary SQL syntax, literal/calendar matching, join facts, hypothetical alternatives or registry membership alone do not justify a Rule.
+
+Rule actions constrain behavior; SQL patterns illustrate implementations. Do not prohibit an equivalent implementation merely because Gold uses another function or query layout. Compare eligible inputs, grouping, ordering, NULL handling and output behavior; retain a prohibition only for the actual evidenced defect, not the name of an otherwise valid construction.
 - **Event:** an occurrence structure jointly supported by what occurs, participating objects/roles, and related occurrence time or place. A verb, status, timestamp or JOIN alone is insufficient.
 
 Choose the Question-grounded business referent before its canonical name. Keep name, definition and relation roles consistent. Identifier/name fields may represent their bearer without separate name/code Concepts; retain an independently relevant attribute when warranted. A display name or full-name group does not prove unique identity, slot correspondence or interchangeable representations. Record identity is not lifetime business identity.

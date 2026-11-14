@@ -206,6 +206,8 @@ def assessment_payload(*, record, schema, baseline, accepted, trial, groups, tar
         "case": case_source(record),
         "candidate_revision": trial.revision,
         "accepted_revision": accepted.revision,
+        "fixed_targets": targets,
+        "attempts": attempts,
         "units": units,
         "quality_rubric": {
             key: QUALITY_CRITERIA[key]
@@ -233,7 +235,5 @@ def assessment_payload(*, record, schema, baseline, accepted, trial, groups, tar
         },
         "round_baseline": None if same_baseline else {"revision": baseline.revision, "nodes": nodes(baseline, round_changed), "edges": baseline_edges},
         "change_groups": [g.model_dump(mode="json") for g in groups],
-        "fixed_targets": targets,
-        "attempts": attempts,
         "prior_evidence": prior_evidence or [],
     }
