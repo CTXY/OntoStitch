@@ -12,4 +12,6 @@ The supervisor prevents simultaneous duplicate supervisors via a local process l
 
 The supervisor also watches total unanswered HTTP time: after3660 seconds without a complete response, it restarts the affected worker from its checkpoint. This covers connections whose keepalives continually reset socket-idle timeouts. Each stale request is recovered once; answered requests are not restarted. Surviving workers are adopted on supervisor restart, and completed or zombie adopted processes release their slots.
 
+For serial merge, run the same CLI with `--mode watch` alongside the supervisor. A separate process can interrupt a blocked synchronous request after the same3660-second deadline and restart the supervisor from its persisted merge workspace. A file lock permits one watcher only. It verifies the process identity, ignores historical request files from before the current supervisor started, and leaves deterministic `needs_attention` failures visible. It changes neither semantic budgets nor acceptance criteria.
+
 An explicit data-review hold is preserved across worker failure. Contradictory question/SQL inputs require a recorded data-owner resolution; they are not repaired by inventing mappings. Held or unaccepted cases are excluded from publication, and final coverage must report those exclusions.

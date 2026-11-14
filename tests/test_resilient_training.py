@@ -172,3 +172,23 @@ def test_wire_deadline_never_restarts_an_already_answered_request(tmp_path):
     (tmp_path / 'transport_recoveries.jsonl').unlink()
     runner.write(request.with_name('000001_response.json'), {'status': 200})
     assert runner.stalled_request(tmp_path) is None
+
+
+def test_merge_deadline_ignores_historical_requests_before_supervisor_start(tmp_path):
+    import importlib.util
+    import os
+    import time
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location('merge_deadline', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    runner.write(tmp_path / 'merge_status.json', {'question_id': 'sample'})
+    request = tmp_path / 'merge/sample/wire/000001_request.json'
+    runner.write(request, {})
+    runner.write(tmp_path / 'supervisor.pid', 1)
+    now = time.time()
+    os.utime(request, (now - 4000, now - 4000))
+    assert runner.stalled_merge(tmp_path) is None
+    os.utime(tmp_path / 'supervisor.pid', (now - 5000, now - 5000))
+    assert runner.stalled_merge(tmp_path) == (request.parent.parent, request.name)

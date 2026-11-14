@@ -276,6 +276,65 @@ def stalled_request(folder, timeout=3660):
     return None
 
 
+def stalled_merge(output):
+    status = output / 'merge_status.json'
+    if not status.exists() or not (output / 'supervisor.pid').exists():
+        return None
+    ident = read(status).get('question_id')
+    if ident is None:
+        return None
+    folder = output / 'merge' / str(ident)
+    request = stalled_request(folder)
+    # An unanswered request copied from an earlier attempt is not a live call.
+    if request and (folder / 'wire' / request).stat().st_mtime >= (output / 'supervisor.pid').stat().st_mtime:
+        return folder, request
+    return None
+
+
+def watch(args):
+    """Recover a silent merge process; deterministic failures remain visible."""
+    while True:
+        progress = read(args.output / 'progress.json')
+        if progress['phase'] in ('finished', 'needs_attention', 'superseded'):
+            return
+        stale = stalled_merge(args.output) if progress['phase'] == 'merge' else None
+        if stale:
+            pid = int((args.output / 'supervisor.pid').read_text())
+            command = subprocess.run(['ps', '-o', 'args=', '-p', str(pid)],
+                capture_output=True, text=True, check=False).stdout
+            if 'run_resilient_training.py' not in command or str(args.output) not in command:
+                raise RuntimeError('Cannot verify the active merge process identity')
+            folder, request = stale
+            with (folder / 'transport_recoveries.jsonl').open('a') as log:
+                log.write(json.dumps({'request': request, 'reason': 'Silent merge transport deadline', 'time': time.time()}) + '\n')
+            os.kill(pid, 15)
+            # Wait for the writer lock to be released; never kill another PID.
+            for _ in range(30):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)],
+                    capture_output=True, text=True, check=False).stdout.strip()
+                if not state or state.startswith('Z'):
+                    try:
+                        os.waitpid(pid, os.WNOHANG)
+                    except ChildProcessError:
+                        pass
+                    break
+                time.sleep(1)
+            else:
+                raise RuntimeError('Merge process did not exit after transport recovery')
+            write(args.output / 'progress.json', {'phase': 'recovering', 'updated': time.time()})
+            with (args.output / 'supervisor.log').open('a') as log:
+                child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
+                    '--output', str(args.output), '--config', str(args.config),
+                    '--keys', str(args.keys), '--model', args.model],
+                    stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy(), start_new_session=True)
+            write(args.output / 'supervisor.pid', child.pid)
+        time.sleep(5)
+
+
 def supervise(args):
     slots = read_key_slots(args.keys)
     manifest = read(args.output / 'manifest.json')
@@ -346,7 +405,7 @@ def supervise(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=['supervise', 'case', 'merge'], default='supervise')
+    parser.add_argument('--mode', choices=['supervise', 'case', 'merge', 'watch'], default='supervise')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--keys', type=Path, required=True)
@@ -361,6 +420,10 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             write(args.output / 'supervisor.pid', os.getpid())
             supervise(args)
+    elif args.mode == 'watch':
+        with (args.output / '.watch.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            watch(args)
     else:
         {'case': case_worker, 'merge': merge_worker}[args.mode](args)
 
