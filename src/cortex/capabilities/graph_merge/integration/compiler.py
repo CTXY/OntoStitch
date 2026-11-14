@@ -27,6 +27,28 @@ def unique(values):
     return tuple(dict.fromkeys(values))
 
 
+def assessed_semantic_content(state):
+    """Compare effective assertions, preserving every partial branch scope."""
+    nodes = {n.id: n for n in state.graph.nodes}
+    assertions = {}
+    for edge in state.graph.edges:
+        if edge.reference_origin == "default":
+            continue
+        data = edge.model_dump(mode="json", exclude={"sources", "reference_origin"})
+        scope = data["properties"].get("alternative_ids")
+        alternatives = {a.alternative_id for a in nodes[edge.from_node_id].alternatives}
+        # In this immutable snapshot, unscoped and explicitly all current
+        # alternatives mean the same assertion. A subset is never erased.
+        if scope is not None and (not scope or alternatives and set(scope) == alternatives):
+            data["properties"].pop("alternative_ids")
+        assertions[edge.id] = data
+    return (
+        {n.id: n.model_dump(mode="json", exclude={"sources"})
+         for n in state.graph.nodes if n.node_type not in PHYSICAL},
+        assertions,
+    )
+
+
 def identity_map(context, decision):
     mappings = dict(context.physical_map)
     used = set()
@@ -425,21 +447,7 @@ def commit_result(context, proposal, preview, *, run_id):
             f"Commit unexpectedly removed authored relations: {sorted(missing)}"
         )
 
-    def semantic_content(state):
-        return (
-            {
-                n.id: n.model_dump(mode="json", exclude={"sources"})
-                for n in state.graph.nodes
-                if n.node_type not in PHYSICAL
-            },
-            {
-                e.id: e.model_dump(mode="json", exclude={"sources", "reference_origin"})
-                for e in state.graph.edges
-                if e.reference_origin != "default"
-            },
-        )
-
-    if semantic_content(actual) != semantic_content(published):
+    if assessed_semantic_content(actual) != assessed_semantic_content(published):
         raise ValueError(
             "Commit changed assessed semantic content; no result published"
         )

@@ -194,6 +194,26 @@ def test_real_conflict_resolves_each_complete_alternative():
     assert all(b["sources"] for b in branches)
 
 
+def test_publication_all_branch_scope_equals_unscoped_but_subset_does_not():
+    from ontology_v2_fixtures import discussion_state
+    from cortex.capabilities.graph_merge.integration.compiler import assessed_semantic_content
+
+    original = discussion_state()
+    owner = original.conflict_nodes[0]
+    target = next(n for n in original.graph.nodes if n.node_type == "concept")
+    relation = edge("shared", owner.id, target.id, "applies_to")
+    def variant(scope):
+        props = dict(relation.properties)
+        if scope is not None:
+            props["alternative_ids"] = scope
+        return original.model_copy(update={"graph": original.graph.model_copy(update={
+            "edges": (*original.graph.edges, relation.model_copy(update={"properties": props}))
+        })})
+    all_ids = [a.alternative_id for a in owner.alternatives]
+    assert assessed_semantic_content(variant(None)) == assessed_semantic_content(variant(all_ids))
+    assert assessed_semantic_content(variant(None)) != assessed_semantic_content(variant(all_ids[:1]))
+
+
 def test_whole_owner_rewrite_does_not_silently_discard_conflict_branches():
     from ontology_v2_fixtures import discussion_state
 
