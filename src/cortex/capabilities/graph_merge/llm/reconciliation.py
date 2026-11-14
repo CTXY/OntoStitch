@@ -19,6 +19,7 @@ from cortex.capabilities.graph_merge.integration.relation_edits import (
 )
 from cortex.capabilities.graph_merge.integration.tools import build_tools
 from cortex.capabilities.graph_merge.llm.trace import EpisodeTrace
+from cortex.capabilities.graph_merge.llm.packets import action_message
 
 
 class RelationReview(Model):
@@ -42,6 +43,7 @@ def invoke_relation(agent, phase, context, payload):
     system += "\n\n" + prompt_root.joinpath(
         "incremental_relation_write.md" if writer else "incremental_relation_assess.md"
     ).read_text()
+    system += "\n\n" + prompt_root.joinpath("incremental_protocol.md").read_text()
     messages = [SystemMessage(system), HumanMessage(json.dumps(payload, ensure_ascii=False))]
     raw_tools = {t.name: t for t in build_tools(context)}
     state = context.candidate
@@ -157,9 +159,9 @@ def invoke_relation(agent, phase, context, payload):
                     "This is the reserved completion call; no further reads. Submit the complete supported result from the supplied view and completed reads. "
                     + ("Use failure if a necessary safe decision remains impossible; do not hide unresolved required repairs in an empty success." if writer
                        else "Return the bounded assessment of actual changes, with concrete defects only, not speculative missing facts.")))
-            response = agent.llm.bind_tools(available, tool_choice="auto").invoke(
+            response = agent.llm.bind_tools(available, tool_choice="required").invoke(
                 messages, config={"callbacks": [trace]})
-            messages.append(response)
+            messages.append(action_message(response))
             if not response.tool_calls:
                 try:
                     if writer:

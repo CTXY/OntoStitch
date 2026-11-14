@@ -1,10 +1,24 @@
 from copy import deepcopy
 
 from cortex.capabilities.graph_merge.llm.packets import (
+    action_message,
     compact_node_packet,
     reference_supplied_records,
     supplied_records,
 )
+
+
+def test_tool_dialogue_keeps_actions_but_does_not_echo_narration():
+    from langchain_core.messages import AIMessage
+    original = AIMessage(content="Long incidental analysis", tool_calls=[{
+        "name": "inspect_graph", "args": {"ids": ["N"]}, "id": "read", "type": "tool_call",
+    }])
+    compact = action_message(original)
+    assert compact.content == ""
+    assert compact.tool_calls == original.tool_calls
+    assert original.content == "Long incidental analysis"
+    plain = AIMessage(content='{"groups":[],"distinctions":[]}')
+    assert action_message(plain) is plain
 
 
 def test_only_byte_equal_archived_records_share_current_representation():

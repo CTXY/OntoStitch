@@ -3,6 +3,17 @@
 from copy import deepcopy
 
 
+def action_message(response):
+    """Carry tool arguments/IDs, not incidental narration, into the next turn.
+
+    Provider callbacks retain the complete raw response. Evidence and tool
+    results remain in the dialogue; final plain-JSON recovery stays untouched.
+    """
+    if response.tool_calls and not response.invalid_tool_calls:
+        return response.model_copy(update={"content": ""})
+    return response
+
+
 def compact_node_packet(payload):
     packet = deepcopy(payload)
     reused = {}

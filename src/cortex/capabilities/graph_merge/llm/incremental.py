@@ -259,7 +259,11 @@ class IncrementalIntegrationAgent:
                 .joinpath("incremental_evidence.md")
                 .read_text()
             )
-        from cortex.capabilities.graph_merge.llm.packets import compact_node_packet
+        from cortex.capabilities.graph_merge.llm.packets import action_message, compact_node_packet
+
+        system += "\n\n" + files("cortex.capabilities.graph_merge.llm.prompts").joinpath(
+            "incremental_protocol.md"
+        ).read_text()
 
         wire_payload = compact_node_packet(payload) if phase in {"consolidate", "node_assess"} else payload
         trace.record("packet_size", original_characters=len(json.dumps(payload)),
@@ -309,7 +313,7 @@ class IncrementalIntegrationAgent:
                     if not plain_fallback:
                         allowed.append(output)
                 bound = (
-                    self.llm.bind_tools(allowed, tool_choice="auto")
+                    self.llm.bind_tools(allowed, tool_choice="auto" if plain_fallback else "required")
                     if allowed
                     else self.llm
                 )
@@ -331,7 +335,7 @@ class IncrementalIntegrationAgent:
                     # record each failed/successful attempt separately.
                     connection_retries += 1
                     continue
-                messages.append(response)
+                messages.append(action_message(response))
                 calls = response.tool_calls
                 reads_allowed = read_rounds < read_limit
                 if any(call["name"] in read_names for call in calls):
