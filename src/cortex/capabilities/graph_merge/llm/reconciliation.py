@@ -54,7 +54,9 @@ def invoke_relation(agent, phase, context, payload):
         evidence_ids.setdefault(ev.source, []).append(ev.id)
     finished = None
     inspected = {}
-    guidance_read = set()
+    guidance_read = {}
+    seen_reads = set()
+    duplicate_read = False
     trace = EpisodeTrace(agent.trace_sink, phase, budget=agent.call_budget)
     # Model call traces use the same file layout as the established runner.
     if hasattr(agent.trace_sink, "path"):
@@ -91,6 +93,7 @@ def invoke_relation(agent, phase, context, payload):
                 if field in blocked:
                     continue
                 if (key, field) in inspected:
+                    row[field] = inspected[key, field]
                     row.setdefault("already_supplied_fields", []).append(field)
                     continue
                 if field in semantic:
@@ -114,20 +117,19 @@ def invoke_relation(agent, phase, context, payload):
 
     @tool
     def read_evidence(ids: list[str]) -> dict:
-        """Read evidence absent from the initial view; supplied evidence is not repeated."""
+        """Read requested evidence by ID, including actual content when already supplied."""
         supplied = {e["id"] for e in payload.get("evidence", [])}
-        missing = sorted(set(ids) - supplied)
         return {"already_supplied": sorted(set(ids) & supplied),
                 "items": [{"id": e.id, "content": e.content}
-                          for e in context.evidence if e.id in missing]}
+                          for e in context.evidence if e.id in ids]}
 
     @tool
     def read_guidance(topic: Literal["concept", "metric", "generation_rule", "event", "operations"]) -> dict:
         """Read required creation/formula/intent details only for a necessary node reconstruction."""
         if topic in guidance_read:
-            return {"already_supplied": topic, "location": "earlier read_guidance result"}
+            return guidance_read[topic]
         result = raw_tools["read_guidance"].invoke({"topic": topic})
-        guidance_read.add(topic)
+        guidance_read[topic] = result
         return result
 
     @tool
@@ -152,8 +154,11 @@ def invoke_relation(agent, phase, context, payload):
     result = None
     try:
         for step in (count() if agent.max_calls is None else range(agent.max_calls)):
+            reads_blocked_this_turn = duplicate_read
             final_call = agent.max_calls is not None and step == agent.max_calls - 1
             available = ([submit_changes] if writer else [RelationReview]) if final_call else tools
+            if duplicate_read:
+                available = [submit_changes, extend_task] if writer else [RelationReview]
             if final_call:
                 messages.append(HumanMessage(
                     "This is the reserved completion call; no further reads. Submit the complete supported result from the supplied view and completed reads. "
@@ -172,8 +177,13 @@ def invoke_relation(agent, phase, context, payload):
                 except (ValueError, TypeError) as exc:
                     messages.append(HumanMessage(f"Invalid result: {exc}. Return the complete corrected result."))
                     continue
+            duplicate_notice = False
             for call in response.tool_calls:
                 try:
+                    if reads_blocked_this_turn and call["name"] not in {
+                        "submit_changes", "RelationReview", "extend_task"
+                    }:
+                        raise ValueError("The identical read was already answered with actual values. Submit the local result or extend the required write scope; no information is gained by repeating it.")
                     if final_call and call["name"] != ("submit_changes" if writer else "RelationReview"):
                         raise ValueError("Reserved completion call does not permit additional reads or scope extensions")
                     if call["name"] in {"submit_changes", "RelationReview"} and len(response.tool_calls) != 1:
@@ -183,6 +193,14 @@ def invoke_relation(agent, phase, context, payload):
                         tool_result = {"status": "accepted"}
                     else:
                         tool_result = lookup[call["name"]].invoke(call["args"])
+                    if call["name"] in {"inspect_items", "read_evidence", "read_guidance"}:
+                        key = (call["name"], json.dumps(call["args"], sort_keys=True))
+                        if key in seen_reads:
+                            duplicate_read = True
+                            duplicate_notice = True
+                        seen_reads.add(key)
+                    elif call["name"] == "extend_task":
+                        duplicate_read = False
                     trace.record("tool_result", name=call["name"],
                                  arguments=call["args"], result=tool_result)
                     messages.append(ToolMessage(json.dumps(tool_result, ensure_ascii=False), tool_call_id=call["id"]))
@@ -192,6 +210,8 @@ def invoke_relation(agent, phase, context, payload):
                     if result is not None:
                         return result
                 except (ValueError, TypeError, KeyError) as exc:
+                    if call["name"] == "submit_changes":
+                        duplicate_read = False
                     tool_result = {"status": "rejected", "error": str(exc),
                                    "repair": "Rejected proposal saved no changes. Resubmit the complete corrected proposal, including all intended edits and retirements. The last valid candidate remains unchanged."}
                     trace.record("tool_result", name=call["name"], arguments=call["args"], result=tool_result)
@@ -199,6 +219,10 @@ def invoke_relation(agent, phase, context, payload):
             if response.invalid_tool_calls:
                 for call in response.invalid_tool_calls:
                     messages.append(ToolMessage("Malformed arguments: use valid complete JSON for the intended tool.", tool_call_id=call["id"]))
+            if duplicate_notice:
+                messages.append(HumanMessage(
+                    "This identical read returned the actual values again; the graph has not changed. Use them to submit the supported local result now, or extend write scope for a necessary coupled repair. Do not repeat reads."
+                ))
         raise ValueError(f"{phase} exceeded local call budget")
     finally:
         if agent.trace_sink:

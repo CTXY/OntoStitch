@@ -93,3 +93,6 @@ def test_relation_reads_share_prior_values_without_discarding_first_read():
     replies = [json.loads(m.content) for m in model.requests[-1] if isinstance(m, ToolMessage)]
     assert replies[0]['items'][0]['targets']
     assert replies[1]['items'][0]['already_supplied_fields'] == ['targets']
+    assert replies[1]['items'][0]['targets'] == replies[0]['items'][0]['targets']
+    from cortex.capabilities.graph_merge.llm.reconciliation import RelationReview
+    assert model.tools == [RelationReview]
