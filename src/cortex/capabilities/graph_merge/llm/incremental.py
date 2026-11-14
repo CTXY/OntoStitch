@@ -2,6 +2,7 @@
 
 import json
 from importlib.resources import files
+from itertools import count
 from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -265,7 +266,7 @@ class IncrementalIntegrationAgent:
         budget_announced = False
         connection_retries = 0
         try:
-            for _ in range(self.max_calls):
+            for _ in (count() if self.max_calls is None else range(self.max_calls)):
                 batch = getattr(context, "active_batch", None)
                 has_pending = batch is not None and any(
                     (batch.pending, batch.changes, batch.contracts, batch.edge_merges)

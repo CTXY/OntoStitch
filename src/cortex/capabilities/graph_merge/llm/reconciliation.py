@@ -1,6 +1,7 @@
 """Production relation-only agent: compact view, selective reads, partial edits."""
 import json
 from importlib.resources import files
+from itertools import count
 from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -134,8 +135,8 @@ def invoke_relation(agent, phase, context, payload):
     lookup = {t.name: t for t in tools if hasattr(t, "name")}
     result = None
     try:
-        for step in range(agent.max_calls):
-            final_call = step == agent.max_calls - 1
+        for step in (count() if agent.max_calls is None else range(agent.max_calls)):
+            final_call = agent.max_calls is not None and step == agent.max_calls - 1
             available = ([submit_changes] if writer else [RelationReview]) if final_call else tools
             if final_call:
                 messages.append(HumanMessage(

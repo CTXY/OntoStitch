@@ -1,0 +1,11 @@
+# Resilient training batches
+
+The runner `scripts/run_resilient_training.py` consumes a prepared manifest and one input per case. One subprocess and one API key slot per active case isolates model clients, graph checkpoints, SQLite resources and logs. Physical data is read-only. Credentials are read locally from an ignored key file and are never command-line values or copied into manifests. The default endpoint is frozen in a non-secret job configuration.
+
+Each model request waits up to3600 seconds and uses8 SDK retries for retryable transport/status failures. SDK retries replay the exact request before tool execution. HTTP-level audit files count every wire attempt, including retry responses and missing responses; no auth headers are recorded. After an exhausted transient request, the worker resumes the same persistent case checkpoint with backoff, without resetting semantic rounds or accepting pending assets. Authentication and deterministic configuration failures are not silently retried as semantic failures.
+
+Extraction retains5 outer rounds,5 inner iterations and3 consecutive correct SQL replays. Model-call and episode limits remain disabled. Merge supports optional None for both episode-call and whole-merge budgets; finite existing defaults remain backward compatible. Only semantic rounds are bounded in this job. No domain-specific rules or source-specific corrective feedback are injected.
+
+Source code/resources are frozen for the job. Dataset selection is exact membership of a provided train split and database, checked against the test split. Parallel extraction is followed by serial incremental merge, with independently audited source/reference preservation before each publication. Accepted intermediate merge states are saved; partial snapshots and incomplete extraction coverage are explicitly identified. Unaccepted case graphs never become accepted inputs merely to finish the batch.
+
+The supervisor prevents simultaneous duplicate supervisors via a local process lock. Per-case workflow writer locks and atomic JSON publication remain authoritative. A process-level coding failure is surfaced as needs_attention rather than silently skipping it. The same supervisor can restart after the prior workers have stopped; completed accepted cases and merge steps are reused.

@@ -189,10 +189,10 @@ class IncrementalGraphIntegrationEngine:
             )
         ctx.sql_dialect = self.sql_dialect
         if hasattr(self.agent, "max_calls"):
-            self.agent.call_budget = {
+            self.agent.call_budget = (None if self.model_call_budget is None else {
                 "used": 0,
                 "limit": self.model_call_budget,
-            }
+            })
         # All original business objects remain separately available until their
         # complete content transaction is accepted. Only physical IDs align here.
         current = ctx.union_state()
