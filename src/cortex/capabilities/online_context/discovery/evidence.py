@@ -110,15 +110,50 @@ def _identifier(value: str) -> str:
 
 
 def _analysis_graph_payload(state: GraphState) -> dict:
+    """Analysis-only view: preserve business content, omit catalog repetition."""
     payload = without_untrusted_dimension_values(state).model_dump(mode="json")
-    for node in payload["graph"]["nodes"]:
+    graph = payload["graph"]
+    for node in graph["nodes"]:
         node.pop("sources", None)
-        node["match_views"] = [
-            {**target, "graph_ref": _target_ref(node["id"], index)}
-            for index, target in enumerate(target_views(node["properties"]), 1)
-        ]
-    for edge in payload["graph"]["edges"]:
+        for alternative in node.get("alternatives", ()):
+            alternative.pop("sources", None)
+        for key in ("description", "aliases", "tags"):
+            if not node.get(key):
+                node.pop(key, None)
+        if node.get("merge_status") == "normal":
+            node.pop("merge_status")
+        matches = target_views(node["properties"])
+        if matches:
+            node["match_views"] = [
+                {**target, "graph_ref": _target_ref(node["id"], index)}
+                for index, target in enumerate(matches, 1)
+            ]
+    # These generated assertions are already explicit in table_ref/column_ref.
+    # Authored edge descriptions, branches, and physical JOINs remain intact.
+    graph["edges"] = [edge for edge in graph["edges"] if not (
+        edge.get("reference_origin") == "default"
+        and edge["edge_type"] in {"belongs_to", "value_of"}
+    )]
+    for edge in graph["edges"]:
         edge.pop("sources", None)
+        edge.pop("reference_origin", None)
+    used = {edge["edge_type"] for edge in graph["edges"]}
+    contracts = {c["id"]: c for c in graph.get("relation_contracts", ())}
+    while True:
+        added = {contracts[k].get("extends") for k in used if k in contracts} - {None} - used
+        if not added:
+            break
+        used.update(added)
+
+    def nonempty(value):
+        if isinstance(value, dict):
+            return {k: nonempty(v) for k, v in value.items()
+                    if v is not None and v != "" and v != [] and v != {}}
+        if isinstance(value, list):
+            return [nonempty(v) for v in value]
+        return value
+
+    graph["relation_contracts"] = [nonempty(c) for c in contracts.values() if c["id"] in used]
     return payload
 
 

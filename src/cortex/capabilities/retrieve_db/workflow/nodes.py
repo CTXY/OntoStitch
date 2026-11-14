@@ -109,7 +109,12 @@ class RetrievalNodes:
             and item.document.node_type == "dimension_value"
         }
         snapshot = (
-            build_retrieved_graph_state(source, expand_context(source, selected))
+            build_retrieved_graph_state(source, expand_context(
+                source, selected,
+                # Do not undo the model's relevance decision through a hub.
+                # Mandatory formula/binding references are still completed.
+                excluded_node_ids={item.document.canonical_node_id for item in items} - selected,
+            ))
             if selected
             else None
         )

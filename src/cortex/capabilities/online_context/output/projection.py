@@ -559,6 +559,13 @@ def project_graph(
     for edge in state.graph.edges:
         owner = available[edge.from_node_id]
         if edge.from_node_id in changed:
+            # Explicit grounded_on edges need not carry legacy target_id tags.
+            # A narrowed Concept can retain only assertions supported by its
+            # remaining complete matches. Never synthesize replacement edges.
+            if owner.node_type == "concept" and edge.edge_type == "grounded_on":
+                allowed = {ref for group in target_groups(owner.properties) for ref in group}
+                if edge.to_node_id not in allowed:
+                    continue
             if owner.node_type == "concept" and "target_id" in edge.properties:
                 reindex = target_reindexes.get(edge.from_node_id)
                 old_id = str(edge.properties["target_id"])
@@ -769,9 +776,12 @@ def project_graph_state(
                     }
                 )
         retained_edges.append(edge)
+    from cortex.schema.relation_metadata import filter_metadata
+
+    retained_ids = {edge.id for edge in retained_edges}
     projected = GraphState(
         graph=GraphSpace(
-            nodes=tuple(nodes.values()),
+            nodes=tuple(node.model_copy(update={"properties": filter_metadata(node.properties, retained_ids)}) for node in nodes.values()),
             edges=tuple(retained_edges),
             relation_contracts=graph.relation_contracts,
         ),

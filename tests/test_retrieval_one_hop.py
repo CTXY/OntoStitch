@@ -48,3 +48,21 @@ def test_public_contract_accepts_only_exact_relation_group_projection():
         bad=projected.model_copy(update={'graph':projected.graph.model_copy(update={'nodes':nodes})})
         with pytest.raises(RetrieveDbError,match='modified or unknown node'):
             validate(raw.model_copy(update={'retrieved_graph_state':bad}))
+
+
+def test_rejected_neighbor_is_not_reintroduced_but_required_formula_refs_survive():
+    graph=state([*catalog(),concept('root','a'),concept('unrelated','b')],[edge('link','root','unrelated','has_feature')])
+    assert 'unrelated' not in expand_context(graph,{'root'},excluded_node_ids={'unrelated'})
+    metric=GraphNode(id='metric',node_type='metric',name='total',properties={'expression':{'expr':'SUM(${value})','refs':{'value':'root'}}})
+    graph=state([*catalog(),concept('root','a'),metric],[edge('input','metric','root','depends_on')])
+    assert 'root' in expand_context(graph,{'metric'},excluded_node_ids={'root'})
+
+
+def test_analysis_view_retains_business_content_without_catalog_repetition():
+    from cortex.capabilities.online_context.discovery.evidence import _analysis_graph_payload
+    original=state([*catalog(),concept('root','a')],[edge('binding','root','a')])
+    view=_analysis_graph_payload(original)['graph']
+    assert next(n for n in view['nodes'] if n['id']=='root')['properties']['targets']==[['a']]
+    assert any(e['id']=='binding' for e in view['edges'])
+    assert not any(e.get('reference_origin')=='default' for e in view['edges'])
+    assert any(e.reference_origin=='default' for e in original.graph.edges)

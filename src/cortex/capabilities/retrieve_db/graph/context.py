@@ -17,7 +17,7 @@ def _metadata_view(node, edge_ids):
     return node.model_copy(update={"properties": filter_metadata(node.properties, edge_ids)})
 
 
-def expand_context(state: GraphState, seed_node_ids: set[str]) -> set[str]:
+def expand_context(state: GraphState, seed_node_ids: set[str], *, excluded_node_ids=()) -> set[str]:
     """One asserted hop, followed only by mandatory references and JOIN routing.
 
     Neighbours do not become new business traversal roots. In particular a
@@ -27,11 +27,12 @@ def expand_context(state: GraphState, seed_node_ids: set[str]) -> set[str]:
 
     nodes = {node.id: node for node in state.graph.nodes}
     seeds = seed_node_ids & nodes.keys()
+    excluded = set(excluded_node_ids) - seeds
     result = set(seeds)
     for edge in state.graph.edges:
-        if edge.from_node_id in seeds:
+        if edge.from_node_id in seeds and edge.to_node_id not in excluded:
             result.add(edge.to_node_id)
-        if edge.to_node_id in seeds:
+        if edge.to_node_id in seeds and edge.from_node_id not in excluded:
             result.add(edge.from_node_id)
     result.intersection_update(nodes)
     # Physical joins are Table-to-Table edges. Include up to two hops so a

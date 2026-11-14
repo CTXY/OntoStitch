@@ -313,3 +313,18 @@ def test_saved_handoff_and_agent_use_same_node_scoped_guidance(state):
     assert all(not n.get("alternatives") for n in supplied_graph["nodes"])
     assert "metric.revenue" not in {n["id"] for n in supplied_graph["nodes"]}
     assert display["graphs"] == original["graphs"] and task == original
+
+
+def test_selected_concept_target_filters_explicit_grounding_without_legacy_target_id():
+    from test_graph_integration import catalog, edge, state as make_state
+    from cortex.capabilities.online_context.output.projection import _target_ref
+    node=GraphNode(id='concept.code',node_type='concept',name='classification code',properties={'targets':[['a'],['b']]})
+    original=make_state([*catalog(),node],[edge('binding-a',node.id,'a'),edge('binding-b',node.id,'b')])
+    point=ChoicePoint(choice_point_id='binding',decision_question='Which representation?',options=tuple(
+        InteractionOption(option_id=f'option-{i}',statement=f'Use representation {i}',candidate_sources=('memory_graph',),graph_refs=(_target_ref(node.id,i),)) for i in (1,2)))
+    projected,_=project_graph_state(schema=load_root_schema(),state=original,selected_node_ids={node.id},choice_points=(point,),selected_by_point={'binding':('option-2',)})
+    retained=next(n for n in projected.graph.nodes if n.id==node.id)
+    assert retained.properties['targets']==[['b']]
+    bindings=[e for e in projected.graph.edges if e.from_node_id==node.id and e.edge_type=='grounded_on']
+    assert [e.id for e in bindings]==['binding-b']
+    assert node.properties['targets']==[['a'],['b']]

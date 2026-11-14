@@ -77,7 +77,7 @@ class RetrieveDbCapability:
                 "schema": calculate_schema_hash(self._schema),
                 "limits": recall.limits,
                 "settings": context_settings or {},
-                "context_expansion": "one_hop_required_references_v1",
+                "context_expansion": "one_hop_relevance_preserving_v2",
                 "model": getattr(llm, "model_name", getattr(llm, "model", None)),
             }
         )

@@ -29,6 +29,10 @@ alone is not an explicit DISTINCT instruction when entity/join grain is unclear.
 Conflicting question and evidence do not establish an explicit resolution.
 Choose selected_option_id only from the supplied options.
 
+A business term alone does not select a physical table, field or record grain.
+Do not equate a term with a schema label/code, or expand its requested output
+components by convention, without an evidenced mapping. Otherwise keep the choice.
+
 # Base-column property test
 
 When the explicit-constraint test fails, identify the physical base table and
