@@ -304,10 +304,13 @@ class IncrementalGraphIntegrationEngine:
                 raise ValueError(
                     "Local resume feedback requires valid current target IDs"
                 )
+            phase = getattr(self, "feedback_phase", "reconcile")
+            if phase not in {"consolidate", "reconcile"}:
+                raise ValueError("Local feedback phase must be consolidate or reconcile")
             impacts = self._run_task(
                 LocalTask(
                     "external-review",
-                    "reconcile",
+                    phase,
                     targets,
                     feedback=list(self.external_feedback),
                 ),

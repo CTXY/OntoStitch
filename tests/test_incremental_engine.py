@@ -273,6 +273,32 @@ def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path
         second.merge(state(), source, schema, run_id="unfinished")
 
 
+def test_completed_content_feedback_uses_node_assessment_without_identity_rerun(tmp_path):
+    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+
+    source = state([*catalog(), concept("A", "a"), concept("B", "a")])
+    first = IncrementalGraphIntegrationEngine(IdentityOnlyAgent())
+    first.workspace_path = tmp_path / "first.sqlite"
+    first.merge(state(), source, load_root_schema(), run_id="first")
+    snapshot = WorkspaceStore(first.workspace_path).load("first")
+    target = next(n.id for n in first.current.graph.nodes if n.node_type == "concept")
+    agent = IdentityOnlyAgent()
+    second = IncrementalGraphIntegrationEngine(agent)
+    second.resume_snapshot = snapshot
+    second.external_feedback = ["Recheck compatible implementations of this identity."]
+    second.feedback_targets = [target]
+    second.feedback_phase = "consolidate"
+    result = second.merge(state(), source, load_root_schema(), run_id="local-content")
+    assert agent.phases == ["consolidate", "node_assess"]
+    assert second.current == first.current
+    assert len(result.node_mappings) == len(source.graph.nodes)
+
+    second.feedback_phase = "identity"
+    import pytest
+    with pytest.raises(ValueError, match="feedback phase"):
+        second.merge(state(), source, load_root_schema(), run_id="invalid")
+
+
 def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypatch):
     from cortex.capabilities.graph_merge.integration import incremental as module
     from cortex.capabilities.graph_merge.integration.context import IntegrationContext
