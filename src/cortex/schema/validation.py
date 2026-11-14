@@ -105,12 +105,20 @@ def validate_graph_space(graph: GraphSpace, schema: SchemaDefinition, *, metadat
             schema.is_node_type_compatible(source.node_type, expected)
             for expected in edge_type.from_node_types
         ):
-            raise GraphSchemaError(f"edge {edge.id!r} has an invalid source node type")
+            raise GraphSchemaError(
+                f"edge {edge.id!r} ({edge.edge_type}) has an invalid source node type: "
+                f"{source.id} is {source.node_type}; expected one of {edge_type.from_node_types}. "
+                "Correct the predicate or endpoint to match its declared contract."
+            )
         if not any(
             schema.is_node_type_compatible(target.node_type, expected)
             for expected in edge_type.to_node_types
         ):
-            raise GraphSchemaError(f"edge {edge.id!r} has an invalid target node type")
+            raise GraphSchemaError(
+                f"edge {edge.id!r} ({edge.edge_type}) has an invalid target node type: "
+                f"{target.id} is {target.node_type}; expected one of {edge_type.to_node_types}. "
+                "Correct the predicate or endpoint to match its declared contract."
+            )
         _validate_properties(
             {
                 k: v

@@ -206,7 +206,7 @@ def merge_worker(args):
             omitted.append(ident)
             continue
         remaining.append(ident)
-    size = manifest.get('merge_batch_size', getattr(args, 'merge_batch_size', 5))
+    size = manifest.get('merge_batch_size', getattr(args, 'merge_batch_size', 10))
     size = size or max(1, len(remaining))
     batches = [remaining[i:i + size] for i in range(0, len(remaining), size)]
     write(args.output / 'merge_plan.json', {'base_cases': merged, 'batches': batches, 'omitted': omitted})
@@ -444,7 +444,7 @@ def main():
     parser.add_argument('--model', default='deepseek-v4-pro')
     parser.add_argument('--slot', type=int, default=0)
     parser.add_argument('--case')
-    parser.add_argument('--merge-batch-size', type=int, default=5,
+    parser.add_argument('--merge-batch-size', type=int, default=10,
         help='Case graphs per merge invocation; 0 combines all remaining cases')
     args = parser.parse_args()
     if args.merge_batch_size < 0:

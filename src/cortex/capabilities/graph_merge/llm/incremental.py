@@ -140,7 +140,11 @@ class IncrementalIntegrationAgent:
                 revision=getattr(context, "workspace_revision", 0),
                 complete=result.get("next_offset") is None,
             )
-            return result
+            from cortex.capabilities.graph_merge.llm.packets import (
+                reference_supplied_records,
+                supplied_records,
+            )
+            return reference_supplied_records(result, supplied_records(payload))
 
         @tool
         def extend_task(ids: list[str], reason: str) -> dict:
@@ -219,7 +223,15 @@ class IncrementalIntegrationAgent:
                 ]
             return result
 
-        read_tools = [inspect_graph, raw_tools["read_evidence"], read_guidance]
+        @tool
+        def read_evidence(ids: list[str]) -> dict:
+            """Read missing evidence only; already supplied evidence stays in the conversation."""
+            supplied = {e["id"] for e in payload.get("evidence", [])}
+            missing = sorted(set(ids) - supplied)
+            result = raw_tools["read_evidence"].invoke({"ids": missing}) if missing else {"items": []}
+            return {**result, "already_supplied": sorted(set(ids) & supplied)}
+
+        read_tools = [inspect_graph, read_evidence, read_guidance]
         if phase in {"consolidate", "reconcile"}:
             read_tools.extend([extend_task, inspect_pending])
         lookup = {t.name: t for t in read_tools}
@@ -247,10 +259,15 @@ class IncrementalIntegrationAgent:
                 .joinpath("incremental_evidence.md")
                 .read_text()
             )
+        from cortex.capabilities.graph_merge.llm.packets import compact_node_packet
+
+        wire_payload = compact_node_packet(payload) if phase in {"consolidate", "node_assess"} else payload
+        trace.record("packet_size", original_characters=len(json.dumps(payload)),
+                     supplied_characters=len(json.dumps(wire_payload)))
         messages = [
             SystemMessage(system),
             HumanMessage(
-                json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                json.dumps(wire_payload, ensure_ascii=False, separators=(",", ":"))
             ),
         ]
         finished = None

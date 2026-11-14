@@ -19,6 +19,7 @@ Ontology graph 可以包含业务类别、任务相关的具体业务对象，�
 - is_a：可比较类别的同范围集合包含；不是具体对象归属、属性联系或物理映射。同范围、相容前提下可传递；不复制 targets 或 Rule，不默认兄弟互斥或穷尽。
 - grounded_on：直接物理表示/输入，须与 targets 或公式一致；规范 Concept owner 的唯一性见下文。
 - depends_on：Metric 公式的直接语义输入，须与 refs 一致。可分析间接依赖，不把间接依赖补成直接边；非递归 Metric 计算不得成环。
+- Metric 的 refs 指向 Column/DimensionValue 时，用 grounded_on 表达这些直接物理输入即可；指向 Concept/Metric 时才用 depends_on。不要把合法的物理输入改成语义输入，也不要仅因没有 depends_on 就认定缺边。先核对边的实际谓词和端点类型，再判断错误。
 - applies_to：Rule 的实际作用对象；必须结合 condition 与当前分支判断，不自动触发或沿层级无条件继承。
 - belongs_to / value_of：Column→Table、DimensionValue→Column 的物理归属，与 catalog 一致，不代表业务归属。
 - joins_with：经过确认的完整连接列对；不证明业务 identity，也不决定查询 JOIN 类型或直接连接首尾表。

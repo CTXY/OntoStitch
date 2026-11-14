@@ -5,6 +5,7 @@ Integrate this task's confirmed identity groups into the current graph. Preserve
 ## Input and scope
 
 - `nodes` and `relations` are archived sources. `candidate_nodes` and `candidate_relations` are the current working view, including declared identity aliases; aliasing alone does not fuse source content.
+- `source_equals_candidate` lists archived IDs whose COMPLETE records are identical to the supplied current records; use those current records for both views. Tool replies marked `already_supplied` refer to those complete supplied records. Do not re-read them or re-retrieve confirmed identity groups without a concrete missing fact.
 - Write only within `task_scope` targets. Neighbours and consumers are read-only context. Use `extend_task(ids, reason)` before an additional edit is necessary; read access does not grant write scope.
 - Compare every complete matched member and necessary dependency. Use preloaded guidance, contracts and operation definitions; read only material missing information, not the same registry again.
 

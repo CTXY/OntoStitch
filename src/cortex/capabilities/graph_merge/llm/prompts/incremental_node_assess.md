@@ -8,6 +8,8 @@ Compact conflict owners may have placeholder common names/descriptions because t
 
 `candidate_nodes` and `candidate_relations` show the current graph; `nodes` and `relations` are archived sources. Context neighbours are not additional review targets. Inspect a dependency defect only when it affects a target's meaning. Request missing material context rather than scanning unrelated knowledge. Use preloaded contracts/guidance; do not re-read a supplied registry.
 
+`source_equals_candidate` lists archived IDs whose complete records equal the supplied current records. They are shared records, not absent evidence. Tool replies marked `already_supplied` reference the full record/evidence already in this conversation; do not fetch it again.
+
 ## Checks
 
 Evaluate action integrity BEFORE checking whether its reason matches Gold. For every `decision_review_ids` Rule, return one `decision_checks` item: `node_id`, `independent_decisions`, and concrete `issues` (empty only when valid). List independently variable business obligations, not SQL clauses or alternative implementations of one decision. Holding the chosen records fixed while changing requested fields tests selection versus ranking; holding chosen fields fixed while changing row/column arrangement tests presentation versus selection. Multiple intent tags do not resolve a compound action. A multi-decision Rule requires revision even if every clause matches Gold.

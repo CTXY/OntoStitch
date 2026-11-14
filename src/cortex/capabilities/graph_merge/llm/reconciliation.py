@@ -51,6 +51,8 @@ def invoke_relation(agent, phase, context, payload):
     for ev in context.evidence:
         evidence_ids.setdefault(ev.source, []).append(ev.id)
     finished = None
+    inspected = {}
+    guidance_read = set()
     trace = EpisodeTrace(agent.trace_sink, phase, budget=agent.call_budget)
     # Model call traces use the same file layout as the established runner.
     if hasattr(agent.trace_sink, "path"):
@@ -78,9 +80,16 @@ def invoke_relation(agent, phase, context, payload):
                 semantic["alternative_ids"] = semantic["branches"]
             elif obj.node_type == "concept":
                 semantic.setdefault("relation_metadata", [])
-            row = {"id": key}
+            row = {"id": key, "type": obj.node_type} if key in nodes else {
+                "id": key, "relation": obj.edge_type,
+                "from_type": nodes[obj.from_node_id].node_type,
+                "to_type": nodes[obj.to_node_id].node_type,
+            }
             for field in fields:
                 if field in blocked:
+                    continue
+                if (key, field) in inspected:
+                    row.setdefault("already_supplied_fields", []).append(field)
                     continue
                 if field in semantic:
                     row[field] = semantic[field]
@@ -97,6 +106,7 @@ def invoke_relation(agent, phase, context, payload):
                         errors.append({"id": key, "field": field, "error": "Field does not apply to this object", "available_fields": sorted((semantic.keys() | obj.properties.keys()) - blocked)})
                         continue
                     row[field] = None
+                inspected[key, field] = row[field]
             rows.append(row)
         return {"items": rows, **({"read_errors": errors} if errors else {})}
 
@@ -112,7 +122,11 @@ def invoke_relation(agent, phase, context, payload):
     @tool
     def read_guidance(topic: Literal["concept", "metric", "generation_rule", "event", "operations"]) -> dict:
         """Read required creation/formula/intent details only for a necessary node reconstruction."""
-        return raw_tools["read_guidance"].invoke({"topic": topic})
+        if topic in guidance_read:
+            return {"already_supplied": topic, "location": "earlier read_guidance result"}
+        result = raw_tools["read_guidance"].invoke({"topic": topic})
+        guidance_read.add(topic)
+        return result
 
     @tool
     def extend_task(ids: list[str], reason: str) -> dict:
