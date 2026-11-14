@@ -255,9 +255,25 @@ class AdoptedWorker:
             return 0  # Completed adopted children may remain as unreaped OS entries.
         try:
             os.kill(self.pid, 0)
-            return None
+            info = subprocess.run(['ps', '-o', 'stat=', '-p', str(self.pid)], check=False, capture_output=True, text=True)
+            return 1 if info.stdout.strip().startswith('Z') else None
         except ProcessLookupError:
             return 1
+
+
+def stalled_request(folder, timeout=3660):
+    """Bound total wire silence too: socket-idle timeouts can reset on keepalives."""
+    requests = sorted((folder / 'wire').glob('*_request.json'))
+    if not requests:
+        return None
+    latest = requests[-1]
+    recovered = folder / 'transport_recoveries.jsonl'
+    if recovered.exists() and latest.name in {json.loads(line)['request'] for line in recovered.read_text().splitlines() if line.strip()}:
+        return None
+    response = latest.with_name(latest.name.replace('_request', '_response'))
+    if not response.exists() and time.time() - latest.stat().st_mtime > timeout:
+        return latest.name
+    return None
 
 
 def supervise(args):
@@ -275,6 +291,7 @@ def supervise(args):
                 if item['case'] in waiting:
                     waiting.remove(item['case'])
     logfiles = []
+    watchdog_retries = set()
     states = {str(i): read(args.output / 'cases' / str(i) / 'status.json') if (args.output / 'cases' / str(i) / 'status.json').exists() else {'status': 'queued'} for i in manifest['question_ids']}
     while waiting or active:
         for slot in range(len(slots)):
@@ -289,11 +306,25 @@ def supervise(args):
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy())
             active[slot] = (ident, process)
         for slot, (ident, process) in list(active.items()):
+            folder = args.output / 'cases' / ident
+            stale = stalled_request(folder)
+            if stale and slot not in watchdog_retries:
+                with (folder / 'transport_recoveries.jsonl').open('a') as log:
+                    log.write(json.dumps({'request': stale, 'reason': 'No complete response within wire deadline', 'time': time.time()}) + '\n')
+                try:
+                    os.kill(process.pid, 15)
+                except ProcessLookupError:
+                    pass
+                watchdog_retries.add(slot)
             exit_code = process.poll()
             if exit_code is None:
                 continue
-            if exit_code:
-                write(args.output / 'cases' / ident / 'status.json', {'status': 'needs_attention', 'exit_code': exit_code, 'slot': slot})
+            if slot in watchdog_retries:
+                watchdog_retries.remove(slot)
+                waiting.insert(0, ident)
+                write(folder / 'status.json', {'status': 'retrying', 'slot': slot, 'reason': 'Resuming after stalled transport', 'updated': time.time()})
+            elif exit_code and not ((folder / 'status.json').exists() and read(folder / 'status.json').get('data_review_hold')):
+                write(folder / 'status.json', {'status': 'needs_attention', 'exit_code': exit_code, 'slot': slot})
             del active[slot]
         states = {str(i): read(args.output / 'cases' / str(i) / 'status.json') if (args.output / 'cases' / str(i) / 'status.json').exists() else {'status': 'queued'} for i in manifest['question_ids']}
         write(registry, {str(s): {'case': v[0], 'pid': v[1].pid} for s, v in active.items()})

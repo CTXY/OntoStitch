@@ -152,3 +152,23 @@ def test_supervisor_adopts_live_worker_without_popen_returncode_attribute(tmp_pa
     runner.supervise(SimpleNamespace(output=tmp_path, keys=keys))
     assert merged == [True]
     assert runner.read(tmp_path / 'active_workers.json') == {}
+
+
+def test_wire_deadline_never_restarts_an_already_answered_request(tmp_path):
+    import importlib.util
+    import os
+    import time
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location('wire_deadline', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    request = tmp_path / 'wire/000001_request.json'
+    runner.write(request, {})
+    os.utime(request, (time.time()-4000, time.time()-4000))
+    assert runner.stalled_request(tmp_path) == request.name
+    (tmp_path / 'transport_recoveries.jsonl').write_text('{"request":"000001_request.json"}\n')
+    assert runner.stalled_request(tmp_path) is None
+    (tmp_path / 'transport_recoveries.jsonl').unlink()
+    runner.write(request.with_name('000001_response.json'), {'status': 200})
+    assert runner.stalled_request(tmp_path) is None
