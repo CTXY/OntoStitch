@@ -312,13 +312,13 @@ class IncrementalIntegrationAgent:
                     allowed = list(available_reads)
                     if not plain_fallback:
                         allowed.append(output)
-                bound = (
-                    self.llm.bind_tools(allowed, tool_choice="auto" if plain_fallback else "required")
-                    if allowed
-                    else self.llm
-                )
                 try:
-                    response = bound.invoke(messages, config={"callbacks": [trace]})
+                    from cortex.capabilities.graph_merge.llm.transport import invoke_with_recovery
+
+                    response = invoke_with_recovery(
+                        self, allowed, messages, config={"callbacks": [trace]},
+                        tool_choice="auto" if plain_fallback else "required",
+                    )
                 except (OpenAIConnectionError, OpenAIAPIError) as exc:
                     status = getattr(
                         getattr(exc, "response", None), "status_code", None
@@ -352,7 +352,6 @@ class IncrementalIntegrationAgent:
                     # If valid calls accompany malformed ones, respond to every
                     # tool ID below before sending another provider request.
                     if not plain_fallback:
-                        bound = self.llm.bind_tools(read_tools, tool_choice="auto")
                         fallback_notice = HumanMessage(
                             "Transport fallback: return your final result as plain JSON, no Markdown fences or arguments wrapper. Result schema: "
                             + json.dumps(output.model_json_schema(), ensure_ascii=False)

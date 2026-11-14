@@ -275,9 +275,28 @@ def merge_worker(args):
             merged.extend(batch)
             continue
         observe(model, out)
+
+        def recover_transport(error):
+            nonlocal model
+            if not transient(error):
+                return None
+            write(out / 'last_transport_error.json', {
+                'type': type(error).__name__, 'error': str(error),
+                'slot': args.slot, 'updated': time.time(),
+                'recovery': 'Preserve current Agent messages/tool results; replace client only',
+            })
+            time.sleep(30)
+            args.slot = (args.slot + 1) % len(read_key_slots(args.keys))
+            _cfg, model = configuration(args, args.output / 'merge')
+            observe(model, out)
+            status = read(args.output / 'merge_status.json')
+            write(args.output / 'merge_status.json', {**status, 'slot': args.slot, 'updated': time.time()})
+            return model
+
         while True:
             agent = IncrementalIntegrationAgent(model, max_calls=None,
                 trace_sink=FileSystemGraphMergeTraceSink(out / 'agents.jsonl'))
+            agent.recover_transport = recover_transport
             engine = IncrementalGraphIntegrationEngine(agent, evidence_resolver=resolver,
                 max_rounds=5, model_call_budget=None, sql_dialect='sqlite')
             engine.workspace_path = out / 'workspace.sqlite'
