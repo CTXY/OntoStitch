@@ -1,12 +1,24 @@
 """Preserve the official DeepSeek reasoning field across tool-call turns."""
 
+from copy import deepcopy
+
 from langchain_openai import ChatOpenAI
 
 
 class DeepSeekChatOpenAI(ChatOpenAI):
     def _create_chat_result(self, response, generation_info=None):
-        result = super()._create_chat_result(response, generation_info)
         data = response if isinstance(response, dict) else response.model_dump()
+        # Some compatible gateways omit the assistant role while returning
+        # valid completion/tool fields. Normalize before LangChain conversion
+        # so tool calls are parsed and validated rather than silently lost.
+        if any(not (c.get("message", {}).get("role") or "").strip()
+               for c in data.get("choices", [])):
+            data = deepcopy(data)
+            for choice in data.get("choices", []):
+                if not (choice.get("message", {}).get("role") or "").strip():
+                    choice["message"]["role"] = "assistant"
+            response = data
+        result = super()._create_chat_result(response, generation_info)
         for generation, choice in zip(result.generations, data.get("choices", [])):
             reasoning = choice.get("message", {}).get("reasoning_content")
             if reasoning is not None:
