@@ -192,3 +192,67 @@ def test_merge_deadline_ignores_historical_requests_before_supervisor_start(tmp_
     assert runner.stalled_merge(tmp_path) is None
     os.utime(tmp_path / 'supervisor.pid', (now - 5000, now - 5000))
     assert runner.stalled_merge(tmp_path) == (request.parent.parent, request.name)
+
+
+def test_merge_worker_submits_multiple_case_graphs_per_operator_call(tmp_path, monkeypatch):
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import cortex.capabilities.graph_merge.integration.incremental as integration
+
+    spec = importlib.util.spec_from_file_location('batch_runner', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    runner.write(tmp_path / 'manifest.json', {'question_ids': ['one', 'two', 'three']})
+    for ident in ['one', 'two', 'three']:
+        runner.write(tmp_path / 'cases' / ident / 'input.json', {
+            'source_id': ident, 'question': 'Question', 'sql': 'SELECT 1', 'evidence': None})
+        runner.write(tmp_path / 'cases' / ident / 'state.json',
+            state([*catalog(), concept('same-local-id', 'a')]).model_dump(mode='json'))
+    calls = []
+
+    class Engine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def merge(self, current, incoming, schema, **kwargs):
+            calls.append(sum(n.node_type == 'concept' for n in incoming.graph.nodes))
+            return SimpleNamespace(state=current, model_dump=lambda **kwargs: {})
+
+    monkeypatch.setattr(integration, 'IncrementalGraphIntegrationEngine', Engine)
+    monkeypatch.setitem(sys.modules, 'audit_incremental_merge', SimpleNamespace(audit_result=lambda *args: {'status': 'passed'}))
+    monkeypatch.setattr(runner, 'configuration', lambda *args: (None, object()))
+    monkeypatch.setattr(runner, 'observe', lambda *args: None)
+    monkeypatch.setattr(runner, 'render_graph_html', lambda *args, **kwargs: 'graph')
+    runner.merge_worker(SimpleNamespace(output=tmp_path, merge_batch_size=2, slot=0))
+    assert calls == [2, 1]
+    assert runner.read(tmp_path / 'merge_status.json')['merged'] == ['one', 'two', 'three']
+    maps = runner.read(tmp_path / 'merge/batch-0001/case_input_mappings.json')
+    assert maps['one']['nodes']['same-local-id'] != maps['two']['nodes']['same-local-id']
+
+
+def test_multi_graph_input_preserves_per_case_relations_and_metadata():
+    from test_graph_integration import edge
+
+    from cortex.application.ontology_graph import GraphManager
+    from cortex.capabilities.sql_training.merge_evaluation import (
+        _combined_incoming_state,
+    )
+
+    parent = concept('parent', 'a').model_copy(update={'properties': {
+        'targets': [['a']], 'relation_metadata': [{'id': 'group', 'edges': ['x', 'y'], 'description': 'Compatible categories'}]}})
+    graph = state([*catalog(), parent, concept('child1', 'b'), concept('child2', 'c')],
+                  [edge('x', 'child1', 'parent', 'is_a'), edge('y', 'child2', 'parent', 'is_a')]).graph
+    bundle = _combined_incoming_state((('first', graph), ('second', graph)), state())
+    # This is unmerged input: repeated physical identities and semantic
+    # referents are intentional candidates, not a published final ontology.
+    GraphManager(load_root_schema()).prepare_fragment(bundle, existing=state())
+    context = IntegrationContext(state(), bundle, load_root_schema())
+    assert len({v for v in context.physical_map.values()}) == len(catalog())
+    assert len({n.id for n in bundle.graph.nodes}) == 2 * len(graph.nodes)
+    for n in bundle.graph.nodes:
+        if n.name == 'parent':
+            refs = n.properties['relation_metadata'][0]['edges']
+            assert all(any(e.id == ref and e.to_node_id == n.id for e in bundle.graph.edges) for ref in refs)

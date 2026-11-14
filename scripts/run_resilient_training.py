@@ -177,35 +177,64 @@ def merge_worker(args):
         MappingEvidenceRepository,
         SqlTrainingGraphMergeEvidenceResolver,
     )
+    from cortex.capabilities.sql_training.merge_evaluation import (
+        _combined_incoming_state,
+    )
     from cortex.infrastructure.artifacts.graph_merge_trace import (
         FileSystemGraphMergeTraceSink,
     )
 
     _cfg, model = configuration(args, args.output / 'merge')
     schema = load_root_schema()
-    current = GraphState(graph=GraphSpace())
     manifest = read(args.output / 'manifest.json')
+    base = manifest.get('merge_base_state')
+    if base and manifest.get('merge_base_sha256') != hashlib.sha256((args.output / base).read_bytes()).hexdigest():
+        raise ValueError('Accepted merge base fingerprint mismatch')
+    current = GraphState.model_validate(read(args.output / base)) if base else GraphState(graph=GraphSpace())
     evidence = {}
     for ident in manifest['question_ids']:
         row = read(args.output / 'cases' / str(ident) / 'input.json')
         evidence[row['source_id']] = {k: row[k] for k in ('question', 'sql', 'evidence')}
     resolver = SqlTrainingGraphMergeEvidenceResolver(MappingEvidenceRepository(evidence))
-    merged, omitted = [], []
+    merged, omitted = list(manifest.get('merge_base_case_ids', [])), []
+    remaining = []
     for ident in manifest['question_ids']:
+        if ident in merged:
+            continue
         case = args.output / 'cases' / str(ident)
         if not (case / 'state.json').exists():
             omitted.append(ident)
             continue
+        remaining.append(ident)
+    size = manifest.get('merge_batch_size', getattr(args, 'merge_batch_size', 5))
+    size = size or max(1, len(remaining))
+    batches = [remaining[i:i + size] for i in range(0, len(remaining), size)]
+    write(args.output / 'merge_plan.json', {'base_cases': merged, 'batches': batches, 'omitted': omitted})
+    for index, batch in enumerate(batches, 1):
+        ident = f'batch-{index:04}'
+        cases = tuple((read(args.output / 'cases' / str(k) / 'input.json')['source_id'],
+            GraphState.model_validate(read(args.output / 'cases' / str(k) / 'state.json')).graph) for k in batch)
         out = args.output / 'merge' / str(ident)
         out.mkdir(parents=True, exist_ok=True)
-        incoming = GraphState.model_validate(read(case / 'state.json'))
+        incoming = _combined_incoming_state(cases, current)
+        node_offset = edge_offset = 0
+        mappings = {}
+        for source, graph in cases:
+            mappings[source] = {
+                'nodes': {n.id: incoming.graph.nodes[node_offset + i].id for i, n in enumerate(graph.nodes)},
+                'edges': {e.id: incoming.graph.edges[edge_offset + i].id for i, e in enumerate(graph.edges)},
+            }
+            node_offset += len(graph.nodes)
+            edge_offset += len(graph.edges)
         digest = hashlib.sha256(json.dumps([current.model_dump(mode='json'), incoming.model_dump(mode='json')], sort_keys=True).encode()).hexdigest()
         if (out / 'input_fingerprint.json').exists() and read(out / 'input_fingerprint.json')['sha256'] != digest:
             raise ValueError('Merge prefix/input changed; use a new merge output, never reuse an incompatible step')
         write(out / 'input_fingerprint.json', {'sha256': digest})
+        write(out / 'incoming_state.json', incoming.model_dump(mode='json'))
+        write(out / 'case_input_mappings.json', mappings)
         if (out / 'state.json').exists():
             current = GraphState.model_validate(read(out / 'state.json'))
-            merged.append(ident)
+            merged.extend(batch)
             continue
         observe(model, out)
         while True:
@@ -217,7 +246,8 @@ def merge_worker(args):
             if engine.workspace_path.exists():
                 engine.resume_snapshot = WorkspaceStore(engine.workspace_path).load(f'train-merge-{ident}')
             write(args.output / 'merge_status.json', {'status': 'running', 'question_id': ident,
-                'merged': merged, 'omitted': omitted, 'slot': args.slot, 'updated': time.time()})
+                'question_ids': batch, 'merged': merged, 'omitted': omitted,
+                'slot': args.slot, 'updated': time.time()})
             try:
                 result = engine.merge(current, incoming, schema, run_id=f'train-merge-{ident}')
                 audit = audit_result(current, incoming, result, schema)
@@ -227,7 +257,7 @@ def merge_worker(args):
                     raise ValueError('Source/reference preservation audit did not pass')
                 current = result.state
                 write(out / 'state.json', current.model_dump(mode='json'))
-                merged.append(ident)
+                merged.extend(batch)
                 write(args.output / 'merged_checkpoint_state.json', current.model_dump(mode='json'))
                 (args.output / 'merged_preview.html').write_text(render_graph_html(current.graph, schema, title='Partial merge checkpoint'))
                 break
@@ -330,7 +360,8 @@ def watch(args):
             with (args.output / 'supervisor.log').open('a') as log:
                 child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
                     '--output', str(args.output), '--config', str(args.config),
-                    '--keys', str(args.keys), '--model', args.model, '--slot', str(slot)],
+                    '--keys', str(args.keys), '--model', args.model, '--slot', str(slot),
+                    '--merge-batch-size', str(args.merge_batch_size)],
                     stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy(), start_new_session=True)
             write(args.output / 'supervisor.pid', child.pid)
         time.sleep(5)
@@ -413,7 +444,11 @@ def main():
     parser.add_argument('--model', default='deepseek-v4-pro')
     parser.add_argument('--slot', type=int, default=0)
     parser.add_argument('--case')
+    parser.add_argument('--merge-batch-size', type=int, default=5,
+        help='Case graphs per merge invocation; 0 combines all remaining cases')
     args = parser.parse_args()
+    if args.merge_batch_size < 0:
+        parser.error('--merge-batch-size must be nonnegative')
     args.output, args.config, args.keys = args.output.resolve(), args.config.resolve(), args.keys.resolve()
     os.environ['LANGSMITH_TRACING'] = os.environ['LANGCHAIN_TRACING_V2'] = 'false'
     if args.mode == 'supervise':
