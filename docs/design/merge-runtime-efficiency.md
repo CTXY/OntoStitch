@@ -14,6 +14,7 @@ A five-case batch took51 HTTP/model calls:1 identity,12 consolidation,10 node as
 - Use ten case graphs per operator invocation, with all source mappings and per-batch accepted checkpoints. Keep previously accepted batches. Agent-internal groups/regions remain independent of input-case partitioning.
 - Index recorded Concept origins once per inspection scan, outside the evidence/source/current-node loops. This preserves every source-selection signal; it does not infer new matches. A captured 27-case workspace scan takes about0.28 seconds with the index.
 - Persist completion of structural scanning before publication. A strict publication error is returned, with its structured issue and complete competing bindings, to a local Reconciliation transaction. The model chooses the semantic correction; strict validation is rerun before publication. No-op repairs stop instead of repeatedly reopening the same failed contract. Accepted content/structure transactions survive this recovery, without another whole-graph pass.
+- Catalog ownership regeneration retains the exact sources of its merged child and existing ownership edge. Sources are not broadcast to unrelated facts. The independent public audit accepts reversed physical equality JOINs only when remapped column pairs match exactly and directional cardinalities are compatible; business edges remain directional. These publication repairs require no new model judgment.
 
 ## Validation limits
 

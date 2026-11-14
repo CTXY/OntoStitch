@@ -130,7 +130,10 @@ def synchronize_reference_edges(
                          and e.to_node_id == target and e.edge_type == relation), None)
         if existing:
             if existing.reference_origin == "default":
-                result[result.index(existing)] = existing.model_copy(update={"properties": properties})
+                result[result.index(existing)] = existing.model_copy(update={
+                    "properties": properties,
+                    "sources": _union_sources(existing.sources, node.sources),
+                })
             continue
         digest = hashlib.sha256(f"{node.id}:{relation}:{target}".encode()).hexdigest()[:24]
         result.append(GraphEdge(

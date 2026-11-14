@@ -219,7 +219,24 @@ def audit_result(existing, incoming, result, schema):
                 destination(view, a.from_node_id),
                 destination(view, a.to_node_id),
             )
-            if None in expected or expected != (b.from_node_id, b.to_node_id):
+            compatible_endpoints = expected == (b.from_node_id, b.to_node_id)
+            if a.edge_type == b.edge_type == "joins_with" and None not in expected:
+                # Physical equality joins may reverse table direction only with
+                # exactly the same remapped column pairs and compatible reversed
+                # cardinality. Ordinary business relations remain directional.
+                from cortex.schema.physical_joins import join_edge_key, merge_join_edges
+
+                mapped = a.model_copy(update={
+                    "from_node_id": expected[0], "to_node_id": expected[1],
+                    "properties": remap_references(a.properties, nm),
+                })
+                try:
+                    compatible_endpoints = join_edge_key(mapped) == join_edge_key(b)
+                    if compatible_endpoints:
+                        merge_join_edges([mapped], [b])
+                except (ValueError, TypeError, KeyError):
+                    compatible_endpoints = False
+            if None in expected or not compatible_endpoints:
                 fail("unsafe_edge_alias", view=view, input_id=old, canonical_id=new)
             same_predicate = a.edge_type == b.edge_type
             if not same_predicate:

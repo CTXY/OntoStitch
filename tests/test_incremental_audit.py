@@ -55,6 +55,50 @@ def test_complete_public_result_and_exact_source_coverage_pass():
     assert report["coverage"]["incoming_node"]["mapped"] == len(source.graph.nodes)
 
 
+def test_catalog_default_keeps_sources_when_its_child_gains_evidence():
+    first, second = SourceReference(source_id="first"), SourceReference(source_id="second")
+    nodes = [n.model_copy(update={"sources": (first,)}) if n.id == "a" else n for n in catalog()]
+    source = state(nodes)
+    updated = source.model_copy(update={"graph": source.graph.model_copy(update={
+        "nodes": tuple(n.model_copy(update={"sources": (first, second)}) if n.id == "a" else n
+                       for n in source.graph.nodes)
+    })})
+    output, _ = GraphManager(load_root_schema()).prepare_state(updated)
+    owner = next(e for e in output.graph.edges if e.from_node_id == "a")
+    assert set(owner.sources) == {first, second}
+    assert all(second not in e.sources for e in output.graph.edges if e.from_node_id != "a")
+
+
+def test_audit_accepts_only_exact_reversed_physical_join_pairs_and_cardinality():
+    from cortex.schema import GraphEdge
+    nodes = [
+        GraphNode(id=t, node_type="table", name=t, properties={"table_name": t})
+        for t in ("left", "right")
+    ] + [
+        GraphNode(id=f"{t}.{c}", node_type="column", name=c,
+                  properties={"table_ref": t, "column_name": c})
+        for t in ("left", "right") for c in ("id", "other")
+    ]
+    join = GraphEdge(id="join", edge_type="joins_with", from_node_id="left", to_node_id="right",
+        properties={"column_pairs": [{"from_column_ref": "left.id", "to_column_ref": "right.id"}],
+                    "description": "Recorded equality", "cardinality": "1:N"})
+    source = state(nodes, [join])
+    reversed_join = join.model_copy(update={"from_node_id": "right", "to_node_id": "left",
+        "properties": {**join.properties, "column_pairs": [{"from_column_ref": "right.id", "to_column_ref": "left.id"}],
+                       "cardinality": "N:1"}})
+    def report(edge):
+        output = source.model_copy(update={"graph": source.graph.model_copy(update={
+            "edges": tuple(edge if e.id == "join" else e for e in source.graph.edges)
+        })})
+        return check(source, identity_result(source, output=output))
+    assert report(reversed_join)["status"] == "passed"
+    for properties in (
+        {**reversed_join.properties, "cardinality": "1:N"},
+        {**reversed_join.properties, "column_pairs": [{"from_column_ref": "right.other", "to_column_ref": "left.id"}]},
+    ):
+        assert any(e["code"] == "unsafe_edge_alias" for e in report(reversed_join.model_copy(update={"properties": properties}))["errors"])
+
+
 def test_missing_source_disposition_is_rejected():
     source = fixture()
     report = check(source, identity_result(source, omitted={"A"}))
