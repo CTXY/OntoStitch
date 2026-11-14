@@ -150,6 +150,21 @@ class ActiveBatch:
         self.revision = 0
         self.extra_check = None
 
+    def pending_snapshot(self):
+        """Complete accumulated draft, not just the latest partial submission."""
+        return {
+            "edits": deepcopy(list(self.pending.values())),
+            "changes": deepcopy(self.changes),
+            "contracts": [c.model_dump(mode="json") for c in self.contracts.values()],
+            "edge_merges": [m.model_dump(mode="json") for m in self.edge_merges.values()],
+        }
+
+    def restore_pending(self, saved):
+        self.pending = {edit_key(e): deepcopy(e) for e in saved["edits"]}
+        self.changes = deepcopy(saved["changes"])
+        self.contracts = {c["id"]: EdgeType.model_validate(c) for c in saved["contracts"]}
+        self.edge_merges = {m["survivor_id"]: EdgeMerge.model_validate(m) for m in saved["edge_merges"]}
+
     def submit(self, result):
         if result.failure:
             raise ValueError(result.failure)

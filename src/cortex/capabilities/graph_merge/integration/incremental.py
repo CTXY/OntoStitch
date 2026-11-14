@@ -558,6 +558,12 @@ class IncrementalGraphIntegrationEngine:
                 from cortex.capabilities.graph_merge.integration.batch import BatchResult
 
                 result = BatchResult.model_validate(saved["result"])
+                if "pending_state" in saved:
+                    batch.restore_pending(saved["pending_state"])
+                    result = BatchResult(
+                        inspection_checks=result.inspection_checks,
+                        rationale_checks=result.rationale_checks,
+                    )
                 batch.submit(result)
                 saved = None
             else:
@@ -571,6 +577,7 @@ class IncrementalGraphIntegrationEngine:
                 "aliases": aliases or {}, "targets": sorted(task.targets),
                 "groups": task.groups, "checks": task.checks,
                 "result": batch.result.model_dump(mode="json"),
+                "pending_state": batch.pending_snapshot(),
             }
             self._persist(run_id)
             review = None
