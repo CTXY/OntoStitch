@@ -105,6 +105,11 @@ async def evaluate(args):
     if args.limit:cases=cases[:args.limit]
     if len({str(x['source_id']) for x in cases})!=len(cases):raise ValueError('Duplicate case ID')
     cfg=load_config(args.config);slots=read_key_slots(args.keys)
+    selected=getattr(args, 'key_slots', None)
+    if selected is not None:
+        if not selected or len(set(selected)) != len(selected) or any(i < 0 or i >= len(slots) for i in selected):
+            raise ValueError('key_slots must name distinct configured credential indices')
+        slots=tuple(slots[i] for i in selected)
     graph=FileSystemGraphStateLoader().load(args.graph_state)
     context=DatabaseDescriptionLoader().load(args.database_root/cases[0]['database_id']/'database_description')
     sem=asyncio.Semaphore(min(args.workers,len(slots)));records={}
@@ -182,6 +187,7 @@ async def evaluate(args):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for key in ['cases','graph-state','config','database-root','keys','output']:p.add_argument('--'+key,type=Path,required=True)
+    p.add_argument('--key-slots',type=int,nargs='+',default=None,help='Use only these credential indices, leaving other background tasks on their assigned pools')
     p.add_argument('--replay-discovery',type=Path,help='Controlled Filter-downstream comparison using an existing discovery snapshot; not a from-zero run');p.add_argument('--model',default='deepseek-v4-pro');p.add_argument('--workers',type=int,default=8);p.add_argument('--limit',type=int);p.add_argument('--control',action='store_true')
     asyncio.run(evaluate(p.parse_args()))
 if __name__=='__main__':main()

@@ -248,8 +248,19 @@ class RepairGroup(NodeModel):
             "Rule's complete input is upstream and cannot be its UPDATE base."
         ),
     )
-    grouping_reason: str = ""
-    grouping_evidence: RepairGroupingEvidence | None = None
+    grouping_reason: str = Field(default="", description="Only for a multi-error group; omit for one error.")
+    grouping_evidence: RepairGroupingEvidence | None = Field(default=None, description="Required only for multiple errors. Inapplicable singleton grouping annotations are normalized away before validation.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def singleton_annotations(cls, value):
+        # Grouping evidence relates multiple errors, never the repair itself.
+        # Normalize at the shared model boundary, before any nested schema check.
+        if isinstance(value, dict) and isinstance(value.get("error_ids"), (list, tuple)) and len(value["error_ids"]) == 1:
+            value = dict(value)
+            value.pop("grouping_evidence", None)
+            value["grouping_reason"] = ""
+        return value
 
     @field_validator("id", "repair_instruction", "grouping_reason", mode="before")
     @classmethod

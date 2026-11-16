@@ -1,6 +1,6 @@
 """Partial edits compiled into the existing validated local transaction."""
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from cortex.capabilities.graph_merge.integration.batch import (
     BatchResult,
@@ -108,12 +108,20 @@ class NewNode(EvidenceWrite):
     evidence_ids: tuple[str, ...] = Field(min_length=1)
 
 
-class NewEdge(EdgeUpdate, EvidenceWrite):
+class NewEdge(EvidenceWrite):
+    id: str = Field(description="Fresh edge ID for this creation; rejected proposals do not create it in the graph.")
     edge_type: str
     from_node_id: str
     to_node_id: str
-    properties: dict
-    evidence_ids: tuple[str, ...] = Field(min_length=1)
+    properties: dict = Field(description="Complete edge properties, including description and any required alternative_ids scope.")
+    evidence_ids: tuple[str, ...] = Field(min_length=1, description="Displayed evidence IDs supporting this new edge. For existing edges, use edge_updates.add_evidence instead.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_paths(cls, value):
+        # Accept historical top-level description/branches without exposing
+        # update-only fields in the new-edge schema.
+        return EdgeUpdate.legacy_paths(value)
 
 
 class Retirement(Model):
@@ -134,7 +142,7 @@ class BusinessContract(Model):
 
 
 class RelationPatch(Model):
-    failure: str | None = Field(default=None, description="Only if a complete safe regional decision is impossible from available information. Do not disguise an unresolved required repair as an empty success.")
+    failure: str | None = Field(default=None, description="Omit or use JSON null on success, never the string 'null'. Otherwise give a concrete reason a complete safe regional decision is impossible.")
     node_updates: tuple[NodeUpdate, ...] = ()
     edge_updates: tuple[EdgeUpdate, ...] = ()
     create_nodes: tuple[NewNode, ...] = ()
@@ -145,6 +153,11 @@ class RelationPatch(Model):
     resolutions: tuple[ConflictResolution, ...] = ()
     relation_contracts: tuple[BusinessContract, ...] = ()
     explanation: str = Field(min_length=1)
+
+    @field_validator("failure")
+    @classmethod
+    def concrete_failure(cls, value):
+        return BatchResult.concrete_failure(value)
 
 
 def submit_patch(context, patch):
@@ -242,12 +255,16 @@ def submit_patch(context, patch):
     # to that one destination only; many-to-many rewrites still need attribution.
     for retirement in patch.retirements:
         if (len(retirement.before) == len(retirement.after) == 1
-                and retirement.before[0].kind == retirement.after[0].kind == "edge"):
+                and retirement.before[0].kind == retirement.after[0].kind == "edge"
+                and not retirement.before[0].alternative_id
+                and not retirement.after[0].alternative_id):
             source, target = retirement.before[0].id, retirement.after[0].id
-            if source not in edges or target not in edges:
+            if source not in edges:
                 continue
             update = next((e for e in edits if e.get("edge", {}).get("id") == target), None)
             if update is None:
+                if target not in edges:
+                    continue
                 update = {"operation": "update_edge", "edge": edges[target].model_dump(mode="json")}
                 edits.append(update)
             present = update["edge"]["sources"]

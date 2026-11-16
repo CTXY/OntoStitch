@@ -99,6 +99,26 @@ def compact_repeated_guides(messages):
     return result
 
 
+def model_history_view(messages, model):
+    """Budget the conversational view, without charging for audit-only metadata.
+
+    DeepSeek does not send reasoning_content when thinking is explicitly disabled.
+    Preserve it in raw history and in enabled-mode tool dialogues.
+    """
+    disabled = (getattr(model, "extra_body", None) or {}).get("thinking", {}).get("type") == "disabled"
+    result = []
+    for message in messages:
+        if isinstance(message, AIMessage):
+            extra = dict(message.additional_kwargs)
+            if disabled:
+                extra.pop("reasoning_content", None)
+            message = message.model_copy(update={
+                "additional_kwargs": extra, "response_metadata": {}, "usage_metadata": None,
+            })
+        result.append(message)
+    return result
+
+
 class EpisodeHooks(AgentMiddleware):
     def __init__(self, session: LearningSession):
         self.session = session
@@ -137,7 +157,7 @@ class EpisodeHooks(AgentMiddleware):
         context_message = HumanMessage(
             content=f"<case_context>\n{rendered}\n</case_context>"
         )
-        messages = compact_repeated_guides(request.messages)
+        messages = compact_repeated_guides(model_history_view(request.messages, request.model))
         # Drop only complete old model/tool batches, never leave dangling tool results.
         tools_size = len(
             json.dumps(

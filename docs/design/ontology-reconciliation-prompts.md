@@ -133,7 +133,7 @@ Ext 表示同范围内类别对应的对象集合。共同父类或共同字段�
 
 只在一个必要决定缺少具体前提时读取额外对象/字段，并将相关缺口一次请求。必要节点重构可读取其绑定、内容和消费者；不为“看完整图”读取全部节点、完整物理 metadata 或已有 evidence。
 
-读取不会扩大写权限。若一个连贯修复跨越边界，申请具体必要范围；未获得权限时明确缺口，不用错误关系绕过，也不扩展无关邻域。
+读取不会扩大写权限。若一个连贯修复跨越边界，在提案中表达实际必要修改；控制器检查局部耦合并返回缺失上下文，本次提案不应用。利用反馈修正或重提，不另调用范围扩展工具，也不扩展无关邻域。
 
 ## 提交与修复
 
@@ -151,15 +151,15 @@ Ext 表示同范围内类别对应的对象集合。共同父类或共同字段�
 
 ## 工具约定
 
-用 retirements 的 before、after、explanation 一起表达退役/替换，代码同步删除不再保留的对象并记录来源去向；不要另写 changes 或 deletes。相同事实合并用 edge_merges。边的未改来源自动保留；补充实际支持依据用 add_evidence。新增谓词须填写工具 schema 中的全部契约字段。被拒绝的提案不保存任何本次修改，修正后完整重提。
+用 retirements 的 before、after、explanation 一起表达退役/替换，代码同步删除不再保留的对象并记录来源去向；不要另写 changes 或 deletes。相同事实合并用 edge_merges。边的未改来源自动保留；更新已有对象补充实际支持依据用 add_evidence，新对象使用 evidence_ids；二者都不是 Patch 顶层字段。新增谓词须填写工具 schema 中的全部契约字段。被拒绝的提案不改变当前候选，但保留本轮被拒 JSON 草稿。submit_changes 使用 patch 或 corrections 二选一；局部修正草稿后仍重新校验完整提案。拒绝创建不会留下新对象，不能随后将它当已有对象更新。
 
 既有 targets、公式与 Rule 内容已由上游评估；仅修改业务关系时，不复核这些内容。可写范围中的 ID 不是待逐项读取的检查清单。只有确实需要改变节点内容或解决首屏无法解释的指代时，才读取对应字段。
 
-retirements 明确指定单条旧边和单条后继边时，代码把该旧边的精确来源保存在这一后继上；多后继结构仍须按实际支持选择 add_evidence，不自动广播来源。已提供的关系规范与契约无需重新读取。
+retirements 明确指定单条旧边和单条后继边、且均非分支引用时，代码把旧边的精确来源保存在这一后继上，包括同一提案中新建的后继边；多后继结构仍须按实际支持选择已有对象的 add_evidence 或新对象的 evidence_ids，不自动广播来源。已提供的关系规范与契约无需重新读取。
 
-物理端点只展示 ID、类型和名称，不是待复核内容；普通关系整理不读取完整物理属性。relation_metadata 用 node_updates 的同名列表字段提交，只能放在 Concept，且不能把互斥分支编为共同成立的组。
+物理端点只展示 ID、类型和名称，不是待复核内容；普通关系整理不读取完整物理属性。relation_metadata 用 node_updates[i].properties.relation_metadata 提交，只能放在 Concept，且不能把互斥分支编为共同成立的组。
 
-分支范围用 edge_updates/create_edges 的 branches 字段（不是 properties.branches）。省略保留既有范围；空列表明确表示不受分支限制，须有语义依据。显式 edge_merges 合并相同端点/谓词的同义边时，代码同步保留它们的范围并集和精确来源，不合并 Rule alternatives 本身。
+分支范围用 edge_updates/create_edges 中的 properties.alternative_ids 字段。省略保留既有范围；空列表明确表示不受分支限制，须有语义依据。显式 edge_merges 合并相同端点/谓词的同义边时，代码同步保留它们的范围并集和精确来源，不合并 Rule alternatives 本身。
 ~~~
 
 ## 4 Independent Graph Assessment
@@ -231,7 +231,7 @@ r2 达到局部调用上限（33次新调用）而未发布完整图。原因包
 local_r6 真实修复5次、43,677 tokens；额外空修改1次、7,665 tokens。图、来源与原有冲突保持正确，但局部调用成本未稳定改善：仍出现一次边读取字段误用、一次额外无效字段提交和一次 Assessment 定向读取。不能将早先最好结果当作稳定成本。r3 从接受checkpoint恢复，并设每Agent4次、本次恢复24次调用上限；其结果及累计成本见产物。
 
 
-r3 暴露显式同义边合并的分支范围缺口：原 edge_merges 只合并来源，未保留 branch scope 并集；Writer 也没有受支持的分支编辑字段。关系编辑适配器现对明确选择为同义、端点和谓词相同的边保留范围并集，节点 alternatives 不变；跨端点重构须显式说明范围。EdgeUpdate/NewEdge 的 branches 对应存储的 alternative_ids，经原有合法分支校验，不通过自由 properties 写内部字段。该处理不推断两个断言相同，语义等价仍由 Agent 决定并经必要 Assessment。
+r3 暴露显式同义边合并的分支范围缺口：原 edge_merges 只合并来源，未保留 branch scope 并集；Writer 也没有受支持的分支编辑字段。关系编辑适配器现对明确选择为同义、端点和谓词相同的边保留范围并集，节点 alternatives 不变；跨端点重构须显式说明范围。当时曾使用顶层 branches 适配；当前公开写入字段已统一为 EdgeUpdate/NewEdge 的 properties.alternative_ids，经合法分支校验，旧 branches 仅保留输入兼容。该处理不推断两个断言相同，语义等价仍由 Agent 决定并经必要 Assessment。
 
 
 ### 有界读取与提交预算

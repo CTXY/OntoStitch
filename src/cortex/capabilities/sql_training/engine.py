@@ -194,7 +194,7 @@ class SqlTrainingCapability:
                 "prepared catalog validation requires a database connector"
             )
         catalog = self.database.introspect_catalog(
-            include_tables=self.runtime_config.database.include_tables
+            include_tables=self.runtime_config.database.include_tables, sample_values=False
         )
         expected = {
             make_node_id(NodeType.TABLE, table.name) for table in catalog.tables

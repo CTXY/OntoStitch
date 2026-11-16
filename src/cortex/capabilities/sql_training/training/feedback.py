@@ -26,13 +26,34 @@ from cortex.capabilities.sql_training.llm.parsing import ReasoningParser, respon
 from cortex.capabilities.sql_training.llm.prompts import load_prompt, prompt_fingerprint
 from cortex.capabilities.sql_training.training.assessment_models import (
     AssessmentFeedback,
+    application_options,
 )
 from cortex.schema import SchemaDefinition
 
 
+def assessment_response_schema():
+    """The Agent judges checks; code owns their redundant aggregate label."""
+    schema = AssessmentFeedback.model_json_schema()
+    unit = schema["$defs"]["UnitResult"]
+    unit["properties"].pop("quality")
+    unit["required"] = [key for key in unit["required"] if key != "quality"]
+    if "quality_checks" not in unit["required"]:
+        unit["required"].append("quality_checks")
+    return schema
+
+
 def assessment_messages(payload):
-    system = load_prompt("learning_assessment") + "\n\nResponse schema:\n" + json.dumps(AssessmentFeedback.model_json_schema())
-    return [SystemMessage(content=system), HumanMessage(content=json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":")))]
+    system = load_prompt("learning_assessment") + "\n\nResponse schema:\n" + json.dumps(assessment_response_schema())
+    view = {**payload, "units": [
+        {**unit, "application_options": application_options(unit, payload["attempts"])}
+        for unit in payload["units"]
+    ]}
+    return [SystemMessage(content=system), HumanMessage(content=json.dumps(view, ensure_ascii=False, default=str, separators=(",", ":")))]
+
+
+class AssessmentOutputInvalid(ValueError):
+    """A rejected assessment is a contract error, not a network outage."""
+    retryable = False
 
 
 def assess(
@@ -58,6 +79,12 @@ def assess(
         record=record, schema=schema, baseline=baseline, accepted=accepted,
         trial=trial, groups=groups, targets=targets, validation=validation, prior_evidence=prior_evidence,
     )
+    return assess_payload(model, payload=payload, groups=groups,
+                          context_limit=context_limit, trace_capture=trace_capture)
+
+
+def assess_payload(model, *, payload, groups, context_limit, trace_capture=None):
+    """Evaluate one fixed evidence payload; format recovery stays in this dialogue."""
     messages = assessment_messages(payload)
     # One bounded retry for malformed structured output, never a new graph trial.
     for attempt in range(2):
@@ -84,11 +111,11 @@ def assess(
             return result
         except (ValueError, TypeError) as exc:
             if attempt:
-                raise ValueError(f"Assessment output invalid: {exc}") from exc
+                raise AssessmentOutputInvalid(f"Assessment output invalid: {exc}") from exc
             messages.append(AIMessage(content=response))
             messages.append(
                 HumanMessage(
-                    content=f"Correct the format of your previous assessment ({exc}). Preserve its substantive judgments, defects and feedback; do not reassess or remove a defect to fix formatting. Use exact supplied node or relation IDs for location, with field details in gap. Return the complete schema JSON."
+                    content=f"Correct all reported contract violations in your previous assessment:\n{exc}\nPreserve its substantive judgments, defects and feedback. Correct an incompatible application label against that unit's supplied requirement and SQL/context evidence; do not blindly preserve an invalid label or change it to applied merely to pass validation. Add required feedback for unsuccessful states; do not erase a defect to satisfy the schema. Use exact supplied node or relation IDs for location, with field details in gap. Return the complete schema JSON."
                 )
             )
     raise AssertionError("unreachable")

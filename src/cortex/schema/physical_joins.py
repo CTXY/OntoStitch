@@ -54,14 +54,11 @@ def _public_join_edge(edge: GraphEdge) -> GraphEdge:
 
 def join_edge_key(edge: GraphEdge) -> tuple:
     edge = _public_join_edge(edge)
+    forward = tuple(sorted((p["from_column_ref"], p["to_column_ref"]) for p in edge.properties["column_pairs"]))
+    reverse = tuple(sorted((right, left) for left, right in forward))
     return (
         tuple(sorted((edge.from_node_id, edge.to_node_id))),
-        tuple(
-            sorted(
-                tuple(sorted((p["from_column_ref"], p["to_column_ref"])))
-                for p in edge.properties["column_pairs"]
-            )
-        ),
+        min(forward, reverse),
     )
 
 
@@ -77,7 +74,10 @@ def merge_join_edges(
         current = by_key.get(key)
         if current is not None:
             incoming_cardinality = edge.properties.get("cardinality")
-            if incoming_cardinality and edge.from_node_id != current.from_node_id:
+            self_reversed = edge.from_node_id == edge.to_node_id and {
+                (p["from_column_ref"], p["to_column_ref"]) for p in edge.properties["column_pairs"]
+            } != {(p["from_column_ref"], p["to_column_ref"]) for p in current.properties["column_pairs"]}
+            if incoming_cardinality and (edge.from_node_id != current.from_node_id or self_reversed):
                 incoming_cardinality = _REVERSE_CARDINALITY[incoming_cardinality]
             old_cardinality = current.properties.get("cardinality")
             if (

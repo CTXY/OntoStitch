@@ -1,18 +1,20 @@
 """Production relation-only agent: compact view, selective reads, partial edits."""
 import json
+from copy import deepcopy
 from cortex.capabilities.graph_merge.integration.edit_feedback import validation_feedback
-from cortex.capabilities.graph_merge.integration.proposal_repair import ProposalRepair, Correction
+from cortex.capabilities.graph_merge.integration.proposal_repair import ProposalRepair, Correction, CorrectionError, PatchSubmission
 from importlib.resources import files
 from itertools import count
 from typing import Annotated, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
-from pydantic import model_validator
+from pydantic import ValidationError, model_validator
 
 from cortex.capabilities.graph_merge.integration.models import Model, ReviewReference
 from cortex.capabilities.graph_merge.integration.relation_edits import (
     RelationPatch,
+    RegionIncomplete,
     submit_patch,
 )
 from cortex.capabilities.graph_merge.integration.tools import build_tools
@@ -49,7 +51,7 @@ def invoke_relation(agent, phase, context, payload):
     messages = [SystemMessage(system), HumanMessage(json.dumps(payload, ensure_ascii=False))]
     raw_tools = {t.name: t for t in build_tools(context)}
     from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
-    from cortex.capabilities.graph_merge.integration.proposal_scope import ProposalScope, scope_error
+    from cortex.capabilities.graph_merge.integration.proposal_scope import ProposalScope, ScopeContextRequired, scope_error
     from cortex.capabilities.graph_merge.llm.relation_reads import RelationReads
     evidence = EvidencePresentation(context, payload.get("evidence", []))
     scope = ProposalScope(context, payload, evidence) if writer else None
@@ -60,6 +62,7 @@ def invoke_relation(agent, phase, context, payload):
     proposal_repair = ProposalRepair()
     guidance_read = {}
     seen_reads = set()
+    prepared_submission = None
     trace = EpisodeTrace(agent.trace_sink, phase, budget=agent.call_budget)
     # Model call traces use the same file layout as the established runner.
     if hasattr(agent.trace_sink, "path"):
@@ -101,18 +104,25 @@ def invoke_relation(agent, phase, context, payload):
         return result
 
     def apply_proposal(arguments):
-        nonlocal finished
-        raw = proposal_repair.prepare(arguments)
+        nonlocal finished, prepared_submission
+        signature = json.dumps(arguments, sort_keys=True, ensure_ascii=False)
+        if prepared_submission and prepared_submission[:2] == (signature, proposal_repair.revision):
+            # Replaying add/remove on an already corrected draft is not idempotent.
+            raw = deepcopy(prepared_submission[2])
+        else:
+            raw = proposal_repair.prepare(arguments)
+            prepared_submission = (signature, proposal_repair.revision, deepcopy(raw))
+        # Always revalidate against current context, including newly supplied scope.
         patch = RelationPatch.model_validate(raw)
         previous = context.active_batch.preview or context.active_batch.seed
         finished = submit_patch(context, patch)
         from cortex.capabilities.graph_merge.integration.edit_feedback import changed_fields
         changes = changed_fields(previous, context.active_batch.preview)
         return {"status": "validated", "proposal_applied": "candidate_only", "committed": False,
-                "assessment_pending": True, "changes": changes,
+                "changes": changes,
                 "created_ids": [c["id"] for c in changes if c.get("operation") == "created"]}
 
-    @tool
+    @tool(args_schema=PatchSubmission)
     def submit_changes(patch: RelationPatch | None = None, corrections: list[Correction] | None = None) -> dict:
         """Final output: supply exactly one of patch or corrections. First use a complete patch. After rejection, corrections edit the saved, UNAPPLIED patch using JSON Pointer (add/replace/remove/move), so do not resend valid parts. Example: corrections=[{op:'move',from_path:'/new_edges',path:'/create_edges'}]. New edges use create_edges with id/evidence_ids; existing edge support uses edge_updates with id/add_evidence. Nothing from a rejected patch is created in the graph. A fully valid result ends the Writer and awaits Assessment; no extra finish tool."""
         return apply_proposal({"patch": patch.model_dump(exclude_unset=True, mode="json") if patch else None,
@@ -127,6 +137,16 @@ def invoke_relation(agent, phase, context, payload):
     lookup["inspect_items"] = inspect_items  # Old stored tool calls only; not advertised.
     result = None
     plain_fallback = False
+    last_rejection = None
+
+    def fallback_message(reason):
+        schema = PatchSubmission if writer else RelationReview
+        return HumanMessage(
+            reason + " Return the final result as plain JSON, no Markdown fences or arguments wrapper. "
+            + ("Use exactly one of patch or corrections, the same envelope as submit_changes. " if writer else "")
+            + "Do not call the result tool again. Result schema: "
+            + json.dumps(schema.model_json_schema(), ensure_ascii=False))
+
     try:
         for step in (count() if agent.max_calls is None else range(agent.max_calls)):
             final_call = agent.max_calls is not None and step == agent.max_calls - 1
@@ -154,27 +174,34 @@ def invoke_relation(agent, phase, context, payload):
                         "Malformed arguments; no changes from this call were applied. Return the complete result as valid plain JSON.",
                         tool_call_id=call["id"]))
                 if not plain_fallback:
-                    schema = RelationPatch if writer else RelationReview
-                    fallback_notice = HumanMessage(
-                        "Transport fallback: return the final result as plain JSON, no Markdown fences, arguments wrapper or patch wrapper. "
-                        "Do not call the result tool again. Result schema: "
-                        + json.dumps(schema.model_json_schema(), ensure_ascii=False))
+                    fallback_notice = fallback_message("Malformed tool arguments.")
                     plain_fallback = True
                 if not response.tool_calls:
                     if fallback_notice:
                         messages.append(fallback_notice)
                     continue
             if not response.tool_calls:
+                arguments = response.content
                 try:
                     if writer:
                         raw = json.loads(response.content)
-                        apply_proposal(raw if "corrections" in raw else {"patch": raw})
+                        arguments = raw if isinstance(raw, dict) and ({"patch", "corrections"} & raw.keys()) else {"patch": raw}
+                        apply_proposal(arguments)
                         result = finished
                     else:
                         result = RelationReview.model_validate_json(response.content)
                     return result
-                except (ValueError, TypeError) as exc:
-                    messages.append(HumanMessage(json.dumps({"error": validation_feedback(exc), **scope_error(exc), **(proposal_repair.feedback(exc, context) if writer else {"repair": "Return the corrected Review."})}, ensure_ascii=False)))
+                except (ValueError, TypeError, KeyError) as exc:
+                    feedback = (proposal_repair.feedback(exc, context) if writer else
+                                {"error": validation_feedback(exc), "repair": "Return the corrected Review."})
+                    if writer and not isinstance(exc, ScopeContextRequired):
+                        rejection = json.dumps([arguments, feedback.get("errors")], sort_keys=True, ensure_ascii=False)
+                        if plain_fallback and rejection == last_rejection:
+                            raise RegionIncomplete("No progress: identical rejected submission after JSON output fallback; candidate unchanged. " + json.dumps(feedback, ensure_ascii=False)) from exc
+                        last_rejection = rejection
+                    elif isinstance(exc, ScopeContextRequired):
+                        last_rejection = None
+                    messages.append(HumanMessage(json.dumps({**feedback, **scope_error(exc)}, ensure_ascii=False)))
                     continue
             for call in response.tool_calls:
                 try:
@@ -203,8 +230,21 @@ def invoke_relation(agent, phase, context, payload):
                     if result is not None:
                         return result
                 except (ValueError, TypeError, KeyError) as exc:
-                    tool_result = {"status": "rejected", "error": validation_feedback(exc),
-                                   **scope_error(exc), **(proposal_repair.feedback(exc, context) if call["name"] == "submit_changes" else {"repair": "Correct the reported read/Review arguments; the graph is unchanged."})}
+                    feedback = (proposal_repair.feedback(exc, context) if call["name"] == "submit_changes" else
+                                {"status": "rejected", "error": validation_feedback(exc),
+                                 "repair": "Correct the reported read/Review arguments; the graph is unchanged."})
+                    tool_result = {**feedback, **scope_error(exc)}
+                    if call["name"] == "submit_changes" and not isinstance(exc, ScopeContextRequired):
+                        rejection = json.dumps([call["args"], feedback.get("errors")], sort_keys=True, ensure_ascii=False)
+                        if rejection == last_rejection and plain_fallback:
+                            trace.record("tool_result", name=call["name"], arguments=call["args"], result=tool_result)
+                            raise RegionIncomplete("No progress: identical rejected submission after JSON output fallback; candidate unchanged. " + json.dumps(feedback, ensure_ascii=False)) from exc
+                        if isinstance(exc, (ValidationError, CorrectionError)) and not plain_fallback:
+                            fallback_notice = fallback_message("Tool arguments failed structural validation; use the exact reported fields through JSON output without changing the graph contract.")
+                            plain_fallback = True
+                        last_rejection = rejection
+                    elif isinstance(exc, ScopeContextRequired):
+                        last_rejection = None
                     trace.record("tool_result", name=call["name"], arguments=call["args"], result=tool_result)
                     messages.append(ToolMessage(json.dumps(tool_result, ensure_ascii=False), tool_call_id=call["id"]))
             if fallback_notice:

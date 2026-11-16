@@ -3,6 +3,22 @@
 import json
 
 
+class UpstreamResponseIncomplete(ConnectionError):
+    """The HTTP stream ended without a complete model result."""
+
+
+def validate_stream_completion(body):
+    error = body.get('error')
+    if error:
+        raise UpstreamResponseIncomplete(
+            f"Upstream stream error: {error.get('code') or error.get('type')}: {error.get('message')}"
+            if isinstance(error, dict) else f"Upstream stream error: {error}"
+        )
+    choices = body.get('choices') or []
+    if not choices or any(not c.get('finish_reason') for c in choices):
+        raise UpstreamResponseIncomplete('Upstream SSE ended without a terminal model result; discard partial output and retry the same dialogue')
+
+
 def normalize_sse_frames(text):
     """Separate consecutive complete data objects when a gateway omits a blank line."""
     lines, complete = [], False

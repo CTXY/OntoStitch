@@ -11,7 +11,7 @@
 先用首屏的当前语义节点、边、分支和末尾集中呈现的 evidence。没有具体缺口时不读取完整节点。边可以贡献独立 evidence；缺少 SELECT 姓名不否定主体关系。
 
 - `inspect_graph` 按 ID 读取对象、相邻关系、声明式消费者或谓词契约；修改结构属性前，缺少完整当前值才读取该属性。
-- `read_evidence` 批量读取缺少的正文；`read_guidance` 只读取当前缺少的类型要求。
+- `read_evidence` 批量读取缺少的正文；`read_guidance` 只读取当前缺少的类型要求；`operations` 是 SQL 操作意图 registry，不是图编辑格式帮助。图编辑格式见下述例子与提交工具 schema。
 - 真实字段路径贯穿展示、读取和修改：Concept 用 `properties.definition`，补充说明用 `description`，边用 `properties.description`。没有 `meaning` 字段。
 - `fields=["content"]` 用于必要节点重构；`fields=["alternatives"]` 返回完整解析分支。不要读取内部 sources 或完整物理 metadata。
 
@@ -22,18 +22,30 @@
 按工具 schema 返回一次 `submit_changes({"patch": ...})`，它就是最终结构化输出，不是额外提交步骤。有效输出立即结束 Writer；代码随后评估实际变更，没有 finish/confirm 或再输出整图。
 
 - 更新只填写改变字段；省略保持。properties 按键更新，targets、expression、relation_metadata 等结构属性整体替换，需提供该属性完整新值。
-- `node_updates` 的内容字段放在 properties；只有结构调整需要才改节点。组级说明放在 Concept 的 `properties.relation_metadata`。
+- `node_updates` 的 name、description、aliases、tags 是顶层字段；业务属性放 properties。只有结构调整需要才改节点。组级说明放在 Concept 的 `properties.relation_metadata`。
 - 新边放在 `create_edges`，需自定唯一 `id`、`edge_type`、`from_node_id`、`to_node_id`、`properties.description` 和 `evidence_ids`；已有边只放在 `edge_updates`，补充证据用 `add_evidence`。新边用真实端点、具体业务谓词；分支范围用 `properties.alternative_ids`，不是 branches。省略范围保持；空列表代表各分支共同成立，须有语义依据。
 - 新谓词同时提供完整契约。`edge_merges` 仅合并同范围的同一事实，不抹掉限制或分支。
 - `retirements` 一次表达删除与保义后继：before/after 为 `{kind, id}` 对象列表，加 explanation。不另写 deletes/changes。多后继只按实际支持分配来源。
 - 既有来源由代码保留；新对象/完整冲突候选填写 evidence_ids，更新补充支持用 add_evidence。不要重建 sources、overrides 或广播整个区域的证据。
 - conflicts 每个候选需 alternative_id、完整 content（name、description、aliases、tags、properties）和 evidence_ids。保存所有仍有效的竞争含义及分支关系，不用含糊共同表述替代。
 
-合并边的准确形状如下（替换示例 ID）。source_ids 是被吸收的**边 ID**，不是 evidence IDs；代码保留这些边的精确来源。修改保留边的属性使用 edge_updates 的 **id**，不放进 edge_merges，也不写 edge_id：
+### 创建、更新、合并
+
+以下 ID 为占位符，必须使用输入中的当前对象/证据 ID。新对象使用当前图尚未占用的唯一 ID（例如 new:relation_1）；一个新 ID 只声明一次。列表中的每个元素就是对象，不再包一层 edge。
+
+创建边：create_edges 的每项必须提供 id、edge_type、两个端点、properties.description、evidence_ids。端点可以是当前节点或本提案 create_nodes 声明的节点。
 
 ```json
-{"patch":{"edge_updates":[{"id":"E_keep","properties":{"description":"保留双方限制的关系说明。"}}],"edge_merges":[{"survivor_id":"E_keep","source_ids":["E_other"],"explanation":"两条边表达同范围的同一事实。"}],"explanation":"合并重复边并保留来源与限制。"}}
+{"patch":{"create_edges":[{"id":"new:relation_1","edge_type":"<installed_predicate>","from_node_id":"N_subject","to_node_id":"N_attribute","properties":{"description":"说明主体与属性之间的具体业务关系和必要限制。"},"evidence_ids":["Q1"]}],"explanation":"补充证据支持且当前缺失的关系。"}}
 ```
+
+更新已有边：使用 edge_updates，只填 id 与改变字段。现有来源自动保留；追加证据放在该项的 add_evidence。不把 evidence_ids/add_evidence 放在 patch 顶层。
+
+```json
+{"patch":{"edge_updates":[{"id":"E_current","from_node_id":"N_owner","properties":{"description":"该属性属于此主体。"},"add_evidence":["Q2"]}],"explanation":"调整属性归属并补充相应支持。"}}
+```
+
+同义边合并：edge_merges=[{survivor_id, source_ids, explanation}]，source_ids 是被吸收的**边 ID**，不是证据 ID；代码保留精确来源。保留边的属性调整仍放 edge_updates。
 
 无合理修改时输出空 Patch 和 explanation，控制器确认无实际变更即跳过 Assessment。已有未通过修改时，空 Patch 不等于修复。无法完成时返回 failure 和具体缺口。
 

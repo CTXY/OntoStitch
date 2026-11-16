@@ -93,7 +93,7 @@ def test_actual_assessor_uses_new_schema_and_saved_relations(case_graph):
     assert all(set(e) <= {"id", "type", "from", "to", "properties"} for e in p["related_knowledge"]["edges"])
     assert all("sources" not in e for e in p["related_knowledge"]["edges"])
     assert "Database Ontology Asset Contract" not in model._calls[0][0].content
-    assert "Content quality" in model._calls[0][0].content
+    assert "## 1. Content and consistency" in model._calls[0][0].content
 
 
 def test_assessment_format_correction_preserves_previous_defect(case_graph):

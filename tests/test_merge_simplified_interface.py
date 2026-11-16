@@ -142,7 +142,7 @@ def test_writer_scope_feedback_finishes_in_two_outputs_without_extension_call():
                  for key in ('initial', 'corrected')])
     IncrementalIntegrationAgent(chat).invoke('reconcile', ctx, payload)
     feedback = json.loads(chat.requests[1][-1].content)
-    assert feedback['status'] == 'rejected'
+    assert feedback['status'] == 'rejected_unapplied'
     assert feedback['required_context']['nodes'][0]['id'] == ids['B']
     assert len(chat.requests) == 2
     assert ctx.active_batch.preview is not None

@@ -5,7 +5,7 @@ from pathlib import Path
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from test_agent_runtime import session_for
 
-from cortex.capabilities.sql_training.learning.runtime import compact_repeated_guides
+from cortex.capabilities.sql_training.learning.runtime import compact_repeated_guides, model_history_view
 from cortex.capabilities.sql_training.learning.tools import build_tools
 from cortex.capabilities.sql_training.llm.prompts import load_prompt
 from cortex.infrastructure.llm.deepseek import DeepSeekChatOpenAI
@@ -60,6 +60,26 @@ def test_disabled_thinking_still_records_returned_reasoning_without_resending():
     assert all("reasoning_content" not in m for m in payload["messages"])
 
 
+def test_history_budget_excludes_unsent_reasoning_without_changing_wire_or_raw_history():
+    model = DeepSeekChatOpenAI(model="deepseek-v4-pro", api_key="offline-test", extra_body={"thinking": {"type": "disabled"}})
+    original = AIMessage(content="Review this edit", additional_kwargs={"reasoning_content": "r" * 150000},
+        response_metadata={"provider_note": "audit only"}, tool_calls=[{"id": "write", "name": "edit_graph", "args": {"edit_id": "a"}}])
+    messages = [HumanMessage(content="Case evidence"), original, ToolMessage(content="Saved", tool_call_id="write")]
+    view = model_history_view(messages, model)
+    assert model._get_request_payload(messages) == model._get_request_payload(view)
+    assert len(view[1].additional_kwargs) == 0
+    assert len(original.additional_kwargs["reasoning_content"]) == 150000
+    assert original.response_metadata == {"provider_note": "audit only"}
+    assert view[1].tool_calls == original.tool_calls
+    assert view[2] is messages[2]
+
+
+def test_history_view_preserves_reasoning_when_protocol_needs_it():
+    model = DeepSeekChatOpenAI(model="deepseek-v4-pro", api_key="offline-test", extra_body={"thinking": {"type": "enabled"}})
+    original = AIMessage(content="", additional_kwargs={"reasoning_content": "Keep for tool protocol"})
+    assert model_history_view([original], model)[0].additional_kwargs == original.additional_kwargs
+
+
 def test_feedback_diagnostic_identifies_bad_target_location():
     import pytest
 
@@ -71,8 +91,8 @@ def test_feedback_diagnostic_identifies_bad_target_location():
                "related_knowledge": {"nodes": [], "edges": [], "prior_edges": []},
                "round_baseline": None, "prior_evidence": []}
     feedback = AssessmentFeedback.model_validate({"unit_results": [], "target_results": [{"target_id": "T1", "status": "unresolved", "feedback": [{"kind": "target", "location": "T1", "gap": "wrong projection", "required_change": "preserve requested content", "preserve": "population"}]}]})
-    with pytest.raises(ValueError, match=r"target_results\[T1\].feedback\[0\].location='T1'") as error:
+    with pytest.raises(ValueError, match=r"target_results\[T1\].feedback\[0\].location: 'T1'") as error:
         feedback.validate_evidence(payload)
-    assert "column.orders.id" in str(error.value)
+    assert "not a node/relation ID" in str(error.value)
     feedback.target_results[0].feedback[0].location = "column.orders.id"
     feedback.validate_evidence(payload)

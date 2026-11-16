@@ -10,7 +10,7 @@
 | read_evidence | 保留 | 批量读取缺失的完整证据，避免重发已提供正文 |
 | read_guidance | 保留、按需调用 | 读取缺少的类型要求；已提供内容返回引用，不重复整个 registry |
 | extend_task | 删除公开工具 | 控制器从实际 Patch 检查局部关联与缺失上下文，不再先请求扩大范围再提交 |
-| Patch | Writer 的最终结构化输出 | SDK 中仍可用 submit_changes(patch) 承载；不是先提交字段、再调用一次提交的双重流程 |
+| Patch | Writer 的最终结构化输出 | submit_changes 接收 patch 或 corrections 二选一；不是先提交字段、再调用一次提交的双重流程 |
 | Review | Assessment 的最终结构化输出 | verdict、issues、issue_refs；不是图修改工具，不再增加确认调用 |
 | conflicts、retirements、edge_merges | Patch 字段 | 描述完整分支、替代去向或同义边合并，不是分别执行的工具 |
 | 部分更新、来源维护、事务、提交 | 控制器行为 | Agent 不逐个管理内部来源账本或保存状态 |
@@ -64,7 +64,7 @@ Node 阶段沿用 nodes/relations/consumers/candidates/contracts 模式，读取
 1. 原任务范围内的对象按原契约处理。
 2. 范围外对象必须与任务直接耦合：语义根节点及一跳语义邻居、显式引用其内容的消费者、拥有相关 relation_metadata 的节点，以及此次必要相邻边。物理目录节点不可借此修改，也不作为扩张 hub。
 3. 仅看过/读取过一个无关对象，不产生写权限；无关组件的修改直接拒绝。
-4. 必要耦合对象或新关系端点尚未提供时，返回 `required_context`：当前轻量对象、拟修改属性的当前值和缺失证据。**不应用任何修改**。Writer 使用该反馈重提完整一致 Patch，无需再调用范围扩展。
+4. 必要耦合对象或新关系端点尚未提供时，返回 `required_context`：当前轻量对象、拟修改属性的当前值和缺失证据。**本次提案不应用任何修改**。Writer 使用该反馈重提完整 Patch，或修正保留的被拒草稿；无需再调用范围扩展。
 5. 已有必要上下文且提案机械合法时，将明确触及的对象纳入本次范围并记录 scope event；不把所有邻接对象开放为改写任务。
 6. 所需补充上下文超预算时停止该提案并报告范围缺口，不静默截断依赖。没有固定“三次扩展”额度。
 
@@ -87,7 +87,23 @@ Node 阶段沿用 nodes/relations/consumers/candidates/contracts 模式，读取
 
 未给出的顶层字段、properties 键保持原值。给出 targets/expression/relation_metadata 等结构属性时，替换这个属性的**完整值**，代码不猜深层合并。properties 某键设 null 表示明确移除；重建后仍须符合 schema。顶层空值按具体字段 schema，不能把所有 null 解释为删除。
 
-普通更新自动保留精确来源。新增支持用 add_evidence；新对象/分支用 evidence_ids。Agent 不重建 SourceReference 或内部 overrides。多个后继不自动继承所有来源。
+普通更新自动保留精确来源。新增支持用 `add_evidence`；新对象/分支用 `evidence_ids`。二者属于具体对象，不是 Patch 顶层字段。Agent 不重建 SourceReference 或内部 overrides。
+
+创建与更新有独立 schema。新边要求 `id`、`edge_type`、`from_node_id`、`to_node_id`、完整必要 `properties` 和所需 `evidence_ids`，不提供更新专用的 `add_evidence`。更新只发送变化字段。例如：
+
+```json
+{"patch":{
+  "create_edges":[{"id":"E_new","edge_type":"has_contact_email",
+    "from_node_id":"C_person","to_node_id":"C_email",
+    "properties":{"description":"该人员用于联系的邮箱。"},"evidence_ids":["Q1"]}],
+  "edge_updates":[{"id":"E_existing","add_evidence":["Q2"]}],
+  "explanation":"创建具体联系关系，并补充另一条现有关系的支持。"
+}}
+```
+
+示例假设节点与谓词契约已存在；新谓词仍须同时声明 `relation_contracts`。拒绝的创建不会留下新对象，下一次不能把该 ID 当作已有对象更新。
+
+明确声明单条旧边替换为单条后继边，且两端都不是 alternative 引用时，代码将旧边的精确来源传给该后继；后继可以是已有边，也可以是同一提案中新建的边。多个后继不自动继承所有来源，由 Agent 给实际支持的对象分配证据；不把 owner 来源广播到各个冲突分支。
 
 退役引用必须是对象而非裸 ID：
 
@@ -101,9 +117,36 @@ Node 阶段沿用 nodes/relations/consumers/candidates/contracts 模式，读取
 
 ## 6 校验、评估与失败
 
-结构化输出先执行类型/字段、引用、范围、来源和完整图机械校验。整个提案原子执行；任一错误都恢复之前有效候选、暂存操作与写范围。反馈返回具体错误；范围缺口直接附上下文。
+结构化输出先执行类型/字段、引用、范围、来源和完整图机械校验。整个提案原子执行；任一错误都恢复之前有效候选、暂存操作与写范围。**保留被拒提案的 JSON 草稿，不等于应用其中任何修改。** 先前已有效的候选仍保留。
 
-`validated` 只表示可进入语义评估，不能写成 accepted。Writer 正常输出即结束，回执供控制器和日志使用。
+| 回执 | 含义 |
+| --- | --- |
+| `status: rejected_unapplied` | 本次提案未应用，新对象未创建；返回 `errors` |
+| `status: validated, proposal_applied: candidate_only, committed: false` | 机械校验通过，修改进入候选；`created_ids` 列出本次创建对象，尚未语义接受/正式提交 |
+
+Writer 有效提交即结束，回执供控制器和日志使用；不要求再调用确认工具。
+
+### corrections：修复被拒草稿，不是部分写图
+
+同一 Writer episode 内，`submit_changes` 接收完整 `patch`，或对最近被拒草稿的 `corrections`，二选一。后者只减少重复输出；修改后的**完整提案仍重新原子校验**。不是逐字段提交，也不是另一种 graph 修改协议。
+
+```json
+{"corrections":[{"op":"move","from_path":"/new_edges","path":"/create_edges"}]}
+```
+
+路径从草稿根开始，不含 `/patch`。支持 `add`、`replace`、`remove`、`move`；`move` 不覆盖已有目标键。修正本身失败时，草稿和图都保持原样。修正需引用已存在草稿位置；也可直接发送完整 Patch 替换草稿。草稿不跨 Writer episode 持久化，语义评估拒绝后的新 Writer 以当前候选与反馈为准。
+
+各操作在工具 schema 中直接声明各自必填字段：`add/replace` 要求 `op/path/value`，`remove` 要求 `op/path`，`move` 要求 `op/from_path/path` 且不接受 `value`。条件性必填不能只藏在运行时检查或自然语言说明中。操作格式错误只返回当前操作的合法/必填字段，不输出其他操作的无关错误。
+
+若工具参数发生 schema 或 correction 结构校验错误，立即复用已有纯 JSON 恢复路径：停止使用结果工具，返回相同 `PatchSubmission` envelope；读取工具仍按需可用，schema 只补充一次。来源缺口、语义问题及需要补充上下文不因此切换通道。不猜测字段或放宽图约束。相同被拒 corrections 复用准备后的草稿，不再次执行列表 add/remove；完整图校验仍每次重跑，补充上下文后可正常重试。换输出通道后仍重复同错则报告明确的无进展失败、保留候选；这是相同错误的退出条件，不是模型调用次数上限。
+
+### 错误定位与来源
+
+反馈最小项是 `message`，可定位时加 `path`，需要时加 `details`；不另维护错误码表或一套持久映射。字段错误给真实可写字段及必要 schema 提示，范围错误附 `required_context`。同一错误不同时重复为 `error` 和 `errors`。
+
+来源不足时返回实际 `before`、`after`、`missing_evidence_ids`、`unmapped_source_count`。代码用前后引用匹配草稿中的 retirement，唯一匹配时给 `/retirements/i`，不能匹配时用对象 ID 定位；不把内部编译后的 `changes[17]` 当成 Writer 可修改路径。
+
+例如 E_old 被两条后继边替代，缺 Q1：反馈指出两个实际后继，Writer 按支持含义给已有边的 `edge_updates[i].add_evidence` 或新边的 `create_edges[i].evidence_ids` 增补 Q1；仅在 explanation 写“已保留来源”无效。若 `unmapped_source_count > 0`，说明存在尚无可用 evidence ID 的精确来源，需要补齐证据上下文，不能猜 ID，也不能误认为来源已齐全。直接映射丢失来源与替代丢失来源走同一错误反馈。
 
 - Node Assessment：比较整合结果是否完整表达输入知识及差异，不重新认证原事实/理由。新运行输入不再要求逐 Rule rationale/decision 清单；旧 checkpoint 字段保留读兼容但不暴露在输出 schema。
 - Graph Assessment：只评估实际关系修改及必要影响；默认节点内容是前提。必要重构检查保义与新组织，不重审未变节点。
@@ -134,7 +177,7 @@ Q_A/Q_B 的正文在末尾各提供一次。根据主体含义，Writer 只需�
 
 ## 8 Review 入口与验证范围
 
-代码职责：`proposal_scope.py` 管理局部耦合与上下文反馈；`evidence_refs.py` 管理展示去重和精确归属；`relation_reads.py` 管理字段读取；`batch.submit_atomic` 统一原子校验；`reconciliation.py` 管理读工具和唯一最终结果。
+代码职责：`proposal_scope.py` 管理局部耦合与上下文反馈；`evidence_refs.py` 管理展示去重和精确归属；`relation_reads.py` 管理字段读取；`proposal_repair.py` 管理当前 Writer 被拒草稿、局部修正及可执行错误反馈；`batch.submit_atomic` 统一原子校验；`reconciliation.py` 管理读工具和唯一最终结果。
 
 正式 prompt 是 `src/cortex/capabilities/graph_merge/llm/prompts/` 中 incremental_consolidate、incremental_content_shared、incremental_node_assess、incremental_relation_shared、incremental_relation_write、incremental_relation_assess。文档不再维护另一份完整 prompt 副本。
 

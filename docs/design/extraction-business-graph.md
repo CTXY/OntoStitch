@@ -89,3 +89,15 @@ Actual assessment-only corrections include:
 - Schools 47: distinguish nullable school-name labels from identity and narrow count-rule scope, preserving the exact Gold counted operand.
 
 The final full test run passed 811 tests. Targeted lint and diff whitespace checks also passed. Remaining non-blocking review notes are redundant GenerationRules in simple lookups, DISTINCT wording precision and an optional metric business-scope edge. These remain visible for human review rather than being represented as perfect ontology recovery.
+
+## Database-level physical catalog preflight
+
+The offline supervisor builds and validates one physical catalog before starting case workers. A schema-only inspection first resolves actual identifiers and validates the complete physical graph, without row sampling or LLM calls. Row sampling and metadata attachment then run once; a manifest is published only after the resulting graph passes validation. A failure prevents case dispatch for that database.
+
+Workers use the existing `prepared_workspace` path, copying physical assets into their isolated workspaces. Case-specific value discovery, Gold JOIN evidence, semantic extraction, SQL replay and assessment remain local to each case. Reuse does not mark cases accepted or combine their sources. Prepared-catalog validation inspects schema without repeating row sampling. The shared manifest fingerprints database identity/scope, SQLite file size and modification time, descriptions, configured dimension values, root schema and asset files; mismatches stop reuse instead of silently running with stale or altered assets.
+
+Physical `joins_with` may represent a declared self-reference: the table endpoints can be identical, while column pairs express the two roles. Column existence/ownership, full equality keys, source preservation and constrained cardinality still apply. This is independent of business hierarchy acyclicity. A reversed self-reference reverses the entire composite key and its cardinality, not individual column pairs independently. Cross-table path search remains bounded and does not traverse self-loops as new tables.
+
+SQLite foreign-key table and column identifiers resolve to stored spelling using SQLite's ASCII case-insensitive comparison. Persisted IDs retain that spelling; this does not impose lowercase IDs or SQLite comparison rules on other databases.
+
+A fatal extraction report can legitimately contain no case results. The runner records its original errors and initialization stage without indexing `cases[0]`. Supervisor exit reporting retains existing diagnostic fields. No model retry can repair a structurally invalid physical catalog.

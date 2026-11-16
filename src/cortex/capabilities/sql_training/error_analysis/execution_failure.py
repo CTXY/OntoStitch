@@ -65,7 +65,8 @@ def analyze_execution_failure(
                 "error": errors[-1],
                 "instruction": (
                     "Return at least one confirmed error and cover it with Repair Groups. "
-                    "Use concise evidence from the supplied SQL and database error."
+                    "Correct the reported field while preserving supported errors and repairs. "
+                    "Only accepted_working_assets supply UPDATE bases; matched or draft assets do not."
                 ),
             }
         local_trace: dict[str, Any] = {}
@@ -79,7 +80,6 @@ def analyze_execution_failure(
                 },
             )
             row = rows[0] if rows and isinstance(rows[0], dict) else {}
-            row = _normalize_singleton_repair_group_fields(row)
             result = ExecutionFailureAnalysis.model_validate(row)
             _validate_execution_failure_bases(result, request.get("accepted_working_assets", []))
             if trace_capture is not None:
@@ -93,34 +93,6 @@ def analyze_execution_failure(
     raise ValueError(
         f"execution failure analysis failed after {max_attempts} attempts: {errors[-1]}"
     )
-
-
-def _normalize_singleton_repair_group_fields(row: dict[str, Any]) -> dict[str, Any]:
-    groups = row.get("repair_groups")
-    if not isinstance(groups, list):
-        return row
-    normalized = dict(row)
-    normalized_groups: list[Any] = []
-    changed = False
-    for group in groups:
-        if not isinstance(group, dict):
-            normalized_groups.append(group)
-            continue
-        error_ids = group.get("error_ids")
-        if not isinstance(error_ids, list) or len(error_ids) != 1:
-            normalized_groups.append(group)
-            continue
-        clean = dict(group)
-        if clean.pop("grouping_evidence", None) is not None:
-            changed = True
-        if clean.get("grouping_reason") not in (None, ""):
-            changed = True
-        clean["grouping_reason"] = ""
-        normalized_groups.append(clean)
-    if not changed:
-        return row
-    normalized["repair_groups"] = normalized_groups
-    return normalized
 
 
 def format_execution_failure_human_payload(payload: dict[str, Any]) -> str:
@@ -179,14 +151,17 @@ def _validate_execution_failure_bases(
         for asset in _sorted_assets(working_assets)
         if str(asset.get("id") or "").strip()
     }
-    for group in result.repair_groups:
+    for index, group in enumerate(result.repair_groups):
         if group.base_asset_id is None:
             continue
         asset = assets_by_id.get(group.base_asset_id)
+        expected_type = "concept" if group.owner.value == "semantic_mapping" else group.owner.value
+        allowed = sorted(key for key, value in assets_by_id.items() if str(value.get("node_type") or "") == expected_type)
         if asset is None:
             raise ValueError(
-                f"repair group {group.id} base_asset_id is not an accepted Working asset"
+                f"repair_groups[{index}].base_asset_id={group.base_asset_id!r} is not an accepted Working asset. "
+                f"Accepted {expected_type} IDs: {allowed}. Use an exact same-identity accepted ID, "
+                "or null when none exists. Retrieved/draft IDs are not accepted UPDATE bases."
             )
-        expected_type = "concept" if group.owner.value == "semantic_mapping" else group.owner.value
         if str(asset.get("node_type") or "") != expected_type:
             raise ValueError(f"repair group {group.id} base_asset_id type does not match owner")

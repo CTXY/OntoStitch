@@ -6,7 +6,7 @@ Assess proposed ontology knowledge for one NLQ–Gold SQL case independently. Se
 
 # Inputs
 
-units is the exact inventory. Each supplies candidate, optional accepted predecessor, quality_requirements, application_requirement and recorded context_facts. quality_rubric defines the applicable checks. Read related_knowledge and supplied relation contracts together with units; definitions need not be duplicated. Historical definitions are comparison evidence, not current assertions. A missing contract cannot have valid predicate_precision.
+units is the exact inventory. Each supplies candidate, optional accepted predecessor, quality_requirements, application_requirement, application_options and recorded context_facts. application_options lists mechanically legal labels, not a semantic verdict: choose only from it using the SQL evidence; inconclusive still needs a concrete explanation. quality_rubric defines the applicable checks. Read related_knowledge and supplied relation contracts together with units; definitions need not be duplicated. Historical definitions are comparison evidence, not current assertions. A missing contract cannot have valid predicate_precision.
 
 case and physical_context supply business/database evidence. attempts supplies all SQL verification for this candidate. context_facts establishes inclusion, not quality or application; actual presence overrides incomplete selection tracing, and explicit absence overrides selection. Do not invent inclusion paths. change_groups controls joint retention. round_baseline is an older comparison, not the accepted predecessor. fixed_targets and prior_evidence apply only when supplied.
 
@@ -34,6 +34,8 @@ For Concepts check request-relevant meaning, population and required matching be
 
 Return applied only for complete behavior and recorded inclusion in every attempt. Distinguish partial application, included-but-unimplemented behavior and missing attribution using the schema. not_applicable is allowed for deletions or semantic units without a current SQL obligation. An unrelated SQL error does not negate complete local application; whole-query equality does not prove it. Never combine behaviors from different attempts into one success.
 
+Use application_requirement for each individual unit, including edges: sql never permits not_applicable. Choose applied only with the required evidence; otherwise report partially_applied, not_applied, not_attributed or inconclusive with retrieval/selection/application feedback. Quality or target feedback does not replace application feedback. Do not choose applied solely to satisfy the output contract.
+
 Inspect every failed attempt's actual error or result difference. Do not dismiss a failure as merely a SQL-generator problem. If it prevents a unit's required output or behavior, that unit is not completely applied; identify the minimal actionable knowledge gap. A valid definition alone does not establish successful application. Preserve unrelated valid units and do not invent causality or business facts.
 
 ## 3. Targets and regression
@@ -46,6 +48,6 @@ Report only observed deterioration against supplied prior_evidence. Attribute it
 
 # Feedback and output
 
-Return only schema-conforming JSON covering every unit/target exactly once. quality_checks contains exactly quality_requirements. Overall quality is invalid if any required check is invalid, otherwise inconclusive if any is inconclusive, otherwise valid.
+Return only schema-conforming JSON covering every unit/target exactly once. quality_checks contains exactly quality_requirements. Mark each concrete quality defect on the relevant check and explain it in feedback. Do not output an overall quality field: code derives it from the checks. Preserve defects and feedback; omitting a redundant summary does not make a candidate acceptable.
 
 Every unsuccessful conclusion needs specific feedback: exact supplied node/relation ID, concrete gap, necessary semantic correction and correct behavior to preserve. Merge repeated instances of one problem; no passing-item narratives or per-attempt repetition. Do not weaken a substantive defect to fix format, expand targets or prescribe replacement graph edits. Couple only semantically inseparable units. The controller determines acceptance from these conclusions, SQL verification and group constraints.

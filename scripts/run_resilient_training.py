@@ -11,6 +11,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -44,16 +45,78 @@ def read(path):
     return json.loads(Path(path).read_text())
 
 
+def selected_key_slots(args):
+    available = range(len(read_key_slots(args.keys)))
+    selected = getattr(args, 'key_slots', None)
+    slots = tuple(available if selected is None else selected)
+    if not slots or len(slots) != len(set(slots)) or any(s not in available for s in slots):
+        raise ValueError('key_slots must contain distinct configured slot indices')
+    return slots
+
+
+def next_key_slot(args, current):
+    slots = selected_key_slots(args)
+    return slots[(slots.index(current) + 1) % len(slots)] if current in slots else slots[0]
+
+
+def key_slot_arguments(args):
+    slots = getattr(args, 'key_slots', None)
+    return ['--key-slots', *map(str, slots)] if slots is not None else []
+
+
+def prepared_catalog_arguments(args):
+    root = getattr(args, 'prepared_catalog', None)
+    return ['--prepared-catalog', str(root)] if root else []
+
+
+def merge_mode_arguments(args):
+    return ['--merge-http-mode', getattr(args, 'merge_http_mode', 'stream')]
+
+
+def prepare_catalog(args):
+    from cortex.capabilities.sql_training.pipeline.catalog_preflight import prepare_physical_catalog
+    load_dotenv('.env')
+    cfg = load_config(args.config)
+    engine = build_sql_extraction(cfg, workspace=args.prepared_catalog)
+    return prepare_physical_catalog(engine.runtime_config, engine.database, load_root_schema(),
+                                    args.prepared_catalog,
+                                    dimension_values_path=cfg.services.sql_training.dimension_values_path)
+
+
 def transient(reason):
+    if getattr(reason, 'retryable', True) is False:
+        return False
     message = f'{type(reason).__name__}: {reason}' if isinstance(reason, BaseException) else str(reason)
+    # Some gateways incorrectly report credential failures as HTTP 500.
+    # Replaying a complete Agent request cannot repair authentication.
+    if any(term in message.lower() for term in (
+        'failed to validate api key', 'invalid_api_key', 'incorrect api key',
+        'error code: 401', 'error code: 403',
+    )):
+        return False
     return any(word in message for word in (
         'ConnectionError', 'Timeout', 'timed out', 'RateLimitError',
         'Broken pipe', 'Connection reset', 'RemoteProtocolError',
         'incomplete chunked read', 'peer closed connection',
         'Error code: 408', 'Error code: 409', 'Error code: 429',
         'Error code: 500', 'Error code: 502', 'Error code: 503', 'Error code: 504',
-        'Upstream', 'Assessment output invalid',
+        'Upstream',
     ))
+
+
+def transport_error_details(error, secrets=()):
+    """Record causes instead of losing the socket error behind an SDK wrapper."""
+    chain, seen = [], set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        message = str(error)
+        for secret in secrets:
+            if secret:
+                message = message.replace(secret, '[redacted]')
+        message = re.sub(r'sk-[A-Za-z0-9_-]+', '[redacted]', message)
+        chain.append({'type': type(error).__name__, 'message': message[:1200]})
+        error = error.__cause__ or error.__context__
+    return chain
 
 
 def configuration(args, workspace):
@@ -68,10 +131,14 @@ def configuration(args, workspace):
     cfg = cfg.model_copy(update={
         'services': cfg.services.model_copy(update={'sql_training': train}),
         'llm': cfg.llm.model_copy(update={'model': args.model,
-            'api_key': slots[args.slot].api_key, 'timeout': 3600, 'max_retries': 1}),
+            'api_key': slots[args.slot].api_key, 'timeout': 3600,
+            'max_retries': getattr(args, 'sdk_retries', 1)}),
     })
     model = create_chat_model(cfg.llm, profile='sql_training')
     model.streaming = model.stream_usage = getattr(args, 'streaming', False)
+    if getattr(args, 'merge_transport', False):
+        timeout_type = type(model.root_client._client.timeout)
+        model.root_client.timeout = timeout_type(connect=30, write=120, read=3600, pool=60)
     return cfg, model
 
 
@@ -91,11 +158,19 @@ def observe(model, folder):
         req.extensions['audit_id'] = ident
         body = json.loads(req.content)
         write(wire / f'{ident:06}_request.json', {'host': urlparse(str(req.url)).hostname,
-              'time': time.time(), 'body': body})
+              'time': time.time(), 'body': body, 'request_bytes': len(req.content),
+              'timeout': req.extensions.get('timeout'),
+              'sdk_retry': req.headers.get('x-stainless-retry-count')})
 
     def response(resp):
         ident = resp.request.extensions.get('audit_id', 0)
-        if 'text/event-stream' in resp.headers.get('content-type', ''):
+        streamed = 'text/event-stream' in resp.headers.get('content-type', '')
+        write(wire / f'{ident:06}_headers.json', {
+            'time': time.time(), 'seconds': time.monotonic() - starts.get(ident, time.monotonic()),
+            'status': resp.status_code,
+            'headers': {k: resp.headers[k] for k in ('content-type', 'server', 'via', 'cf-ray', 'x-request-id', 'transfer-encoding') if k in resp.headers},
+        })
+        if streamed:
             upstream = resp.stream
             # Respect the SDK's actual HTTP client namespace (some gateways
             # bundle an httpx-compatible fork); its stream type is checked by
@@ -104,11 +179,26 @@ def observe(model, folder):
 
             class RecordingStream(stream_base):
                 def __iter__(self):
-                    with (wire / f'{ident:06}_stream.sse').open('wb') as output:
-                        for chunk in upstream:
-                            output.write(chunk)
-                            output.flush()
-                            yield chunk
+                    progress = {'bytes': 0, 'chunks': 0, 'completed': False}
+                    last_saved = 0
+                    try:
+                        with (wire / f'{ident:06}_stream.sse').open('wb') as output:
+                            for chunk in upstream:
+                                output.write(chunk)
+                                output.flush()
+                                progress.setdefault('first_byte_time', time.time())
+                                progress.update(last_byte_time=time.time(), bytes=progress['bytes'] + len(chunk), chunks=progress['chunks'] + 1)
+                                if time.monotonic() - last_saved >= 5:
+                                    write(wire / f'{ident:06}_progress.json', progress)
+                                    last_saved = time.monotonic()
+                                yield chunk
+                        progress['completed'] = True
+                    except Exception as error:
+                        secret = model.openai_api_key.get_secret_value() if getattr(model, 'openai_api_key', None) else ''
+                        progress['error_chain'] = transport_error_details(error, [secret])
+                        raise
+                    finally:
+                        write(wire / f'{ident:06}_progress.json', progress)
 
                 def close(self):
                     upstream.close()
@@ -138,6 +228,20 @@ def observe(model, folder):
                 body = {'non_json_response': True, 'characters': len(resp.content)}
         write(wire / f'{ident:06}_response.json', {'status': resp.status_code,
             'seconds': time.monotonic() - starts.get(ident, time.monotonic()), 'body': body})
+        if streamed and resp.is_success:
+            from cortex.infrastructure.llm.stream_audit import validate_stream_completion
+            try:
+                validate_stream_completion(body)
+            except ConnectionError as error:
+                progress_path = wire / f'{ident:06}_progress.json'
+                progress = read(progress_path)
+                progress.update(model_complete=False, error_chain=transport_error_details(error))
+                write(progress_path, progress)
+                raise
+            progress_path = wire / f'{ident:06}_progress.json'
+            progress = read(progress_path)
+            progress['model_complete'] = True
+            write(progress_path, progress)
 
     model.root_client._client.event_hooks['request'] = [request]
     model.root_client._client.event_hooks['response'] = [response]
@@ -155,6 +259,10 @@ def case_worker(args):
     observe(model, folder)
     schema = load_root_schema()
     engine = build_sql_extraction(cfg, workspace=folder / 'workspace', llm=model)
+    if getattr(args, 'prepared_catalog', None):
+        from cortex.capabilities.sql_training.pipeline.catalog_preflight import validate_prepared_files
+        validate_prepared_files(args.prepared_catalog)
+        engine.prepared_workspace = args.prepared_catalog
     retry = 0
     while True:
         roots = list((folder / 'workspace/train_runs').glob('*/cases/*/case.json'))
@@ -164,6 +272,13 @@ def case_worker(args):
             result = extract_training(engine, (record,), schema, GraphState(graph=GraphSpace()))
             write(folder / 'extraction_result.json', {**result.model_dump(mode='json'), 'status': result.status.value})
             roots = list((folder / 'workspace/train_runs').glob('*/cases/*/case.json'))
+            if not result.evaluation_report.cases:
+                report = result.evaluation_report
+                reason = '; '.join(report.errors) or 'Extraction stopped before any case result was produced'
+                write(folder / 'status.json', {'status': 'needs_attention', 'source_id': record.source_id,
+                    'stage': 'extraction_initialization', 'reason': reason, 'errors': report.errors,
+                    'slot': args.slot, 'updated': time.time()})
+                return
             case = result.evaluation_report.cases[0].model_dump(mode='json')
             passed = case['passed']
             reason = case.get('message') or ''
@@ -202,6 +317,10 @@ def case_worker(args):
 
 
 def merge_worker(args):
+    # One retry owner: preserve the dialogue in invoke_with_recovery, rather
+    # than silently duplicating each long request inside the SDK as well.
+    args.streaming = getattr(args, 'merge_http_mode', 'stream') == 'stream'
+    args.sdk_retries, args.merge_transport = 0, True
     from audit_incremental_merge import audit_result
 
     from cortex.capabilities.graph_merge.integration.incremental import (
@@ -282,19 +401,19 @@ def merge_worker(args):
             nonlocal model
             if not transient(error):
                 return None
-            previous_streaming = bool(getattr(agent.llm, 'streaming', args.streaming))
             write(out / 'last_transport_error.json', {
                 'type': type(error).__name__, 'error': str(error),
+                'error_chain': transport_error_details(error, [s.api_key.get_secret_value() for s in read_key_slots(args.keys)]),
+                'streaming': bool(getattr(agent.llm, 'streaming', args.streaming)),
                 'slot': args.slot, 'updated': time.time(),
                 'recovery': 'Preserve current Agent messages/tool results; replace client only',
             })
             time.sleep(30)
-            args.slot = (args.slot + 1) % len(read_key_slots(args.keys))
+            args.slot = next_key_slot(args, args.slot)
             _cfg, model = configuration(args, args.output / 'merge')
-            if any(term in str(error) for term in ('Broken pipe', 'incomplete chunked read', 'peer closed connection')):
-                # Some upstream bridges fail while forwarding SSE. Retain the
-                # same dialogue/model/service and try its other HTTP mode.
-                model.streaming = model.stream_usage = not previous_streaming
+            # Preserve the selected HTTP mode during recovery. A key rotation
+            # must not silently undo a controlled stream/non-stream comparison.
+            model.streaming = model.stream_usage = args.streaming
             observe(model, out)
             status = read(args.output / 'merge_status.json')
             write(args.output / 'merge_status.json', {**status, 'slot': args.slot, 'updated': time.time()})
@@ -331,7 +450,7 @@ def merge_worker(args):
                 if not transient(error):
                     raise
                 time.sleep(30)
-                args.slot = (args.slot + 1) % len(read_key_slots(args.keys))
+                args.slot = next_key_slot(args, args.slot)
                 _cfg, model = configuration(args, args.output / 'merge')
                 observe(model, out)
     write(args.output / 'merged_state.json', current.model_dump(mode='json'))
@@ -423,12 +542,15 @@ def watch(args):
             else:
                 raise RuntimeError('Merge process did not exit after transport recovery')
             write(args.output / 'progress.json', {'phase': 'recovering', 'updated': time.time()})
-            slot = (read(args.output / 'merge_status.json').get('slot', 0) + 1) % len(read_key_slots(args.keys))
+            slot = next_key_slot(args, read(args.output / 'merge_status.json').get('slot', args.slot))
             with (args.output / 'supervisor.log').open('a') as log:
                 child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
                     '--output', str(args.output), '--config', str(args.config),
                     '--keys', str(args.keys), '--model', args.model, '--slot', str(slot),
                     '--merge-batch-size', str(args.merge_batch_size),
+                    *key_slot_arguments(args),
+                    *prepared_catalog_arguments(args),
+                    *merge_mode_arguments(args),
                     *(['--streaming'] if args.streaming else [])],
                     stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy(), start_new_session=True)
             write(args.output / 'supervisor.pid', child.pid)
@@ -436,7 +558,16 @@ def watch(args):
 
 
 def supervise(args):
-    slots = read_key_slots(args.keys)
+    slots = selected_key_slots(args)
+    if getattr(args, 'prepared_catalog', None):
+        write(args.output / 'progress.json', {'phase': 'catalog_preflight', 'updated': time.time()})
+        try:
+            summary = prepare_catalog(args)
+            write(args.output / 'catalog_preflight.json', {'status': 'passed', **summary})
+        except Exception as error:
+            write(args.output / 'progress.json', {'phase': 'needs_attention', 'stage': 'catalog_preflight',
+                'error_type': type(error).__name__, 'reason': str(error), 'updated': time.time()})
+            raise
     manifest = read(args.output / 'manifest.json')
     waiting = [str(x) for x in manifest['question_ids'] if not (args.output / 'cases' / str(x) / 'status.json').exists()
                or read(args.output / 'cases' / str(x) / 'status.json')['status'] not in ('passed', 'needs_review')]
@@ -453,7 +584,7 @@ def supervise(args):
     watchdog_retries = set()
     states = {str(i): read(args.output / 'cases' / str(i) / 'status.json') if (args.output / 'cases' / str(i) / 'status.json').exists() else {'status': 'queued'} for i in manifest['question_ids']}
     while waiting or active:
-        for slot in range(len(slots)):
+        for slot in slots:
             if slot in active or not waiting:
                 continue
             ident = waiting.pop(0)
@@ -462,6 +593,7 @@ def supervise(args):
             command = [sys.executable, str(Path(__file__).resolve()), '--mode', 'case', '--case', ident,
                 '--slot', str(slot), '--output', str(args.output), '--config', str(args.config),
                 '--keys', str(args.keys), '--model', args.model,
+                *prepared_catalog_arguments(args),
                 *(['--streaming'] if getattr(args, 'streaming', False) else [])]
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy())
             active[slot] = (ident, process)
@@ -484,7 +616,8 @@ def supervise(args):
                 waiting.insert(0, ident)
                 write(folder / 'status.json', {'status': 'retrying', 'slot': slot, 'reason': 'Resuming after stalled transport', 'updated': time.time()})
             elif exit_code and not ((folder / 'status.json').exists() and read(folder / 'status.json').get('data_review_hold')):
-                write(folder / 'status.json', {'status': 'needs_attention', 'exit_code': exit_code, 'slot': slot})
+                previous = read(folder / 'status.json') if (folder / 'status.json').exists() else {}
+                write(folder / 'status.json', {**previous, 'status': 'needs_attention', 'exit_code': exit_code, 'slot': slot})
             del active[slot]
         states = {str(i): read(args.output / 'cases' / str(i) / 'status.json') if (args.output / 'cases' / str(i) / 'status.json').exists() else {'status': 'queued'} for i in manifest['question_ids']}
         write(registry, {str(s): {'case': v[0], 'pid': v[1].pid} for s, v in active.items()})
@@ -493,7 +626,9 @@ def supervise(args):
     if any(row['status'] == 'needs_attention' for row in states.values()):
         write(args.output / 'progress.json', {'phase': 'needs_attention', 'cases': states, 'updated': time.time()})
         return
-    args.slot = getattr(args, 'slot', 0) % len(slots)
+    args.slot = getattr(args, 'slot', slots[0])
+    if args.slot not in slots:
+        args.slot = slots[0]
     write(args.output / 'progress.json', {'phase': 'merge', 'updated': time.time()})
     try:
         merge_worker(args)
@@ -512,14 +647,25 @@ def main():
     parser.add_argument('--keys', type=Path, required=True)
     parser.add_argument('--model', default='deepseek-v4-pro')
     parser.add_argument('--slot', type=int, default=0)
+    parser.add_argument('--key-slots', type=int, nargs='+', default=None,
+        help='Restrict extraction concurrency and merge failover to these credential slot indices')
     parser.add_argument('--case')
+    parser.add_argument('--prepared-catalog', type=Path, default=None,
+        help='Reuse a validated database-level physical catalog; supervise defaults to OUTPUT/physical_catalog')
     parser.add_argument('--merge-batch-size', type=int, default=10,
         help='Case graphs per merge invocation; 0 combines all remaining cases')
+    parser.add_argument('--merge-http-mode', choices=['stream', 'nonstream'], default='stream',
+        help='Merge HTTP mode; keep the chosen mode on retries. Extraction settings are separate.')
     parser.add_argument('--streaming', action='store_true', help='Use streamed completions to keep long gateway responses active; preserve SSE/usage in wire audit')
     args = parser.parse_args()
     if args.merge_batch_size < 0:
         parser.error('--merge-batch-size must be nonnegative')
     args.output, args.config, args.keys = args.output.resolve(), args.config.resolve(), args.keys.resolve()
+    if args.mode == 'supervise' and args.prepared_catalog is None:
+        args.prepared_catalog = args.output / 'physical_catalog'
+    slots = selected_key_slots(args)
+    if args.slot not in slots:
+        args.slot = slots[0]
     os.environ['LANGSMITH_TRACING'] = os.environ['LANGCHAIN_TRACING_V2'] = 'false'
     if args.mode == 'supervise':
         with (args.output / '.supervisor.lock').open('a') as lock:

@@ -12,6 +12,25 @@ from cortex.infrastructure.llm.key_slots import read_key_slots
 from cortex.schema import load_root_schema
 
 
+def test_database_key_pool_stays_within_assigned_slots(tmp_path):
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace
+    spec = importlib.util.spec_from_file_location('restricted_key_pool', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    keys = tmp_path / 'keys'
+    keys.write_text('\n'.join(f'test-key-{i}' for i in range(8)))
+    args = SimpleNamespace(keys=keys, key_slots=[2, 5, 7])
+    assert runner.selected_key_slots(args) == (2, 5, 7)
+    assert [runner.next_key_slot(args, i) for i in [2, 5, 7]] == [5, 7, 2]
+    assert runner.key_slot_arguments(args) == ['--key-slots', '2', '5', '7']
+    for invalid in [[], [2, 2], [8], [-1]]:
+        args.key_slots = invalid
+        with pytest.raises(ValueError):
+            runner.selected_key_slots(args)
+
+
 def test_key_slots_are_ordered_private_and_validate_duplicates(tmp_path):
     path = tmp_path / 'pool.keys'
     path.write_text('# local configuration\nfirst-test-credential\n\nsecond-test-credential\n')
@@ -91,7 +110,9 @@ def test_sdk_retries_identical_request_and_audit_counts_each_attempt(tmp_path, m
     assert model.invoke([HumanMessage(content='offline transport test')]).content == 'ok'
     assert len(requests) == 3 and len(set(requests)) == 1
     logs = list((tmp_path / 'wire').glob('*.json'))
-    assert len(logs) == 6
+    assert len(list((tmp_path / 'wire').glob('*_request.json'))) == 3
+    assert len(list((tmp_path / 'wire').glob('*_response.json'))) == 3
+    assert len(list((tmp_path / 'wire').glob('*_headers.json'))) == 3
     assert all('test-private-credential' not in p.read_text() for p in logs)
     client.close()
 
@@ -108,6 +129,8 @@ def test_transient_connection_exception_does_not_require_class_name_in_message()
     assert runner.transient(RuntimeError('[Errno 32] Broken pipe'))
     assert runner.transient(RuntimeError('Connection reset by peer'))
     assert not runner.transient(RuntimeError('APIError: insufficient balance'))
+    assert not runner.transient(RuntimeError("Error code: 500 - Failed to validate API key"))
+    assert not runner.transient(RuntimeError('Error code: 401 - invalid_api_key'))
 
 
 def test_completed_adopted_worker_releases_slot_even_if_pid_still_exists(tmp_path):
@@ -259,3 +282,37 @@ def test_multi_graph_input_preserves_per_case_relations_and_metadata():
         if n.name == 'parent':
             refs = n.properties['relation_metadata'][0]['edges']
             assert all(any(e.id == ref and e.to_node_id == n.id for e in bundle.graph.edges) for ref in refs)
+
+
+def test_empty_fatal_report_retains_original_error_without_indexing_cases(tmp_path,monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace as N
+    spec=importlib.util.spec_from_file_location('empty_report_runner',Path(__file__).parents[1]/'scripts/run_resilient_training.py')
+    runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
+    folder=tmp_path/'cases/one';folder.mkdir(parents=True)
+    runner.write(folder/'input.json',{'source_id':'one','question':'Count rows','sql':'SELECT 1'})
+    report=N(cases=(),errors=["ValueError: unresolved database identifier"])
+    result=N(evaluation_report=report,status=N(value='failed'),model_dump=lambda **kw:{'evaluation_report':{'cases':[],'errors':report.errors}})
+    monkeypatch.setattr(runner,'configuration',lambda *a:(N(),N()))
+    monkeypatch.setattr(runner,'observe',lambda *a:None)
+    monkeypatch.setattr(runner,'build_sql_extraction',lambda *a,**k:N())
+    monkeypatch.setattr(runner,'extract_training',lambda *a:result)
+    runner.case_worker(N(output=tmp_path,case='one',slot=0))
+    status=runner.read(folder/'status.json')
+    assert status['stage']=='extraction_initialization'
+    assert status['errors']==report.errors and status['reason']==report.errors[0]
+
+
+def test_preflight_failure_dispatches_no_case_workers(tmp_path,monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace as N
+    spec=importlib.util.spec_from_file_location('preflight_dispatch_runner',Path(__file__).parents[1]/'scripts/run_resilient_training.py')
+    runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
+    keys=tmp_path/'pool.keys';keys.write_text('test-key')
+    monkeypatch.setattr(runner,'prepare_catalog',lambda args:(_ for _ in ()).throw(ValueError('invalid physical schema')))
+    monkeypatch.setattr(runner.subprocess,'Popen',lambda *a,**k:pytest.fail('Do not dispatch after preflight failure'))
+    with pytest.raises(ValueError,match='invalid physical schema'):
+        runner.supervise(N(output=tmp_path,keys=keys,prepared_catalog=tmp_path/'physical'))
+    assert runner.read(tmp_path/'progress.json')['stage']=='catalog_preflight'

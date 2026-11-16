@@ -96,48 +96,49 @@ class CaseServices:
         )
 
         input_contract = ontology_contract(graph.schema)
-        self.context_id = fingerprint(
-            {
-                "config": config.model_dump(mode="json"),
-                "source": record,
-                "data": self._data_stamp,
-                "gate_policy": "stable-v1",
-                "assessment_policy": assessment_policy_id(),
-                "asset_contract": ONTOLOGY_ASSET_DEFINITION_VERSION,
-                "graph_schema": graph.schema_version,
-                "graph_storage_contract": "inline-node-conflicts-v1",
-                "learning_input_contract": fingerprint(input_contract),
-                "learning_guides": {
-                    kind: fingerprint(render_type_guide(input_contract, kind))
-                    for kind in input_contract["editable_node_types"]
-                },
-                "learning_write_guides": {
-                    kind: fingerprint(render_write_guide(input_contract, kind))
-                    for kind in ("dimension_value", "relations")
-                },
-                "learning_rendered_prompts": {
-                    mode: fingerprint(system_prompt(mode, graph.schema))
-                    for mode in ("direct", "repair")
-                },
-                "learning_prompts": {
-                    name: prompt_fingerprint(name)
-                    for name in (
-                        "learning_system",
-                        "learning_direct",
-                        "learning_repair",
-                        "learning_assessment",
-                    )
-                },
-                "generation_prompt": fingerprint(
-                    (
-                        Path(__file__).parents[1]
-                        / "validation"
-                        / "prompts"
-                        / "ontology_query_generation.yaml"
-                    ).read_text()
-                ),
-            }
-        )
+        # Keep the exact compatibility inputs available for audited, explicit
+        # policy upgrades; normal resume still requires an identical fingerprint.
+        self.context_contract = {
+            "config": config.model_dump(mode="json"),
+            "source": record,
+            "data": self._data_stamp,
+            "gate_policy": "stable-v1",
+            "assessment_policy": assessment_policy_id(),
+            "asset_contract": ONTOLOGY_ASSET_DEFINITION_VERSION,
+            "graph_schema": graph.schema_version,
+            "graph_storage_contract": "inline-node-conflicts-v1",
+            "learning_input_contract": fingerprint(input_contract),
+            "learning_guides": {
+                kind: fingerprint(render_type_guide(input_contract, kind))
+                for kind in input_contract["editable_node_types"]
+            },
+            "learning_write_guides": {
+                kind: fingerprint(render_write_guide(input_contract, kind))
+                for kind in ("dimension_value", "relations")
+            },
+            "learning_rendered_prompts": {
+                mode: fingerprint(system_prompt(mode, graph.schema))
+                for mode in ("direct", "repair")
+            },
+            "learning_prompts": {
+                name: prompt_fingerprint(name)
+                for name in (
+                    "learning_system",
+                    "learning_direct",
+                    "learning_repair",
+                    "learning_assessment",
+                )
+            },
+            "generation_prompt": fingerprint(
+                (
+                    Path(__file__).parents[1]
+                    / "validation"
+                    / "prompts"
+                    / "ontology_query_generation.yaml"
+                ).read_text()
+            ),
+        }
+        self.context_id = fingerprint(self.context_contract)
         self._index = evidence.read_index()
         self._restore_completed_validations()
 

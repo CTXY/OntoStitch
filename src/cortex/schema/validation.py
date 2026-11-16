@@ -151,8 +151,8 @@ def validate_graph_space(graph: GraphSpace, schema: SchemaDefinition, *, metadat
 
 
 def _validate_physical_join(edge: GraphEdge, nodes: dict) -> None:
-    if edge.from_node_id == edge.to_node_id:
-        raise GraphSchemaError("joins_with requires distinct physical table endpoints")
+    # A declared self-reference connects different row roles in the same table.
+    # Physical equality edges do not impose acyclicity on the business ontology.
     pairs = edge.properties.get("column_pairs")
     if not pairs:
         raise GraphSchemaError("joins_with requires non-empty column_pairs")

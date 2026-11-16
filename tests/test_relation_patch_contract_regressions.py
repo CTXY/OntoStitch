@@ -101,16 +101,18 @@ def test_edge_merge_schema_explains_edge_ids_and_separate_property_update():
     assert 'edge_updates using id' in fields['survivor_id']['description']
 
 
-def test_writer_edge_merge_example_matches_actual_patch_schema():
+def test_writer_examples_match_actual_submission_schema():
     import json
     import re
     from importlib.resources import files
     text = files('cortex.capabilities.graph_merge.llm.prompts').joinpath('incremental_relation_write.md').read_text()
-    example = json.loads(re.search(r'```json\n(.*?)\n```', text, re.S).group(1))
-    patch = RelationPatch.model_validate(example['patch'])
-    assert patch.edge_updates[0].id == patch.edge_merges[0].survivor_id
-    assert patch.edge_merges[0].source_ids == ('E_other',)
-    assert patch.edge_updates[0].properties['description']
+    from cortex.capabilities.graph_merge.integration.proposal_repair import PatchSubmission
+    examples = [PatchSubmission.model_validate(json.loads(raw)) for raw in re.findall(r'```json\n(.*?)\n```', text, re.S)]
+    creation = next(e.patch for e in examples if e.patch and e.patch.create_edges)
+    update = next(e.patch for e in examples if e.patch and e.patch.edge_updates)
+    assert creation.create_edges[0].evidence_ids and creation.create_edges[0].properties['description']
+    assert update.edge_updates[0].add_evidence and update.edge_updates[0].properties['description']
+    assert any(e.corrections for e in examples)
 
 
 def test_validation_feedback_keeps_all_paths_without_echoing_patch():

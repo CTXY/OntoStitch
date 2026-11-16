@@ -59,3 +59,26 @@ def test_unrecoverable_error_is_not_retried():
     with pytest.raises(ValueError, match="invalid configuration"):
         invoke_with_recovery(agent, [], [], config={})
     assert len(model.requests) == 1
+
+
+def test_repeated_upstream_truncation_stops_without_restarting_whole_merge():
+    from cortex.capabilities.graph_merge.llm.transport import TransportRecoveryStopped
+    from cortex.infrastructure.llm.stream_audit import UpstreamResponseIncomplete
+    calls=[]
+    class Failed:
+        def invoke(self,messages,config=None):
+            calls.append(list(messages));raise UpstreamResponseIncomplete('Upstream stream truncated')
+    recovered=[];model=Failed()
+    def recover(error):recovered.append(error);return model
+    agent=SimpleNamespace(llm=model,recover_transport=recover)
+    messages=[ToolMessage('Previously read evidence',tool_call_id='read')]
+    with pytest.raises(TransportRecoveryStopped) as failure:
+        invoke_with_recovery(agent,[],messages,config={})
+    assert len(calls)==3 and len(recovered)==2
+    assert all(c==messages for c in calls)
+    assert failure.value.retryable is False
+    import importlib.util
+    from pathlib import Path
+    spec=importlib.util.spec_from_file_location('terminal_transport_runner',Path(__file__).parents[1]/'scripts/run_resilient_training.py')
+    runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
+    assert not runner.transient(failure.value)

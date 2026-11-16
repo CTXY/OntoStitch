@@ -36,9 +36,13 @@ def validate_rewrite_sources(context, proposal, preview):
             target = aliases.get(key, key)
             if (kind, key) in rewritten or target not in results:
                 continue
-            if element_sources(original) - element_sources(results[target]):
-                raise ValueError(
-                    f"Direct {kind} mapping {key} loses exact SourceReferences; preserve them or record an explicit source disposition."
+            missing = element_sources(original) - element_sources(results[target])
+            if missing:
+                from cortex.capabilities.graph_merge.integration.models import Element
+                raise SourceCoverageError(
+                    f"Direct {kind} mapping {key} loses exact SourceReferences; preserve them or record an explicit source disposition.",
+                    before=(Element(kind=kind, id=key),),
+                    after=(Element(kind=kind, id=target),), missing=missing,
                 )
     for index, change in enumerate(proposal.changes):
         if not change.after:

@@ -65,3 +65,50 @@ card_games第六批的Writer提交`failure: "null"`，被当成真实失败退�
 新增测试覆盖字段错误反馈、同一episode纠正后完成，以及已有真实failure终止行为。后台以runtime_r3恢复，和runtime_r2相比仅修改BatchResult契约模块；旧运行与调用记录保留。最终成功需要后续Node/Graph Assessment与来源审计，不能由字段修复自动推出。
 
 financial测试评测单独位于`output/financial_online_v88`：53个固定test IDs与53个train IDs不相交；使用全量training最终图的冻结副本。一跳语义检索、问题过滤、Simulator选项选择、按适用性提供GenerationRule，随后full_schema + downstream_guidance baseline生成一次SQL并进行完整结果行集合相等评测。失败case计入总分母，仅传输错误可重试；未完成前不报告最终EA。模型deepseek-v4-pro、thinking关闭、并发8，配置和图哈希均有记录。
+
+## card_games 创建接口受控验证（v89，2026-11-16）
+
+修改前代码已提交并推送 GitHub checkpoint `16f3547`。三个 subagent 审查了创建/更新契约、纠错草稿与来源反馈，实施后再次审查。最终相关回归 **242 passed**；生产代码没有 case-specific 分支。
+
+重建 batch-0006 / structure-0-3 的原候选图，使用历史首次失败的 `new_edges` 提案作为明确标记的模拟种子，由生产代码产生真实拒绝反馈，再调用真实模型恢复。模拟种子不计模型调用。最终 `correction_r4` 使用冻结代码（哈希可核对），一次真实 Writer 返回完整合法 Patch，一次 Graph Assessment 返回 accept；输入 **20,501**、输出 **2,876** tokens，HTTP 响应时间合计 **165.72 秒**。
+
+新增 `One output row per artist → applies_to → format`；局部关系9→10。原322节点和479边全部未改；新增边保留 bird-card_games-520 的 QA/qa 两条精确来源。Writer略微改写description，因此测试脚本的逐字断言失败；保留真实输出并仅续跑Assessment，未重跑Writer或人工修改候选，语义评估通过。
+
+失败实验也保留：local_r1自主检查返回空修改、跳过Assessment，不能证明新边创建；correction_r1/r2/r3观察到reasoning中的正确意图与HTTP工具参数不一致，均停止，没有创建候选。操作分型让必填字段明确，但仍不足以保证服务输出正确。最终恢复复用纯JSON通道，保留相同schema及完整校验，不靠猜字段或放宽约束。此次真实成功使用完整一条边Patch，不能声称模型成功执行了corrections.move；该操作有真实数据机械回放和回归覆盖。
+
+所有实验共 **15 HTTP尝试**，12次有usage，已知输入 **129,864**、输出 **30,546** tokens；3次在途终止用量未知，不计为零。最终成功为固定错误提案的恢复验证，不是完整merge效果或严格的自主发现A/B。自主检查输入缺少原两个related_decisions导航信号；原候选无冲突节点，不能据此宣称通过冲突重构压力测试。
+
+产物：`output/merge_contract_v89/index.html`、`correction_r4/graph.html`、`correction_r4/change_summary.json`、`probe_costs.json`。本轮没有将隔离测试结果替换到完整后台合并工作区。
+
+## card_games transport recovery (v92, 2026-11-16)
+
+Historical non-streaming calls repeatedly lost the connection around 420 seconds despite a 3600-second client timeout. The reconstructed failed body was about 111 KB (49 nodes, 52 edges, 56 evidence entries); larger bodies had already succeeded, so these logs do not establish a hard input-size limit. Thinking was explicitly disabled, but a successful call still returned 33,819 output tokens over 422 seconds. SDK retry=1 duplicated a long HTTP attempt before dialogue-level key rotation. Generic `Connection error` logging concealed the cause and never activated the previous string-based streaming toggle.
+
+A same-body SSE probe exposed server-sent `[Errno 32] Broken pipe` and `upstream_stream_truncated`. Its first HTTP-only success marker was corrected to failure: a closed HTTP stream is not a complete model result. The exact intermediary causing every historical 420-second failure remains unknown; the server's upstream failure is directly observed.
+
+Merge now requests SSE, uses connect/write/read/pool timeouts of 30/120/3600/60 seconds, and leaves retries to the same-dialogue recovery loop (SDK retries=0). Audit stores response-header timing, streamed byte/chunk progress and redacted underlying exception chains. HTTP-200 SSE errors or missing terminal completion raise a transport failure before any partial response reaches Agent decisions. Read/graph tools, model, prompts, semantic iteration limits and graph quality checks are unchanged.
+
+24 transport/recovery tests passed, including fragmented tool arguments, SDK compatibility, mid-stream socket failure, error events after valid-looking tool JSON, silent incomplete EOF, provenance-safe dialogue recovery and credential redaction. Real SSE ping succeeded. The original large-body probe failed upstream, was retained, and its partial result was rejected by the new guard without executing graph tools. Production then produced multiple complete SSE responses and advanced accepted checkpoints.
+
+Checkpoints 18 and 19 were backed up. The transport rollout preserves the original accepted schema and merge implementation fingerprint; the frozen-runtime diff consists only of `scripts/run_resilient_training.py` and `src/cortex/infrastructure/llm/stream_audit.py`. Graph and exact-source preservation audits passed, and all 96 input graphs plus five published batch states retained their hashes. Detailed measurements, raw probe, loaded-runtime manifest and current status are under `output/card_transport_v92`. This establishes functioning recovery, not a guarantee that the external provider will never truncate another response.
+
+## Transport comparison and execution-failure contract boundary (v93)
+
+card_games was paused at accepted revision 25 before further comparisons. The exact failed request was about 76.6 KB. Single-attempt tests used the same provider, model and key slot; no graph tools were executed by the probes.
+
+| Comparison | Elapsed | Actual result |
+| --- | ---: | --- |
+| Original tool output, SSE | 10.34 s | Upstream truncation |
+| JSON result output, SSE | 13.92 s | Upstream truncation |
+| Original SSE request bypassing local proxy | 5.84 s | Upstream truncation |
+| Original tools, non-streaming | 324.82 s | Complete response, but invalid submission: missing `patch.explanation` |
+| Original SSE request repeated after that response | 24.72 s | Upstream truncation |
+| JSON result output with read tools, non-streaming | 255.30 s | Complete response with two schema-valid `inspect_graph` calls |
+
+The last test proves transport and read-call formatting, not completion of graph repair. The malformed submission in the first non-streaming response remains rejected by the normal contract. Neither HTTP 200 nor provider response-ID prefixes establish a valid result or locate the exact failing upstream component. The evidence is consistent with intermittent/provider-link instability; it does not establish a permanent endpoint failure or an input-size cap.
+
+HTTP mode is now explicit (`--merge-http-mode`) and survives client replacement. After three consecutive connection failures for the same logical request, recovery exits with a non-retryable transport error and retains the checkpoint. The outer runner cannot restart that failure indefinitely. This is a network-failure safeguard, not a semantic model-call or training-round limit. Successful model responses reset the logical-request boundary.
+
+card_games resumes from the unchanged revision-25 checkpoint in non-streaming mode. The frozen runtime preserves the previous graph schema, merge logic and prompts, overlaying only the runner and transport helper. All 96 case states and five published batch states are hashed; restored lineage and exact-source coverage pass before launch. Detailed logs and manifests are in `output/card_transport_v93`.
+
+football case1058 exposed a separate parser-boundary defect: singleton repair-group annotations were normalized only after nested Pydantic parsing could already reject them. Normalization now runs before validation and removes only inapplicable multi-error annotations; it preserves the error, owner and repair instruction. Invalid `base_asset_id` is still rejected, with its exact field path and the allowed accepted IDs; retrieved or draft nodes never become accepted UPDATE bases automatically. The real resumed case passed and its coordinator/watchdog resumed. Other database workers were left running. The selected transport/contract/runner regression suite reports 29 passed.

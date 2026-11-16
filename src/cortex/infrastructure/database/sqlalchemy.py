@@ -27,15 +27,13 @@ class SQLAlchemyDatabase:
         self._columns_cache: dict[str, dict[str, dict[str, Any]]] = {}
 
     def introspect_catalog(
-        self, *, include_tables: list[str] | None = None
+        self, *, include_tables: list[str] | None = None, sample_values: bool = True
     ) -> CatalogSnapshot:
         inspector = inspect(self.engine)
-        include = set(include_tables or [])
-        table_names = [
-            table_name
-            for table_name in inspector.get_table_names()
-            if not include or table_name in include
-        ]
+        names = inspector.get_table_names()
+        insensitive = self.engine.dialect.name == "sqlite"
+        include = {_catalog_name(n, names, insensitive) for n in include_tables or []}
+        table_names = [n for n in names if not include or n in include]
         tables: list[TableProfile] = []
         columns: list[ColumnProfile] = []
         joins: list[JoinProfile] = []
@@ -44,17 +42,22 @@ class SQLAlchemyDatabase:
                 inspector.get_pk_constraint(table_name).get("constrained_columns") or []
             )
             foreign_keys = inspector.get_foreign_keys(table_name)
+            local_columns = self._columns_for_table(inspector, table_name)
             fk_columns = {
-                column
+                _catalog_name(column, local_columns, insensitive)
                 for fk in foreign_keys
                 for column in fk.get("constrained_columns") or []
             }
             for fk in foreign_keys:
                 referred_table = fk.get("referred_table")
-                if not referred_table or (include and referred_table not in include):
+                if not referred_table:
                     continue
-                left_columns = fk.get("constrained_columns") or []
-                right_columns = fk.get("referred_columns") or []
+                referred_table = _catalog_name(referred_table, names, insensitive)
+                if include and referred_table not in include:
+                    continue
+                target_columns = self._columns_for_table(inspector, referred_table)
+                left_columns = [_catalog_name(n, local_columns, insensitive) for n in fk.get("constrained_columns") or []]
+                right_columns = [_catalog_name(n, target_columns, insensitive) for n in fk.get("referred_columns") or []]
                 joins.append(
                     JoinProfile(
                         from_table=table_name,
@@ -78,7 +81,7 @@ class SQLAlchemyDatabase:
                     foreign_keys=sorted(fk_columns),
                 )
             )
-            for column in inspector.get_columns(table_name):
+            for column in local_columns.values():
                 self._cache_column_info(table_name, column)
                 columns.append(
                     ColumnProfile(
@@ -94,7 +97,7 @@ class SQLAlchemyDatabase:
                         comment=column.get("comment"),
                         sample_values=self.sample_column_values(
                             table_name, column["name"], column=column
-                        ),
+                        ) if sample_values else [],
                         primary_key=column["name"] in pk_columns,
                         foreign_key=column["name"] in fk_columns,
                     )
@@ -242,6 +245,18 @@ class SQLAlchemyDatabase:
         if _is_text_column(column):
             where += f" and trim({quoted_column}) <> ''"
         return where
+
+
+def _catalog_name(name, names, insensitive):
+    """Resolve to stored spelling using SQLite's ASCII identifier comparison."""
+    if name in names:
+        return name
+    if insensitive and isinstance(name, str):
+        fold = lambda s: s.translate(str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"))
+        matches = [n for n in names if fold(n) == fold(name)]
+        if len(matches) == 1:
+            return matches[0]
+    raise ValueError(f"Unresolved database identifier {name!r}")
 
 
 def _table_comment(inspector: Any, table_name: str) -> str | None:
