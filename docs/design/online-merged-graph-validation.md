@@ -24,10 +24,52 @@ Rule 相关性须结合 condition 和业务作用域，不能只看 operation �
 
 若根据 test 运行定位并修改通用行为，报告该事实；后续完整运行保证可复现，但不声称它是未用于开发的盲测。
 
-## SQL handoff 的默认导出
+## Filter 与 guidance 的职责边界
 
-Online Discovery 仍可读取规则以发现可选实现和提出局部问题；完整的 ontology_assets 与交互来源仍在结构化结果中保存。提供给 SQL 生成器的默认文字视图只包含：已解析的任务约束，以及 Concept/Metric/Event 的业务定义。未确认的历史 GenerationRule 原文不成为新任务指令；规则已经确认的行为通过对应交互 guidance 保留。
+Filter 只输出问题保留决策与审计证据，不输出代表 option、guidance 或 MUST USE，
+不负责 not_relevant。Organizer 负责提出有效问题；Filter 只有 keep、question_resolved、
+database_equivalent 三种结果。keep 的问题原样交给用户/Simulator。显式消歧须引用原问题
+或 evidence，并解释其他选项违反了什么；不能从业务词猜测物理绑定。
+若文字中的值与数据库值证据在大小写、编码或单位等方面冲突，引用原文不足以消歧；
+保留问题交给用户/Simulator，不能由 Filter 自行纠正或选择另一个值。
 
-数据库等价观察说明操作的可选实现，而不证明该操作必须出现，因此不把某个代表实现强制写进 SQL 指令。等价记录与 probe 来源继续保存在结构化交互结果中。手工调用者仅提供已解析文本而没有 typed guidance 时，保留该文本作为兼容输入；配置的 query examples 仍按原机制追加。
+等价性基于当前数据库整体数据性质，而不是某个业务过滤子集上的偶然相等：
+若 P(D) 足以保证两个候选操作在相同输入结构中互换不改变结果，则可以过滤问题。
+完整数据上的唯一性、非 NULL、连接覆盖等必须实际检查；同时考虑 NULL、零分母、
+重复次数和连接造成的粒度变化。近似数值相等不等于严格等价（用户显式容差除外）。
+样本、截断、查询失败和不充分证据均保留问题。结论只针对当前数据库快照。
+两个 JOIN 等价不代表必须 JOIN；Filter 不将观察转为任务指令。
 
-公开 online checkpoint 身份包含 handoff 版本，避免旧文本被完成态缓存继续返回。一次实际 44-case 测试中，SQL-focused handoff 得到 34/44，完整旧 handoff 为 29/44；相同单次生成器无 guidance 为 30/44。固定对所有草稿追加一次 SQL review 的独立实验为 32/44，不作为默认流程。这些是 test-informed development 后的实测结果，并非未参与开发的盲测，也不能单独归因于图结构的修改。
+## GenerationRule 的任务适用性
+
+在用户/Simulator 回答完成后，先安全投影任务图，再调用已有 Guidance Agent：
+同一调用中保留逐 Slot 的精确确认行为，并批量判断候选 Rule，不增加逐 Rule 调用。
+候选来自本次召回相关 Rule 及明确确认引用；不重新扫描全图。未能安全投影的冲突
+分支不作为同时成立的普通规则导出。
+
+Rule packet 包括 ID、名称、condition/action/reason、operation intents、相关对象定义
+与必要绑定。判断条件是否适用、行动是否服务当前任务、是否违背已确认选择、是否
+依赖未选择分支或额外强加输出/过滤/JOIN/聚合。标签相同不足以证明适用。
+没有澄清问题的 Rule 也可以适用。每个候选记录 include、reason、instruction；
+排除只是本次不导出，不删除或否定全局知识。
+
+SQL handoff 分为确认行为、适用规则、业务定义。Filter 证据仅保存在审计记录，
+不成为 SQL 指令。确认行为由代码保留原文；Rule 指令保留其适用范围与限制。
+完整 ontology_assets 继续保存。Checkpoint 身份包含新输出契约与 prompt 版本，
+禁止将旧 Filter 代表选择当作新的用户确认。
+
+## 真实验证
+
+先固定源码快照，对 case31/66 从零执行：检查 Filter 输出无代表选择、无 MUST USE、
+未决问题交给 Simulator，近似比例不能判严格等价，JOIN 等价不要求增加 JOIN。
+同时用可控正反例验证 Rule 在没有澄清问题时仍可按条件采用，非当前任务的输出
+布局不得扩展 SELECT。通过后采用同一快照、同一图与模型完整运行 44 个 test cases。
+保留整个分母和全部错误，不按 EA 重试；只允许记录在案的技术失败恢复。
+与历史结果比较时单独列出预检和完整运行成本，不将模拟用户调用排除出总成本。
+
+
+## Guidance Rule覆盖完整性的上下文纠错
+
+模型的输出可能符合静态JSON schema，却遗漏某个输入Rule。之前这种错误在run_llm_extraction返回后才校验，直接终止流程。Guidance现在将输入相关的Rule ID覆盖（缺失、未知、重复）、适用Rule instruction、Slot覆盖与确认行为格式校验作为output_validator传入异步解析器，复用已有的一次输出纠错。纠错保留原system/user输入与模型首次结果，反馈具体ID/错误，不重复注入schema，不补造适用性判定，也不删除未返回Rule。纠错仍失败则保留报错，不能生成部分guidance。
+
+financial的case95通过原checkpoint保存的retrieval、三条points和三条已确认answers重放finalize；原checkpoint/workflow identity不修改，恢复使用的新prompt/runtime单独记录。其他52条SQL预测沿用缓存；只对此前无预测的case生成一次baseline SQL。该机制不依赖case内容，不根据EA进行重采样。

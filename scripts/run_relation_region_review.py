@@ -94,7 +94,7 @@ def main():
         ctx.candidate = accepted
         view = relation_context(ctx, accepted, LocalTask("view", "reconcile", targets))
         for e in view["edges"]:
-            require_concrete_relation(e["relation"])
+            require_concrete_relation(e["edge_type"])
         preview = Preview(accepted, engine.lineage.node_map, engine.lineage.edge_map, [])
         validate_rewrite_sources(ctx, IntegrationProposal(changes=engine.lineage.source_changes(accepted)), preview)
         conflicts_before = [n.model_dump(mode="json") for n in base.graph.nodes if n.alternatives]

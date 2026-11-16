@@ -189,6 +189,7 @@ def test_reason_finding_cannot_quote_a_retired_source_version():
     stale = NodeReview(
         verdict="revise",
         issues=["A claimed observation lacks evidence"],
+        issue_refs=[{"kind":"node","id":"r","fields":["properties.reason"]}],
         rationale_checks=[
             {
                 "node_id": "r",

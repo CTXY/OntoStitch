@@ -6,6 +6,8 @@
 
 关系协调与评估的完整 prompt 文案见 [Reconciliation / Assessment review 稿](ontology-reconciliation-prompts.md)，按本文维护共享规范；文案整理不表示运行时已接入。
 
+2026-11-16 的 merge 执行边界及运行时 prompt 入口见 [节点整合与关系协调设计 Review 稿](ontology-merge-content-and-relations-review.md)：输入节点作为合并知识基准，Node Assessment 检查整合是否保义，不重新执行 Extraction 真实性审查；关系阶段默认保持节点内容，仅作关系整理及必要重构。简化接口与职责 prompt 已更新，供 review；效果仍需真实模型对照。本文的知识定义与新建对象要求不因此取消。
+
 目标是组织可复用的 NL2SQL 业务知识，允许多种正确的层级组织，不追求唯一标准图或全局最少节点。本文只形式化可明确解释、检查或推导的条件；不以未定义的 Valid、Supported 等函数代替业务判断，不新增通用逻辑语言。
 
 ## 1 范围与基本解释

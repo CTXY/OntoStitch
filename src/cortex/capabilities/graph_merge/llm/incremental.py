@@ -1,6 +1,7 @@
 """Bounded tool loop: one patch can submit and finish in the same response."""
 
 import json
+from cortex.capabilities.graph_merge.integration.edit_feedback import validation_feedback
 from importlib.resources import files
 from itertools import count
 from typing import Literal
@@ -9,6 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_openai.chat_models.base import OpenAIAPIError, OpenAIConnectionError
 from pydantic import Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from cortex.capabilities.graph_merge.integration.batch import BatchResult
 from cortex.capabilities.graph_merge.integration.models import (
@@ -31,8 +33,9 @@ class NodeReview(Model):
     verdict: str = Field(pattern="^(accept|revise|revisit_identity)$")
     issues: tuple[str, ...] = ()
     issue_refs: tuple[ReviewReference, ...] = ()
-    rationale_checks: tuple[RationaleCheck, ...] = ()
-    decision_checks: tuple[RuleDecisionCheck, ...] = ()
+    # Read old checkpoints, but do not request obsolete source-truth audits.
+    rationale_checks: SkipJsonSchema[tuple[RationaleCheck, ...]] = ()
+    decision_checks: SkipJsonSchema[tuple[RuleDecisionCheck, ...]] = ()
 
     @model_validator(mode="after")
     def consistent(self):
@@ -63,6 +66,14 @@ class IncrementalIntegrationAgent:
             )
 
             return invoke_relation(self, phase, context, payload)
+        if (phase in {"consolidate", "node_assess"}
+                and payload.get("provisional_identity_projection") is False
+                and not payload.get("identity_aliases")
+                and any(g.get("current_owner") for g in payload.get("matched_groups", []))):
+            # An empty *new* alias map does not mean archived members still exist.
+            # Each group's explicit current_owner describes the supplied graph.
+            payload = dict(payload)
+            payload.pop("provisional_identity_projection")
         output = (
             IdentityDecision
             if phase == "identity"
@@ -89,6 +100,14 @@ class IncrementalIntegrationAgent:
         if context.candidate is None:
             context.candidate = context.union_state()
 
+        from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
+        from cortex.capabilities.graph_merge.integration.proposal_scope import ProposalScope, scope_error
+        evidence = EvidencePresentation(context, payload.get("evidence", []))
+        scope = None
+        if phase == "consolidate" and getattr(context, "active_batch", None):
+            scope = ProposalScope(context, payload, evidence)
+            context.active_batch.prepare_submission = scope.prepare
+
         @tool
         def inspect_graph(
             mode: Literal["nodes", "relations", "consumers", "candidates", "contracts"],
@@ -100,7 +119,21 @@ class IncrementalIntegrationAgent:
             column_names: list[str] | None = None,
             edge_types: list[str] | None = None,
         ) -> dict:
-            """Read complete nodes/relations/consumers/candidates/contracts in the stated view. Default scope is this task, never earlier read history. Paginate next_offset."""
+            """Read only missing context needed by a specific content decision.
+
+            Omitted IDs default to current task roots. next_offset offers another page;
+            it is not a request to enumerate all adjacent relations. For an input-view
+            comparison, name the relevant archived member IDs explicitly.
+
+            nodes: ids read exact graph objects. table is a PHYSICAL SQL table name/ID,
+            never a node type such as concept; column_names selects its exact columns.
+            Use table/column_names without ids. To locate a missing semantic operand,
+            read its physical column, then relations with that column ID and
+            edge_types=['grounded_on'] to find existing semantic bindings.
+            relations: ids selects adjacent edges; edge_types filters predicates before
+            pagination; omitted, null or [] means no predicate filter. consumers reads reverse content dependencies. contracts reads
+            predicate definitions. candidates is identity retrieval, not a name search.
+            """
             selection = ids
             if selection is None and table is None:
                 selection = (
@@ -118,9 +151,21 @@ class IncrementalIntegrationAgent:
                 "limit": limit,
                 "table": table,
                 "column_names": column_names,
-                "edge_types": edge_types,
+                "edge_types": edge_types or None,
             }
+            if phase == "node_assess" and mode == "candidates":
+                return {"error": "Identity matching is already completed. Complete matched_groups and source members are supplied; assess this candidate. A concrete identity counterexample uses revisit_identity, not a new fuzzy matching pass."}
             result = raw_tools["inspect_graph"].invoke(args)
+            if phase in {"node_assess", "consolidate"} and isinstance(result.get("items"), list):
+                kept, used = [], 0
+                for row in result["items"]:
+                    size = len(json.dumps(row, ensure_ascii=False))
+                    if kept and used + size > 8000:
+                        break
+                    kept.append(row)
+                    used += size
+                if len(kept) < len(result["items"]):
+                    result = {**result, "items": kept, "next_offset": offset + len(kept)}
             if mode == "relations" and selection:
                 index = (
                     context.nodes
@@ -144,15 +189,12 @@ class IncrementalIntegrationAgent:
                 reference_supplied_records,
                 supplied_records,
             )
+            if phase in {"consolidate", "node_assess"}:
+                from cortex.capabilities.graph_merge.integration.evidence_refs import compact_attribution
+                result = compact_attribution(result, context)
+            if scope:
+                scope.observe(result.get("items", []), view)
             return reference_supplied_records(result, supplied_records(payload))
-
-        @tool
-        def extend_task(ids: list[str], reason: str) -> dict:
-            """Request necessary current objects for THIS atomic change. Name the required semantic change. Independent issues belong to later tasks."""
-            expand = getattr(context, "extend_task", None)
-            if expand is None:
-                return {"error": "This read-only phase cannot extend write scope"}
-            return expand(ids, reason)
 
         @tool
         def read_guidance(
@@ -166,17 +208,30 @@ class IncrementalIntegrationAgent:
                 "operations",
             ],
         ) -> dict:
-            """Read only a missing contract/topic. Preloaded node_guidance already contains the corresponding full fields and requirements."""
+            """Read a missing topic or field schema. Reuse supplied guidance; return field definitions if that part was not supplied."""
             if topic == "conflicts":
                 return {
-                    "guidance": "Use BatchResult.conflicts with node_id, alternatives and conflict_points. Each alternative is COMPLETE content (name, description, aliases, tags, full properties) plus alternative_id and its actual sources. Code compacts shared fields losslessly. Do not write overrides, common placeholders, set_conflict edits or independent competing copies. Replace obsolete copies and repair consumers in the same batch."
+                    "guidance": "Use BatchResult.conflicts with node_id, alternatives and conflict_points. Each alternative is COMPLETE content (name, description, aliases, tags, full properties) plus alternative_id and evidence_ids (existing alternative IDs retain exact sources). Code compacts shared fields losslessly. Do not write overrides, common placeholders, set_conflict edits or independent competing copies. Replace obsolete copies and repair consumers in the same batch."
                 }
-            if topic in payload.get("node_guidance", {}):
+            guide = payload.get("node_guidance", {})
+            if topic in guide or topic in guide.get("types", ()) or topic in guide.get("fields_by_type", {}):
+                fields_supplied = topic in guide.get("fields_by_type", {}) or (
+                    isinstance(guide.get(topic), dict) and "fields" in guide[topic]
+                )
+                if topic in {"concept", "metric", "generation_rule", "event"} and not fields_supplied:
+                    return {
+                        "guidance_already_supplied": True,
+                        "location": "node_guidance",
+                        "fields": {key: value.model_dump(mode="json") for key, value in context.schema.effective_node_fields(topic).items()},
+                    }
                 return {
                     "already_supplied": True,
-                    "location": f"node_guidance.{topic}",
-                    "guidance": "Use the full guidance and fields already in the task packet; identical content is not repeated.",
+                    "location": "node_guidance",
+                    "guidance": "Use the guidance and field definitions already supplied; identical content is not repeated.",
                 }
+            if phase in {"consolidate", "node_assess"} and topic in {"concept", "metric", "generation_rule", "event"}:
+                return {"guidance": files("cortex.capabilities.graph_merge.llm.prompts").joinpath("incremental_content_shared.md").read_text(),
+                        "fields": {key: value.model_dump(mode="json") for key, value in context.schema.effective_node_fields(topic).items()}}
             return raw_tools["read_guidance"].invoke({"topic": topic})
 
         @tool
@@ -226,14 +281,11 @@ class IncrementalIntegrationAgent:
         @tool
         def read_evidence(ids: list[str]) -> dict:
             """Read missing evidence only; already supplied evidence stays in the conversation."""
-            supplied = {e["id"] for e in payload.get("evidence", [])}
-            missing = sorted(set(ids) - supplied)
-            result = raw_tools["read_evidence"].invoke({"ids": missing}) if missing else {"items": []}
-            return {**result, "already_supplied": sorted(set(ids) & supplied)}
+            return evidence.read(ids)
 
         read_tools = [inspect_graph, read_evidence, read_guidance]
-        if phase in {"consolidate", "reconcile"}:
-            read_tools.extend([extend_task, inspect_pending])
+        if phase == "consolidate":
+            read_tools.append(inspect_pending)
         lookup = {t.name: t for t in read_tools}
         prompt_name = (
             "integration_identity.md"
@@ -245,18 +297,11 @@ class IncrementalIntegrationAgent:
             .joinpath(prompt_name)
             .read_text()
         )
-        if phase in {"consolidate", "reconcile"}:
+        if phase == "consolidate":
             system += (
                 "\n\n"
                 + files("cortex.capabilities.graph_merge.llm.prompts")
                 .joinpath("incremental_writes.md")
-                .read_text()
-            )
-        if phase in {"consolidate", "node_assess", "reconcile"}:
-            system += (
-                "\n\n"
-                + files("cortex.capabilities.graph_merge.llm.prompts")
-                .joinpath("incremental_evidence.md")
                 .read_text()
             )
         from cortex.capabilities.graph_merge.llm.packets import action_message, compact_node_packet
@@ -276,15 +321,13 @@ class IncrementalIntegrationAgent:
         ]
         finished = None
         plain_fallback = False
-        read_rounds = 0
-        read_limit = 3 if phase == "node_assess" else 4
+        seen_reads = set()
         read_names = {
             "inspect_graph",
             "read_evidence",
             "read_guidance",
             "inspect_pending",
         }
-        budget_announced = False
         connection_retries = 0
         try:
             for _ in (count() if self.max_calls is None else range(self.max_calls)):
@@ -295,26 +338,15 @@ class IncrementalIntegrationAgent:
                 available_reads = [
                     t for t in read_tools if t.name != "inspect_pending" or has_pending
                 ]
-                if read_rounds >= read_limit:
-                    if not budget_announced:
-                        messages.append(
-                            HumanMessage(
-                                "Read budget reached. Use the supplied definitions/evidence and saved results to submit the supported local result now. Do not repeat exploratory reads. If essential evidence is unavailable, report failure rather than inventing it."
-                            )
-                        )
-                        budget_announced = True
-                    allowed = (
-                        [extend_task] if phase in {"consolidate", "reconcile"} else []
-                    )
-                    if not plain_fallback:
-                        allowed.append(output)
-                else:
-                    allowed = list(available_reads)
-                    if not plain_fallback:
-                        allowed.append(output)
+                allowed = list(available_reads)
+                if not plain_fallback:
+                    allowed.append(output)
                 try:
                     from cortex.capabilities.graph_merge.llm.transport import invoke_with_recovery
 
+                    if phase in {"node_assess", "consolidate"}:
+                        from cortex.capabilities.graph_merge.llm.input_budget import check_request
+                        check_request(messages, allowed)
                     response = invoke_with_recovery(
                         self, allowed, messages, config={"callbacks": [trace]},
                         tool_choice="auto" if plain_fallback else "required",
@@ -337,9 +369,6 @@ class IncrementalIntegrationAgent:
                     continue
                 messages.append(action_message(response))
                 calls = response.tool_calls
-                reads_allowed = read_rounds < read_limit
-                if any(call["name"] in read_names for call in calls):
-                    read_rounds += 1
                 fallback_notice = None
                 if response.invalid_tool_calls:
                     for invalid in response.invalid_tool_calls:
@@ -370,7 +399,7 @@ class IncrementalIntegrationAgent:
                     except (ValueError, TypeError) as exc:
                         messages.append(
                             HumanMessage(
-                                f"Output rejected: {exc}. Submit only replacements for the affected objects; pending objects remain saved. Use {output.__name__} or valid complete JSON."
+                                json.dumps({"error": validation_feedback(exc), **scope_error(exc), "repair": f"Return the corrected local {output.__name__}; previously valid pending work remains."}, ensure_ascii=False)
                             )
                         )
                     continue
@@ -385,20 +414,24 @@ class IncrementalIntegrationAgent:
                             value = output.model_validate(call["args"])
                             self._validate(value, context, payload, phase)
                             completed = value
-                            result = {"status": "accepted"}
+                            result = {"status": "validated", "committed": False}
                         elif call["name"] in lookup:
-                            if call["name"] in read_names and not reads_allowed:
-                                raise ValueError(
-                                    "Read budget exhausted; submit a supported result or explicit failure"
-                                )
-                            result = lookup[call["name"]].invoke(call["args"])
+                            revision = getattr(batch, "revision", 0)
+                            read_key = (call["name"], json.dumps(call["args"], sort_keys=True), revision)
+                            if call["name"] in read_names and read_key in seen_reads:
+                                result = {"already_read": True, "guidance": "Use the earlier result of this exact request at the same draft revision. Request different missing objects/fields if needed."}
+                            else:
+                                result = lookup[call["name"]].invoke(call["args"])
+                                if call["name"] in read_names:
+                                    seen_reads.add(read_key)
                         else:
                             raise ValueError("Unknown tool")
                     except (ValueError, TypeError) as exc:
                         result = {
                             "status": "rejected",
-                            "error": str(exc),
-                            "repair": "Replace faulty objects; previously saved pending objects remain. Use remove_edits/remove_changes/remove_edge_merges to withdraw them.",
+                            "error": validation_feedback(exc),
+                            **scope_error(exc),
+                            "repair": ("Correct the structured Review, not the graph. Report concrete preservation/integration defects with issue_refs and actual field paths; accept has no unresolved issues. No per-Rule source audit is required." if phase == "node_assess" else "Replace faulty objects; previously saved pending objects remain. Use remove_edits/remove_changes/remove_edge_merges to withdraw them."),
                         }
                     if self.trace_sink:
                         self.trace_sink.record(
@@ -444,18 +477,24 @@ class IncrementalIntegrationAgent:
         if phase == "node_assess":
             expected_decisions = set(payload.get("decision_review_ids", ()))
             found_decisions = [c.node_id for c in value.decision_checks]
-            if set(found_decisions) != expected_decisions or len(
-                found_decisions
-            ) != len(set(found_decisions)):
+            if (not set(found_decisions) <= expected_decisions or len(found_decisions) != len(set(found_decisions))
+                or (value.verdict == "accept" and set(found_decisions) != expected_decisions)):
                 raise ValueError(
-                    f"Check each supplied Rule decision once: {sorted(expected_decisions)}"
+                    "Check each supplied Rule decision once in decision_checks (not rationale_checks). "
+                    f"Missing={sorted(expected_decisions-set(found_decisions))}; unexpected={sorted(set(found_decisions)-expected_decisions)}. "
+                    "Each item requires node_id, independent_decisions and issues. Remove duplicate node_ids."
                 )
             expected = set(payload.get("rationale_review_ids", ()))
             found = [c.node_id for c in value.rationale_checks]
-            if set(found) != expected or len(found) != len(set(found)):
+            if (not set(found) <= expected or len(found) != len(set(found))
+                or (value.verdict == "accept" and set(found) != expected)):
                 raise ValueError(
-                    f"Check each supplied Rule reason once: {sorted(expected)}"
+                    "Check each supplied Rule reason once in rationale_checks (not decision_checks). "
+                    f"Missing={sorted(expected-set(found))}; unexpected={sorted(set(found)-expected)}. "
+                    "Each item requires node_id, supported, explanation and unsupported_claims. Keep the decision_checks separately; remove duplicate node_ids."
                 )
+            if value.verdict != "accept" and not value.issue_refs:
+                raise ValueError("A rejecting review must identify concrete affected objects in issue_refs")
             from cortex.schema.graph import alternative_content
 
             current_nodes = (
@@ -489,6 +528,8 @@ class IncrementalIntegrationAgent:
             )
 
             raise IntegrationIncomplete(value.failure)
+        if phase == "node_assess":
+            return  # A review is never submitted to the graph-edit validator.
         validator = getattr(context, "output_validator", None)
         if validator:
             validator(value)

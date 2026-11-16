@@ -9,3 +9,10 @@ The local task checks business relationships against the ontology contract and t
 - Preserve original attribution when the relationship is compatible; do not remove a source solely because its SQL projects another related attribute. Source coverage is a mechanical requirement, not proof of semantic truth. New attribution still needs a meaningful connection to the particular relationship, not proximity in the graph.
 
 These rules govern both Writer and Assessment. They replace a demand for explicit per-case proof of every relationship; they do not weaken structural validation, protected node fields, branch preservation or declared endpoint contracts.
+
+
+## Current records and alternative worlds
+
+When supplied, use `source_presence` to distinguish retired archived records from live candidate objects. An archived-only node/edge is historical evidence, not an ordinary current duplicate. For a shared ID whose record changed, judge the candidate version. A missing supported claim may still be reported, but identify the missing current meaning rather than counting a retired record as active.
+
+A conflict owner stores possible complete resolved contents, evaluated one selected alternative at a time. An unscoped outgoing edge is a common fact present in each alternative; explicitly listing all current alternative IDs means the same fact in this snapshot. Edge scope restricts a relation within a selected alternative and does not choose/activate the alternatives. A common `applies_to` edge to the same operand therefore does not execute two competing Rule actions simultaneously. Check that a shared assertion is valid in each relevant branch. Use a subset scope when the assertion holds only in that subset. Supported unresolved choices may retain overlapping conditions: preserve the explicit conflict instead of inventing disjoint triggers. Ordinary live copies outside the conflict still require the usual compatibility/preservation review. When supplied, `current_conflict_views` gives mechanically computed owner-local edge membership for this check.

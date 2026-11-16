@@ -76,6 +76,38 @@ def test_local_packet_does_not_expand_read_history_or_other_hub_attributes():
     assert ctx.input_node_map["b"] not in {n["id"] for n in payload["physical_facts"]}
 
 
+def test_review_preserves_new_relation_without_registered_contract():
+    ctx, current = context([concept("A", "a"), concept("B", "b")])
+    a, b = (ctx.input_node_map[key] for key in ("A", "B"))
+    relation = edge("new_relation", a, b, "has_card_name")
+    candidate = replace(current, edges=(*current.graph.edges, relation))
+    payload = build_task_context(
+        ctx, candidate, LocalTask("review", "node_assess", {a}), before=current
+    )
+    assert relation.model_dump(mode="json") in payload["candidate_relations"]
+    assert not any(
+        row["contract"]["id"] == "has_card_name"
+        for row in payload["active_contracts"]
+    )
+
+
+def test_archived_relation_without_contract_remains_visible_after_removal():
+    ctx, current = context(
+        [concept("A", "a"), concept("B", "b")],
+        [edge("source_relation", "A", "B", "has_card_name")],
+    )
+    a = ctx.input_node_map["A"]
+    relation_id = ctx.input_edge_map["source_relation"]
+    candidate = replace(
+        current, edges=[e for e in current.graph.edges if e.id != relation_id]
+    )
+    payload = build_task_context(
+        ctx, candidate, LocalTask("review", "node_assess", {a}), before=current
+    )
+    assert relation_id in {row["id"] for row in payload["relations"]}
+    assert not any(row["id"] == "has_card_name" for row in payload["local_contracts"])
+
+
 def test_complete_group_sources_are_visible_through_alias_lineage():
     ctx, _ = context([concept("A", "a"), concept("B", "b")])
     a, b = [ctx.input_node_map[k] for k in ["A", "B"]]

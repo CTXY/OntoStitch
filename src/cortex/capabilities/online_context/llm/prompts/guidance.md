@@ -1,35 +1,38 @@
-# Role
+# Role and inputs
 
-Render the user's confirmed behavior as concise downstream guidance, separately for each Slot. Do not reassess the decision, repair SQL, complete missing behavior, or add knowledge.
+Produce SQL guidance from the question/evidence, answered Slots and task-local
+GenerationRule candidates after user-choice projection. You do not receive Gold
+SQL. Return both outputs in one response; do not call a separate model per Rule.
 
-You do not receive Gold SQL.
+# Confirmed choices
 
-# Confirmed behavior
+For each Slot in input order, copy its ID and write:
+`For <short concrete purpose>, MUST USE: <exact confirmed behavior>`
 
-- When Candidate IDs are selected, the exact selected Candidate statements are the confirmed behavior. Ignore `explanation` as a behavioral source.
-- When no Candidate is selected, the exact `explanation` is the confirmed behavior.
+Selected Candidate statements, in order, are the confirmed behavior. Ignore the
+answer's explanation when Candidate IDs are selected; otherwise use the exact
+explanation. Do not repair, expand, omit or normalize this behavior. The purpose
+only identifies its scope, without introducing another decision or rationale.
 
-Do not alter, normalize, expand, shorten, or omit confirmed behavior. If it appears incomplete or incorrect, preserve it rather than guessing a repair; correctness belongs to the user-answer stage.
+# GenerationRule applicability
 
-# Guidance
+Assess every `rule_candidates` item exactly once. Retrieved Rules are historical
+knowledge, not confirmed task requirements. Include a Rule only when:
+- Its condition is supported by the question/evidence or confirmed choices.
+- Its action serves this task, without conflicting with confirmed choices or
+  depending on an unselected conflict branch.
+- It does not impose extra outputs, filters, joins or aggregations outside that
+  condition. A matching operation label alone is insufficient.
 
-For each supplied Slot, in the same order:
+A Rule may apply without causing a clarification question. For an applicable Rule,
+write its action concisely, retaining its meaning, scope and limits. Otherwise give
+a short exclusion reason and an empty instruction. Do not invent a new Rule.
+Exclusion is task-local, not a judgment that stored knowledge is invalid.
 
-1. Copy `choice_point_id` unchanged.
-2. Derive a short, concrete purpose from the Question and Slot question. The purpose only identifies where the instruction applies; it must not introduce another SQL decision or rationale.
-3. Write exactly:
+# Output
 
-   `For <concrete purpose>, MUST USE: <confirmed behavior>`
+- `guidance_by_slot`: one `{choice_point_id, guidance_content}` per Slot in order.
+- `rule_guidance`: one `{rule_id, include, reason, instruction}` per candidate Rule. Copy each input `rule_id` exactly; include excluded Rules with `include: false`, a reason and empty instruction. Do not omit them.
 
-Keep Slots independent and add no behavior, explanation, or recommendation.
-
-# Output schema
-
-Return one `guidance_by_slot` item per supplied Slot, with:
-
-- `choice_point_id`: the unchanged Slot ID.
-- `guidance_content`: the complete instruction above.
-
-Return exactly one JSON object matching this schema inside `<result>...</result>`:
-
+Return exactly one JSON object inside `<result>...</result>` matching:
 {template_output}

@@ -3,7 +3,8 @@
 from copy import deepcopy
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.integration.compiler import deduplicate_edges
@@ -27,10 +28,12 @@ from cortex.capabilities.graph_merge.integration.submission import (
     content_errors,
     edit_key,
 )
-from cortex.schema import ConflictPoint, GraphEdge, GraphNode, GraphSpace, GraphState
+from cortex.schema import ConflictPoint, GraphEdge, GraphNode, GraphSpace, GraphState, SourceReference
 from cortex.schema.models import EdgeType
 from cortex.schema.relation_contracts import merge_relation_contracts
 from cortex.schema.validation import validate_graph_state
+from cortex.capabilities.graph_merge.integration.conflict_resolution import ConflictResolution, resolution_edits
+from cortex.capabilities.graph_merge.integration.evidence_refs import evidence_sources
 
 
 class ConflictWrite(Model):
@@ -42,37 +45,63 @@ class ConflictWrite(Model):
 class EdgeMerge(Model):
     """The Agent declares the same fact; code preserves exact references."""
 
-    source_ids: tuple[str, ...] = Field(min_length=1)
-    survivor_id: str
-    explanation: str = Field(min_length=1)
+    source_ids: tuple[str, ...] = Field(min_length=1, description="Graph EDGE IDs to absorb into the survivor, not evidence IDs or SourceReference source_ids. Code preserves their exact provenance.")
+    survivor_id: str = Field(description="ID of the existing edge to retain. Change its description/properties separately in edge_updates using id; this merge object has no properties field.")
+    explanation: str = Field(min_length=1, description="Why these edges express the same fact in compatible scope, with material restrictions preserved.")
 
 
 class NodeWrite(Model):
     operation: Literal["create_node", "update_node"]
-    node: dict
+    node: dict = Field(description="Create: complete node. Update: id plus changed fields; unmentioned fields stay unchanged. properties merges by key; each supplied property value replaces its old value completely. Never put an edge here.")
+    evidence_ids: tuple[str, ...] = Field(default=(), description="Evidence supporting a new object or additional support; sibling of node, never inside node. Updates retain existing exact sources.")
+
+
+class LocalEdgeWrite(EdgeWrite):
+    evidence_ids: tuple[str, ...] = Field(default=(), description="Evidence supporting a new edge or additional support; sibling of edge. Updates retain existing exact sources.")
 
 
 class BatchResult(Model):
     """Submit only this task's patch, not the accumulated graph or history."""
 
-    edits: tuple[NodeWrite | EdgeWrite | NodeDelete | EdgeDelete, ...] = ()
+    edits: tuple[NodeWrite | LocalEdgeWrite | NodeDelete | EdgeDelete, ...] = ()
     changes: tuple[Change, ...] = Field(
         default=(),
         description="Provenance correspondences only; does NOT execute graph changes. Retire current copies with explicit delete_node/delete_edge edits as well as their before/after correspondence.",
     )
     conflicts: tuple[ConflictWrite, ...] = ()
+    resolutions: tuple[ConflictResolution, ...] = ()
     edge_merges: tuple[EdgeMerge, ...] = ()
     relation_contracts: tuple[EdgeType, ...] = Field(
         default=(),
         description="NEW predicate IDs only. Reuse installed predicates by edge_type; do not resend or restyle installed definitions.",
     )
     inspection_checks: tuple[InspectionCheck, ...] = ()
-    rationale_checks: tuple[RationaleCheck, ...] = ()
+    rationale_checks: SkipJsonSchema[tuple[RationaleCheck, ...]] = ()
     remove_edits: tuple[Element, ...] = ()
     remove_edge_merges: tuple[str, ...] = ()
     remove_changes: tuple[Element, ...] = ()
     remove_contracts: tuple[str, ...] = ()
-    failure: str | None = None
+    failure: str | None = Field(default=None, description="Omit or use JSON null on success (including no changes). On failure, give a concrete reason; never the string 'null'.")
+
+    @field_validator("failure")
+    @classmethod
+    def concrete_failure(cls, value):
+        if value is not None and value.strip().lower() in {"", "null", "none", "nil", "undefined"}:
+            raise ValueError("failure must be omitted or JSON null for success, including an empty patch. A real failure requires a concrete explanation. Correct this field; no edits have been applied.")
+        return value
+
+    @model_validator(mode="after")
+    def object_kinds(self):
+        for index, edit in enumerate(self.edits):
+            body = edit.node if isinstance(edit, NodeWrite) else edit.edge if isinstance(edit, EdgeWrite) else {}
+            if "evidence_ids" in body:
+                raise ValueError(f"Move edits[{index}] evidence_ids outside node/edge to its sibling edits[{index}].evidence_ids. It is attribution, not GraphNode/GraphEdge content.")
+            if isinstance(edit, NodeWrite) and {"edge_type", "from_node_id", "to_node_id"} <= edit.node.keys():
+                operation = "create_edge" if edit.operation == "create_node" else "update_edge"
+                raise ValueError(f"edits[{index}].node contains an EDGE, not a node. Use operation='{operation}' and edge={{...the same edge content...}}, not node. Do not add node_type/name to this edge.")
+            if isinstance(edit, EdgeWrite) and "node_type" in edit.edge:
+                raise ValueError(f"edits[{index}].edge contains a NODE. Use create_node/update_node with node={{...}}, not edge.")
+        return self
 
 
 def delta(before, after):
@@ -142,6 +171,7 @@ class ActiveBatch:
             if e.from_node_id in self.targets or e.to_node_id in self.targets
         }
         self.pending = {}
+        self._full_property_edits = set()
         self.changes = []
         self.contracts = {}
         self.edge_merges = {}
@@ -149,10 +179,14 @@ class ActiveBatch:
         self.result = None
         self.revision = 0
         self.extra_check = None
+        self.prepare_submission = None
+        self.scope_events = []
 
     def pending_snapshot(self):
         """Complete accumulated draft, not just the latest partial submission."""
         return {
+            "update_semantics": "partial-v1",
+            "full_property_edits": [list(key) for key in sorted(self._full_property_edits)],
             "edits": deepcopy(list(self.pending.values())),
             "changes": deepcopy(self.changes),
             "contracts": [c.model_dump(mode="json") for c in self.contracts.values()],
@@ -161,14 +195,47 @@ class ActiveBatch:
 
     def restore_pending(self, saved):
         self.pending = {edit_key(e): deepcopy(e) for e in saved["edits"]}
+        self._full_property_edits = ({tuple(key) for key in saved.get("full_property_edits", [])}
+            if saved.get("update_semantics") == "partial-v1" else set(self.pending))
         self.changes = deepcopy(saved["changes"])
         self.contracts = {c["id"]: EdgeType.model_validate(c) for c in saved["contracts"]}
         self.edge_merges = {m["survivor_id"]: EdgeMerge.model_validate(m) for m in saved["edge_merges"]}
+
+    def submit_atomic(self, result):
+        """Keep the last valid draft when a new structured submission is invalid."""
+        fields = ("pending", "changes", "contracts", "edge_merges", "_full_property_edits", "allowed", "targets")
+        saved = {k: deepcopy(getattr(self, k)) for k in fields}
+        saved.update({k: getattr(self, k) for k in ("preview", "result", "revision")})
+        candidate = self.context.candidate
+        try:
+            added = self.prepare_submission(result) if self.prepare_submission else set()
+            self.allowed.update(added)
+            self.targets.update(added)
+            value = self.submit(result)
+            if added:
+                self.scope_events.append({"ids": sorted(added), "reason": "Explicit coupled patch objects"})
+                task = getattr(self.context, "active_task", None)
+                if task is not None:
+                    task.targets.update(added)
+            return value
+        except (ValueError, TypeError, KeyError):
+            for key, value in saved.items():
+                setattr(self, key, value)
+            self.context.candidate = candidate
+            raise
 
     def submit(self, result):
         if result.failure:
             raise ValueError(result.failure)
         data = result.model_dump(mode="json")
+        if {r.node_id for r in result.resolutions} & {c.node_id for c in result.conflicts}:
+            raise ValueError("Use either resolutions or conflicts for the same owner, not both")
+        if result.resolutions:
+            extra_edits, extra_changes = resolution_edits(self.preview or self.seed, result.resolutions)
+            if {e["node"]["id"] for e in extra_edits if e["operation"] == "update_node"} & {e.get("node", {}).get("id") for e in data["edits"]}:
+                raise ValueError("Resolve a conflict once; do not separately update its owner in the same proposal")
+            data["edits"].extend(extra_edits)
+            data["changes"].extend(extra_changes)
         stale_deletes = {}
         for edit in data["edits"]:
             if edit["operation"].startswith("delete_"):
@@ -210,6 +277,7 @@ class ActiveBatch:
                     f"{edit['operation']} requires the object id inside node/edge"
                 ) from exc
             old = self.pending.get(key)
+            self._full_property_edits.discard(key)
             if (
                 old
                 and old["operation"].startswith("create_")
@@ -263,6 +331,8 @@ class ActiveBatch:
         edges = {e.id: e for e in self.seed.graph.edges}
         source_nodes = {n.id: n for n in self.base.graph.nodes}
         source_edges = {e.id: e for e in self.base.graph.edges}
+        prior = self.preview or self.seed
+        prior_objects = {"node": {n.id: n for n in prior.graph.nodes}, "edge": {e.id: e for e in prior.graph.edges}}
         physical_ids = {n.id for n in self.seed.graph.nodes if n.node_type in PHYSICAL}
         edits = list(self.pending.values())
         created_nodes = {
@@ -282,7 +352,7 @@ class ActiveBatch:
             exists = key in objects
             if exists and key not in self.allowed:
                 raise ValueError(
-                    f"Outside task write scope: {kind} {key}. Read/extend the task before editing."
+                    f"Outside task write scope: {kind} {key}. Return a locally coupled proposal; the controller manages its scope."
                 )
             previous = objects.get(key)
             if (kind == "node" and previous and previous.node_type in PHYSICAL) or (
@@ -310,9 +380,37 @@ class ActiveBatch:
                 )
             raw = deepcopy(edit[kind])
             raw["id"] = key
-            if previous and "sources" not in raw:
-                raw["sources"] = [s.model_dump(mode="json") for s in previous.sources]
-            obj = (GraphNode if kind == "node" else GraphEdge).model_validate(raw)
+            current_object = prior_objects[kind].get(key) or previous
+            if current_object is not None:
+                stored = current_object.model_dump(mode="json")
+                properties = {} if op == "set_conflict" or (kind, raw_key) in self._full_property_edits else dict(stored.get("properties", {}))
+                for field, value in raw.get("properties", {}).items():
+                    if value is None:
+                        properties.pop(field, None)
+                    else:
+                        properties[field] = value
+                raw = {**stored, **raw, "properties": properties}
+            if kind == "node" and raw.get("merge_status") == "normal":
+                # Normal GraphNode serialization omits empty conflict fields.
+                # A full resolution must not inherit the old conflict envelope.
+                raw.update(consolidation_status=None, preservation_reasons=[], alternatives=[], conflict_points=[])
+            if edit.get("evidence_ids"):
+                raw["sources"] = [s.model_dump(mode="json") for s in evidence_sources(self.context, edit["evidence_ids"])]
+            saved_object = prior_objects[kind].get(key)
+            if previous or saved_object:
+                supplied = raw.get("sources", [])
+                refs = tuple(dict.fromkeys((*(previous.sources if previous else ()), *(saved_object.sources if saved_object else ()))))
+                raw["sources"] = [s.model_dump(mode="json") for s in refs]
+                raw["sources"].extend(s for s in supplied if s not in raw["sources"])
+            if kind == "node" and raw.get("merge_status") == "conflict":
+                from cortex.schema.validation import _stable_sources
+                raw["sources"] = [s.model_dump(mode="json") for s in _stable_sources(
+                    SourceReference.model_validate(ref)
+                    for alternative in raw["alternatives"] for ref in alternative["sources"])]
+            try:
+                obj = (GraphNode if kind == "node" else GraphEdge).model_validate(raw)
+            except (ValueError, TypeError) as error:
+                raise ValueError(f"Invalid {kind} {key} in {op}: {error}") from error
             obj = (
                 remap_node(obj, self.aliases, self.edge_aliases)
                 if kind == "node"
@@ -332,7 +430,7 @@ class ActiveBatch:
                 )
             ):
                 raise ValueError(
-                    "A new business edge must involve a writable task target; extend task first"
+                    "A new business edge must involve a local task target or a node created by this proposal"
                 )
             if kind == "edge" and all(
                 k in physical_ids for k in (obj.from_node_id, obj.to_node_id)
@@ -364,15 +462,20 @@ class ActiveBatch:
                 self.allowed | created_nodes
             ):
                 raise ValueError("Conflict owner must be a current writable node")
-            if any(not a.sources for a in conflict.alternatives):
-                raise ValueError(
-                    "Every complete alternative needs its own actual sources"
-                )
+            previous_alternatives = {a.alternative_id: a for a in nodes[conflict.node_id].alternatives}
+            resolved = []
+            for alternative in conflict.alternatives:
+                old = previous_alternatives.get(alternative.alternative_id)
+                refs = tuple(dict.fromkeys((*(old.sources if old else ()),
+                    *(evidence_sources(self.context, alternative.evidence_ids) if alternative.evidence_ids else alternative.sources))))
+                if not refs:
+                    raise ValueError(f"New alternative {alternative.alternative_id} needs evidence_ids; existing IDs may retain their exact sources")
+                resolved.append(alternative.model_copy(update={"sources": refs}))
             compact, _ = GraphManager.compact_conflict(
                 nodes[conflict.node_id],
                 [
                     (a.alternative_id, a.content, a.sources)
-                    for a in conflict.alternatives
+                    for a in resolved
                 ],
                 consolidation_status="semantic_conflict",
                 conflict_points=conflict.conflict_points,

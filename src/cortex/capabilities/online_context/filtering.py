@@ -13,11 +13,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from cortex.application.online_context import (
     ChoicePoint,
     ClarificationFilterDecision,
-    InteractionGuidance,
 )
-from cortex.capabilities.online_context.discovery.evidence import (
-    _analysis_graph_payload,
-)
+from cortex.capabilities.online_context.filter_evidence import build_filter_evidence
 from cortex.capabilities.online_context.llm.prompts import load_prompt
 from cortex.infrastructure.llm import (
     LLMInvocationError,
@@ -61,7 +58,6 @@ class FilterStep(_Model):
 class ClarificationFilterResult(_Model):
     choice_points: tuple[ChoicePoint, ...]
     decisions: tuple[ClarificationFilterDecision, ...] = ()
-    guidance: tuple[InteractionGuidance, ...] = ()
     observations: tuple[dict, ...] = ()
     notes: tuple[str, ...] = ()
 
@@ -83,7 +79,7 @@ class ClarificationFilterAgent:
         self.llm, self.database, self.trace_sink = llm, database, trace_sink
         self.max_rounds, self.max_probes = max_rounds, max_probes
         self.context_fingerprint = {
-            "version": 2,
+            "version": 4,
             "max_rounds": max_rounds,
             "max_probes": max_probes,
             "database": getattr(database, "context_fingerprint", None),
@@ -107,13 +103,10 @@ class ClarificationFilterAgent:
         points = {p.choice_point_id: p for p in choice_points}
         observations: list[dict] = []
         notes: list[str] = []
+        evidence, incomplete = build_filter_evidence(retrieved_graph_state, choice_points)
         payload = {
-            "question": question,
-            "initial_sql": initial_sql,
+            # Keep reusable context ahead of task-specific text and round observations.
             "dialect": dialect,
-            "retrieved_graph_state": _analysis_graph_payload(retrieved_graph_state),
-            "slots": [p.model_dump(mode="json") for p in choice_points],
-            "database_available": self.database is not None,
             "tools": {
                 "inspect_schema": "Read actual metadata for explicit table names.",
                 "query_database": (
@@ -122,6 +115,11 @@ class ClarificationFilterAgent:
                     "initial SQL's unconfirmed business filters or joins."
                 ),
             },
+            "retrieved_graph_state": evidence,
+            "question": question,
+            "initial_sql": initial_sql,
+            "slots": [p.model_dump(mode="json") for p in choice_points],
+            "database_available": self.database is not None,
         }
         decisions = None
         for round_index in range(self.max_rounds):
@@ -165,11 +163,16 @@ class ClarificationFilterAgent:
         if decisions is None:
             notes.append("filter did not finalize; all questions retained")
             decisions = {}
-        kept, final, guidance = [], [], []
+        kept, final = [], []
         by_probe = {o["probe_id"]: o for o in observations}
         for point in choice_points:
             decision = decisions.get(point.choice_point_id)
-            error = self._invalid_decision(decision, point, question, by_probe)
+            error = (
+                "incomplete candidate memory evidence: "
+                + ", ".join(incomplete[point.choice_point_id])
+                if point.choice_point_id in incomplete
+                else self._invalid_decision(decision, point, question, by_probe)
+            )
             if error:
                 if decision is not None:
                     notes.append(f"filter retained {point.choice_point_id}: {error}")
@@ -181,40 +184,10 @@ class ClarificationFilterAgent:
             final.append(decision)
             if decision.outcome == "keep":
                 kept.append(point)
-            elif decision.outcome in {"question_resolved", "database_equivalent"}:
-                option = next(
-                    o
-                    for o in point.options
-                    if o.option_id == decision.selected_option_id
-                )
-                prefix = (
-                    "The question/evidence explicitly determines this choice."
-                    if decision.outcome == "question_resolved"
-                    else (
-                        "Verified base-column properties eliminate this local difference; "
-                        "this does not establish a general business policy."
-                    )
-                )
-                basis = decision.reason
-                if decision.outcome == "database_equivalent":
-                    basis += (
-                        f" Property: {decision.data_property}"
-                        f" Applicability: {decision.applicability_reason}"
-                    )
-                guidance.append(
-                    InteractionGuidance(
-                        guidance_id=f"filter:{point.choice_point_id}",
-                        choice_point_id=point.choice_point_id,
-                        decision_question=point.decision_question,
-                        should_be=f"{prefix} MUST USE: {option.statement}\nBasis: {basis}",
-                        source=decision.outcome,
-                    )
-                )
         self._trace("filter_decisions", [d.model_dump(mode="json") for d in final])
         return ClarificationFilterResult(
             choice_points=tuple(kept),
             decisions=tuple(final),
-            guidance=tuple(guidance),
             observations=tuple(observations),
             notes=tuple(dict.fromkeys(notes)),
         )
@@ -254,19 +227,15 @@ class ClarificationFilterAgent:
     def _invalid_decision(decision, point, question, probes):
         if decision is None:
             return "no validated filter conclusion"
-        if decision.outcome in {"keep", "not_relevant"}:
-            if decision.selected_option_id is not None:
-                return "non-resolution must not select an option"
+        if decision.outcome == "keep":
             return ""
         option_ids = {o.option_id for o in point.options}
-        if decision.selected_option_id not in option_ids:
-            return "resolution selects an unknown option"
         if decision.outcome == "question_resolved":
             quote = decision.question_evidence.strip()
             if not quote or quote not in question:
                 return "explicit constraint needs a verbatim question/evidence anchor"
-            excluded = option_ids - {decision.selected_option_id}
-            if set(decision.excluded_options) != excluded or any(
+            excluded = set(decision.excluded_options)
+            if not excluded <= option_ids or len(excluded) != len(option_ids) - 1 or any(
                 not value.strip() for value in decision.excluded_options.values()
             ):
                 return "explicit constraint must explain every alternative"

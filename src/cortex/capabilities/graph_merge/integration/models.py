@@ -3,6 +3,7 @@
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from cortex.schema import NodeContent, SourceReference
 from cortex.schema.models import EdgeType
@@ -87,6 +88,7 @@ class IntegrationProposal(Model):
 
 
 class ReviewReference(Model):
+    fields: tuple[str, ...] = ()
     kind: Literal["node", "edge", "contract"]
     id: str
 
@@ -204,4 +206,5 @@ SubmissionEdit = NodeWrite | EdgeWrite | NodeDelete | EdgeDelete
 class CompleteAlternative(Model):
     alternative_id: str
     content: NodeContent
-    sources: tuple[SourceReference, ...]
+    sources: SkipJsonSchema[tuple[SourceReference, ...]] = ()
+    evidence_ids: tuple[str, ...] = Field(default=(), description="Existing alternative IDs retain exact sources when omitted. For new alternatives or additional support cite displayed evidence IDs, never reconstruct SourceReference objects.")

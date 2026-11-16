@@ -51,7 +51,7 @@ def build_online_graph(engine, saver, *, run_id, identity):
         result = await engine._filter(state["request"], retrieval(state), points(state))
         return {
             "points": [p.model_dump(mode="json") for p in result.choice_points],
-            "automatic_guidance": [g.model_dump(mode="json") for g in result.guidance],
+            "automatic_guidance": [],
             "filter_decisions": [d.model_dump(mode="json") for d in result.decisions],
             "filter_observations": list(result.observations),
             "notes": [*state["notes"], *result.notes],

@@ -94,7 +94,6 @@ def explicit(point, quote="morning means before 13:00", **overrides):
     return {
         "choice_point_id": point.choice_point_id,
         "outcome": "question_resolved",
-        "selected_option_id": point.options[0].option_id,
         "question_evidence": quote,
         "excluded_options": {
             o.option_id: "Conflicts with the specified boundary"
@@ -108,7 +107,6 @@ def equivalent(point, **overrides):
     return {
         "choice_point_id": point.choice_point_id,
         "outcome": "database_equivalent",
-        "selected_option_id": point.options[0].option_id,
         "covered_option_ids": [o.option_id for o in point.options],
         "data_property": "TransactionID has no NULL in the full base table",
         "applicability_reason": "Both options count rows from that same base table",
@@ -157,8 +155,8 @@ def test_explicit_constraint_needs_no_database():
     )
     assert result.choice_points == ()
     assert result.observations == ()
-    assert result.guidance[0].source == "question_resolved"
-    assert point.options[0].statement in result.guidance[0].should_be
+    assert "guidance" not in result.model_dump()
+    assert "selected_option_id" not in result.decisions[0].model_dump()
 
 
 @pytest.mark.parametrize(
@@ -179,7 +177,7 @@ def test_invalid_explicit_resolution_keeps_question(overrides):
     )
     assert result.choice_points == (point,)
     assert result.decisions[0].outcome == "keep"
-    assert not result.guidance
+    assert "guidance" not in result.model_dump()
 
 
 def test_agent_generated_base_probe_executes_and_removes_question(database):
@@ -194,8 +192,8 @@ def test_agent_generated_base_probe_executes_and_removes_question(database):
     assert observation["result"]["rows"] == [[2, 2]]
     assert "WHERE" not in observation["sql"].upper()
     assert "JOIN" not in observation["sql"].upper()
-    assert "base-column" in result.guidance[0].should_be
-    assert result.guidance[0].source == "database_equivalent"
+    assert "guidance" not in result.model_dump()
+    assert "selected_option_id" not in result.decisions[0].model_dump()
 
 
 @pytest.mark.parametrize(
@@ -417,7 +415,7 @@ def workflow(tmp_path, points, filter_agent):
     )
 
 
-def test_filter_persists_guidance_and_preserves_source_scores_on_resume(tmp_path):
+def test_filter_persists_decisions_without_guidance_on_resume(tmp_path):
     resolved = slot("time", ("Time < '13:00:00'", "Time < '12:00:00'"))
     remaining = (slot("other"), slot("third"))
     points = (resolved, *remaining)
@@ -440,7 +438,7 @@ def test_filter_persists_guidance_and_preserves_source_scores_on_resume(tmp_path
         )
         assert pending.choice_points == rank_choice_points(remaining)
         assert pending.pending.remaining_budget == 0
-        assert pending.interaction_guidance[0].source == "question_resolved"
+        assert pending.interaction_guidance == ()
         # Rebuild the engine with the same identity; no Agent/model invocation on resume.
         _, rebuilt = workflow(tmp_path, points, agent)
         answer = (
@@ -457,7 +455,7 @@ def test_filter_persists_guidance_and_preserves_source_scores_on_resume(tmp_path
         assert final.filter_decisions == pending.filter_decisions
         assert final.interaction_guidance == pending.interaction_guidance
         assert (
-            "MUST USE: Time < '13:00:00'" in final.downstream_guidance.guidance_content
+            "MUST USE:" not in final.downstream_guidance.guidance_content
         )
         assert final.diagnostics.prioritization_policy == "source_score_v2"
         assert final.diagnostics.presented_questions == 1
@@ -473,7 +471,7 @@ def test_filter_persists_guidance_and_preserves_source_scores_on_resume(tmp_path
     asyncio.run(run())
 
 
-def test_all_filtered_still_yields_guidance_without_user_answers(tmp_path):
+def test_all_filtered_does_not_select_an_implementation(tmp_path):
     point = slot("time", ("Time < '13:00:00'", "Time < '12:00:00'"))
     agent = ClarificationFilterAgent(llm({"decisions": [explicit(point)]}))
     state, online = workflow(tmp_path, (point,), agent)
@@ -484,7 +482,7 @@ def test_all_filtered_still_yields_guidance_without_user_answers(tmp_path):
     assert result.pending is None and not result.choice_points
     assert result.diagnostics.presented_questions == 0
     assert result.filter_decisions[0].outcome == "question_resolved"
-    assert "MUST USE: Time < '13:00:00'" in result.downstream_guidance.guidance_content
+    assert "MUST USE:" not in result.downstream_guidance.guidance_content
 
 
 def test_bootstrap_binds_configured_database_and_preserves_legacy_switch(
@@ -663,4 +661,4 @@ def test_filter_runs_with_zero_user_question_budget(tmp_path):
     )
     assert result.status == "completed"
     assert result.diagnostics.presented_questions == 0
-    assert result.interaction_guidance[0].source == "question_resolved"
+    assert result.interaction_guidance == ()

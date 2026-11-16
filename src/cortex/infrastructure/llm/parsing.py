@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, TypeVar
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -86,6 +86,7 @@ async def run_llm_extraction(
     trace_capture: dict[str, Any] | None = None,
     allow_repair: bool = True,
     repair_with_context: bool = False,
+    output_validator: Callable[[OutputModelT], None] | None = None,
 ) -> OutputModelT:
     """Invoke the model and validate a structured response, with one repair attempt."""
     messages = build_prompt_messages(
@@ -101,7 +102,10 @@ async def run_llm_extraction(
         trace_capture["response"] = raw_response
     first_error: json.JSONDecodeError | ValidationError | ValueError | None = None
     try:
-        return _parse_output(raw_response, output_model)
+        value = _parse_output(raw_response, output_model)
+        if output_validator is not None:
+            output_validator(value)
+        return value
     except (json.JSONDecodeError, ValidationError, ValueError) as error:
         first_error = error
         if not allow_repair:
@@ -119,16 +123,19 @@ async def run_llm_extraction(
         repair_messages = [
             *messages,
             {"role": "assistant", "content": raw_response},
-            {"role": "user", "content": repair_messages[0]["content"]},
+            {"role": "user", "content": f"Correct the reported output errors using the original inputs and schema above. Return the complete corrected result. Validation errors: {first_error}"},
         ]
     repaired_response = await _invoke(llm, repair_messages)
     if trace_capture is not None:
         trace_capture["repair_response"] = repaired_response
     try:
-        return _parse_output(repaired_response, output_model)
+        value = _parse_output(repaired_response, output_model)
+        if output_validator is not None:
+            output_validator(value)
+        return value
     except (json.JSONDecodeError, ValidationError, ValueError) as repair_error:
         raise LLMStructuredOutputError(
-            f"LLM output did not match {output_model.__name__} after one repair attempt"
+            f"LLM output did not match {output_model.__name__} after one repair attempt: {repair_error}"
         ) from repair_error
 
 

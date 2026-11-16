@@ -73,7 +73,7 @@ class OnlineContextCapability:
             Path(checkpoint_path),
             {
                 "prompts": prompt_version(),
-                "sql_handoff": "resolved_constraints_v1",
+                "sql_handoff": "filter_questions_applicable_rules_v2",
                 "schemas": {
                     "choice": ChoicePoint.model_json_schema(),
                     "answer": InteractionAnswer.model_json_schema(),
@@ -302,6 +302,19 @@ class OnlineContextCapability:
         filter_decisions=(),
     ) -> OnlineContextResult:
         relevant_grounding_node_ids = relevant_grounding_node_ids or set()
+        projected, trace = project_graph_state(
+            schema=self._ontology_schema,
+            state=state,
+            selected_node_ids=selected_node_ids,
+            choice_points=choice_points,
+            selected_by_point=selected_by_point,
+            explanations=explanations,
+        )
+        from cortex.capabilities.online_context.output.rule_context import build_rule_context
+
+        rule_candidates = build_rule_context(
+            projected.graph, relevant_semantic_node_ids, choice_points, selected_by_point
+        )
         synthesis = await self._guidance_synthesizer.synthesize(
             question=question,
             dialect=dialect,
@@ -311,24 +324,11 @@ class OnlineContextCapability:
                 if point.choice_point_id in selected_by_point
             ),
             answers=answers,
+            rule_candidates=rule_candidates,
         )
-        combined_guidance = (*synthesis.interaction_guidance, *automatic_guidance)
-        resolved_content = "\n".join(
-            text
-            for text in (
-                synthesis.guidance_content,
-                *(item.should_be for item in automatic_guidance),
-            )
-            if text.strip()
-        )
-        projected, trace = project_graph_state(
-            schema=self._ontology_schema,
-            state=state,
-            selected_node_ids=selected_node_ids,
-            choice_points=choice_points,
-            selected_by_point=selected_by_point,
-            explanations=explanations,
-        )
+        # Filter conclusions are audit only; only answered questions yield choices.
+        combined_guidance = synthesis.interaction_guidance
+        resolved_content = synthesis.guidance_content
         graph = projected.graph
         query_example_selection = select_query_examples(
             graph=state.graph,
@@ -356,6 +356,7 @@ class OnlineContextCapability:
             },
             interaction_guidance=combined_guidance,
             resolved_guidance_content=resolved_content,
+            rule_guidance=tuple(item.model_dump(mode="json") for item in synthesis.rule_guidance),
             resolved_join_paths=tuple(resolved_join_paths),
             query_examples=query_example_selection.examples,
         )

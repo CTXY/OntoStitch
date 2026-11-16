@@ -1,18 +1,16 @@
 """Production relation-only agent: compact view, selective reads, partial edits."""
 import json
+from cortex.capabilities.graph_merge.integration.edit_feedback import validation_feedback
+from cortex.capabilities.graph_merge.integration.proposal_repair import ProposalRepair, Correction
 from importlib.resources import files
 from itertools import count
-from typing import Literal
+from typing import Annotated, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from pydantic import model_validator
 
 from cortex.capabilities.graph_merge.integration.models import Model, ReviewReference
-from cortex.capabilities.graph_merge.integration.relation_context import (
-    edge_view,
-    node_view,
-)
 from cortex.capabilities.graph_merge.integration.relation_edits import (
     RelationPatch,
     submit_patch,
@@ -32,12 +30,15 @@ class RelationReview(Model):
     def coherent(self):
         if self.verdict == "accept" and (self.issues or self.issue_refs):
             raise ValueError("accept requires empty issues and issue_refs")
-        if self.verdict == "revise" and not self.issues:
-            raise ValueError("revise needs concrete issues")
+        if self.verdict == "revise" and (not self.issues or not self.issue_refs):
+            raise ValueError("revise requires concrete issues and nonempty issue_refs identifying the affected node, edge or contract; fields are optional for structural issues")
         return self
 
 
 def invoke_relation(agent, phase, context, payload):
+    payload = dict(payload)
+    if "evidence" in payload:
+        payload["evidence"] = payload.pop("evidence")
     writer = phase == "reconcile"
     prompt_root = files("cortex.capabilities.graph_merge.llm.prompts")
     system = prompt_root.joinpath("incremental_relation_shared.md").read_text()
@@ -47,17 +48,18 @@ def invoke_relation(agent, phase, context, payload):
     system += "\n\n" + prompt_root.joinpath("incremental_protocol.md").read_text()
     messages = [SystemMessage(system), HumanMessage(json.dumps(payload, ensure_ascii=False))]
     raw_tools = {t.name: t for t in build_tools(context)}
-    state = context.candidate
-    nodes = {n.id: n for n in state.graph.nodes}
-    edges = {e.id: e for e in state.graph.edges}
-    evidence_ids = {}
-    for ev in context.evidence:
-        evidence_ids.setdefault(ev.source, []).append(ev.id)
+    from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
+    from cortex.capabilities.graph_merge.integration.proposal_scope import ProposalScope, scope_error
+    from cortex.capabilities.graph_merge.llm.relation_reads import RelationReads
+    evidence = EvidencePresentation(context, payload.get("evidence", []))
+    scope = ProposalScope(context, payload, evidence) if writer else None
+    if writer:
+        context.active_batch.prepare_submission = scope.prepare
+    reader = RelationReads(context, evidence, scope)
     finished = None
-    inspected = {}
+    proposal_repair = ProposalRepair()
     guidance_read = {}
     seen_reads = set()
-    duplicate_read = False
     trace = EpisodeTrace(agent.trace_sink, phase, budget=agent.call_budget)
     # Model call traces use the same file layout as the established runner.
     if hasattr(agent.trace_sink, "path"):
@@ -67,62 +69,27 @@ def invoke_relation(agent, phase, context, payload):
         trace.sink = FileSystemGraphMergeTraceSink(agent.trace_sink.path.with_name("model_calls.jsonl"))
 
     @tool
+    def inspect_graph(mode: Literal["items", "relations", "consumers", "contracts"], ids: list[str],
+                      fields: Annotated[list[str] | None,
+                          "Exact stored paths, e.g. ['properties.targets'], ['properties.definition'], "
+                          "['properties.relation_metadata'], or ['name', 'description']. "
+                          "Bare 'targets' and whole 'properties' are not selectors. "
+                          "Use ['content'] or ['alternatives'] only for necessary reconstruction."] = None, view: Literal["candidate", "input"] = "candidate",
+                      offset: int = 0, limit: int = 30,
+                      direction: Literal["incoming", "outgoing", "both"] = "both",
+                      edge_types: list[str] | None = None) -> dict:
+        """Read missing graph context. items selects exact objects/real field paths; relations selects adjacent edges; consumers selects declared references; contracts selects predicate IDs. Omitted fields use a light view. Read content/alternatives only for necessary reconstruction. Reads do not grant unrestricted write access."""
+        return reader.read(mode, ids, fields, view, offset, limit, direction, edge_types)
+
+    @tool
     def inspect_items(ids: list[str], fields: list[str]) -> dict:
-        """Read named missing fields, not complete objects. Node content: targets/expression/action/condition as applicable; Concept: relation_metadata; edge: description/branches. Returns valid items plus per-object errors so one missing ID/field does not discard successful reads."""
-        blocked = {"*", "properties", "sources", "source_metadata", "table_schema"}
-        errors = [{"field": f, "error": "Request a named missing field, not complete metadata"}
-                  for f in fields if f in blocked]
-        rows = []
-        for key in ids:
-            obj = nodes.get(key) or edges.get(key)
-            if obj is None:
-                errors.append({"id": key, "error": "Not current; use displayed current IDs"})
-                continue
-            raw = obj.model_dump(mode="json")
-            semantic = node_view(obj) if key in nodes else edge_view(obj, evidence_ids)
-            if key in edges:
-                semantic.setdefault("branches", [])
-                semantic["alternative_ids"] = semantic["branches"]
-            elif obj.node_type == "concept":
-                semantic.setdefault("relation_metadata", [])
-            row = {"id": key, "type": obj.node_type} if key in nodes else {
-                "id": key, "relation": obj.edge_type,
-                "from_type": nodes[obj.from_node_id].node_type,
-                "to_type": nodes[obj.to_node_id].node_type,
-            }
-            for field in fields:
-                if field in blocked:
-                    continue
-                if (key, field) in inspected:
-                    row[field] = inspected[key, field]
-                    row.setdefault("already_supplied_fields", []).append(field)
-                    continue
-                if field in semantic:
-                    row[field] = semantic[field]
-                elif field in raw:
-                    row[field] = raw[field]
-                elif field in obj.properties:
-                    row[field] = obj.properties[field]
-                else:
-                    if field == "relation_metadata":
-                        errors.append({"id": key, "field": field, "error": "Concept-only field; use edge descriptions for other types"})
-                        continue
-                    declared = context.schema.effective_node_fields(obj.node_type) if key in nodes else {}
-                    if field not in declared:
-                        errors.append({"id": key, "field": field, "error": "Field does not apply to this object", "available_fields": sorted((semantic.keys() | obj.properties.keys()) - blocked)})
-                        continue
-                    row[field] = None
-                inspected[key, field] = row[field]
-            rows.append(row)
-        return {"items": rows, **({"read_errors": errors} if errors else {})}
+        """Legacy replay adapter; new conversations use inspect_graph."""
+        return reader.read("items", ids, fields)
 
     @tool
     def read_evidence(ids: list[str]) -> dict:
-        """Read requested evidence by ID, including actual content when already supplied."""
-        supplied = {e["id"] for e in payload.get("evidence", [])}
-        return {"already_supplied": sorted(set(ids) & supplied),
-                "items": [{"id": e.id, "content": e.content}
-                          for e in context.evidence if e.id in ids]}
+        """Read missing evidence bodies in one batch; already supplied bodies are not repeated."""
+        return evidence.read(ids)
 
     @tool
     def read_guidance(topic: Literal["concept", "metric", "generation_rule", "event", "operations"]) -> dict:
@@ -133,75 +100,100 @@ def invoke_relation(agent, phase, context, payload):
         guidance_read[topic] = result
         return result
 
-    @tool
-    def extend_task(ids: list[str], reason: str) -> dict:
-        """Extend writable scope only for a necessary coupled repair; a read alone grants no permission."""
-        result = context.extend_task(ids, reason)
-        return {k: v for k, v in result.items() if k != "objects"}
-
-    @tool
-    def submit_changes(patch: RelationPatch) -> dict:
-        """Submit the complete intended local change, using changed fields only. Unmentioned content and sources stay unchanged. Use retirements to couple deletion and before/after provenance; use edge_merges for equivalent assertions. A valid submission ends this task directly."""
+    def apply_proposal(arguments):
         nonlocal finished
+        raw = proposal_repair.prepare(arguments)
+        patch = RelationPatch.model_validate(raw)
+        previous = context.active_batch.preview or context.active_batch.seed
         finished = submit_patch(context, patch)
-        return {"status": "accepted"}
+        from cortex.capabilities.graph_merge.integration.edit_feedback import changed_fields
+        changes = changed_fields(previous, context.active_batch.preview)
+        return {"status": "validated", "proposal_applied": "candidate_only", "committed": False,
+                "assessment_pending": True, "changes": changes,
+                "created_ids": [c["id"] for c in changes if c.get("operation") == "created"]}
 
-    tools = [inspect_items, read_evidence, read_guidance]
+    @tool
+    def submit_changes(patch: RelationPatch | None = None, corrections: list[Correction] | None = None) -> dict:
+        """Final output: supply exactly one of patch or corrections. First use a complete patch. After rejection, corrections edit the saved, UNAPPLIED patch using JSON Pointer (add/replace/remove/move), so do not resend valid parts. Example: corrections=[{op:'move',from_path:'/new_edges',path:'/create_edges'}]. New edges use create_edges with id/evidence_ids; existing edge support uses edge_updates with id/add_evidence. Nothing from a rejected patch is created in the graph. A fully valid result ends the Writer and awaits Assessment; no extra finish tool."""
+        return apply_proposal({"patch": patch.model_dump(exclude_unset=True, mode="json") if patch else None,
+                               "corrections": [c.model_dump(exclude_unset=True) for c in corrections] if corrections else None})
+
+    tools = [inspect_graph, read_evidence, read_guidance]
     if writer:
-        tools += [extend_task, submit_changes]
+        tools += [submit_changes]
     else:
         tools += [RelationReview]
     lookup = {t.name: t for t in tools if hasattr(t, "name")}
+    lookup["inspect_items"] = inspect_items  # Old stored tool calls only; not advertised.
     result = None
+    plain_fallback = False
     try:
         for step in (count() if agent.max_calls is None else range(agent.max_calls)):
-            reads_blocked_this_turn = duplicate_read
             final_call = agent.max_calls is not None and step == agent.max_calls - 1
             available = ([submit_changes] if writer else [RelationReview]) if final_call else tools
-            if duplicate_read:
-                available = [submit_changes, extend_task] if writer else [RelationReview]
+            if plain_fallback:
+                available = [] if final_call else [inspect_graph, read_evidence, read_guidance]
             if final_call:
                 messages.append(HumanMessage(
                     "This is the reserved completion call; no further reads. Submit the complete supported result from the supplied view and completed reads. "
                     + ("Use failure if a necessary safe decision remains impossible; do not hide unresolved required repairs in an empty success." if writer
                        else "Return the bounded assessment of actual changes, with concrete defects only, not speculative missing facts.")))
+            from cortex.capabilities.graph_merge.llm.input_budget import check_request
+            check_request(messages, available)
             response = invoke_with_recovery(
-                agent, available, messages, config={"callbacks": [trace]})
+                agent, available, messages, config={"callbacks": [trace]},
+                tool_choice="auto" if plain_fallback else "required")
             messages.append(action_message(response))
+            fallback_notice = None
+            if response.invalid_tool_calls:
+                # Every provider tool ID needs a response before another request,
+                # even when all calls failed JSON parsing. Do not execute a final
+                # Patch bundled with malformed companion calls.
+                for call in response.invalid_tool_calls:
+                    messages.append(ToolMessage(
+                        "Malformed arguments; no changes from this call were applied. Return the complete result as valid plain JSON.",
+                        tool_call_id=call["id"]))
+                if not plain_fallback:
+                    schema = RelationPatch if writer else RelationReview
+                    fallback_notice = HumanMessage(
+                        "Transport fallback: return the final result as plain JSON, no Markdown fences, arguments wrapper or patch wrapper. "
+                        "Do not call the result tool again. Result schema: "
+                        + json.dumps(schema.model_json_schema(), ensure_ascii=False))
+                    plain_fallback = True
+                if not response.tool_calls:
+                    if fallback_notice:
+                        messages.append(fallback_notice)
+                    continue
             if not response.tool_calls:
                 try:
                     if writer:
-                        result = submit_patch(context, RelationPatch.model_validate_json(response.content))
+                        raw = json.loads(response.content)
+                        apply_proposal(raw if "corrections" in raw else {"patch": raw})
+                        result = finished
                     else:
                         result = RelationReview.model_validate_json(response.content)
                     return result
                 except (ValueError, TypeError) as exc:
-                    messages.append(HumanMessage(f"Invalid result: {exc}. Return the complete corrected result."))
+                    messages.append(HumanMessage(json.dumps({"error": validation_feedback(exc), **scope_error(exc), **(proposal_repair.feedback(exc, context) if writer else {"repair": "Return the corrected Review."})}, ensure_ascii=False)))
                     continue
-            duplicate_notice = False
             for call in response.tool_calls:
                 try:
-                    if reads_blocked_this_turn and call["name"] not in {
-                        "submit_changes", "RelationReview", "extend_task"
-                    }:
-                        raise ValueError("The identical read was already answered with actual values. Submit the local result or extend the required write scope; no information is gained by repeating it.")
                     if final_call and call["name"] != ("submit_changes" if writer else "RelationReview"):
-                        raise ValueError("Reserved completion call does not permit additional reads or scope extensions")
-                    if call["name"] in {"submit_changes", "RelationReview"} and len(response.tool_calls) != 1:
+                        raise ValueError("Reserved completion call does not permit additional reads")
+                    if call["name"] in {"submit_changes", "RelationReview"} and (len(response.tool_calls) != 1 or response.invalid_tool_calls):
                         raise ValueError("Read first; submit alone using the read results")
                     if call["name"] == "RelationReview":
                         result = RelationReview.model_validate(call["args"])
                         tool_result = {"status": "accepted"}
                     else:
-                        tool_result = lookup[call["name"]].invoke(call["args"])
-                    if call["name"] in {"inspect_items", "read_evidence", "read_guidance"}:
                         key = (call["name"], json.dumps(call["args"], sort_keys=True))
-                        if key in seen_reads:
-                            duplicate_read = True
-                            duplicate_notice = True
-                        seen_reads.add(key)
-                    elif call["name"] == "extend_task":
-                        duplicate_read = False
+                        if call["name"] == "submit_changes":
+                            tool_result = apply_proposal(call["args"])
+                        elif call["name"] in {"inspect_graph", "inspect_items", "read_evidence", "read_guidance"} and key in seen_reads:
+                            tool_result = {"already_supplied": True, "guidance": "Use the earlier result; other missing objects or fields remain readable."}
+                        else:
+                            tool_result = lookup[call["name"]].invoke(call["args"])
+                            seen_reads.add(key)
                     trace.record("tool_result", name=call["name"],
                                  arguments=call["args"], result=tool_result)
                     messages.append(ToolMessage(json.dumps(tool_result, ensure_ascii=False), tool_call_id=call["id"]))
@@ -211,19 +203,12 @@ def invoke_relation(agent, phase, context, payload):
                     if result is not None:
                         return result
                 except (ValueError, TypeError, KeyError) as exc:
-                    if call["name"] == "submit_changes":
-                        duplicate_read = False
-                    tool_result = {"status": "rejected", "error": str(exc),
-                                   "repair": "Rejected proposal saved no changes. Resubmit the complete corrected proposal, including all intended edits and retirements. The last valid candidate remains unchanged."}
+                    tool_result = {"status": "rejected", "error": validation_feedback(exc),
+                                   **scope_error(exc), **(proposal_repair.feedback(exc, context) if call["name"] == "submit_changes" else {"repair": "Correct the reported read/Review arguments; the graph is unchanged."})}
                     trace.record("tool_result", name=call["name"], arguments=call["args"], result=tool_result)
                     messages.append(ToolMessage(json.dumps(tool_result, ensure_ascii=False), tool_call_id=call["id"]))
-            if response.invalid_tool_calls:
-                for call in response.invalid_tool_calls:
-                    messages.append(ToolMessage("Malformed arguments: use valid complete JSON for the intended tool.", tool_call_id=call["id"]))
-            if duplicate_notice:
-                messages.append(HumanMessage(
-                    "This identical read returned the actual values again; the graph has not changed. Use them to submit the supported local result now, or extend write scope for a necessary coupled repair. Do not repeat reads."
-                ))
+            if fallback_notice:
+                messages.append(fallback_notice)
         raise ValueError(f"{phase} exceeded local call budget")
     finally:
         if agent.trace_sink:

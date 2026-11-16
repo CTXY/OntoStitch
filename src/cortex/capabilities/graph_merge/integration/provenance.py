@@ -1,6 +1,15 @@
 """Check exact source coverage without inferring or propagating business support."""
 
 
+class SourceCoverageError(ValueError):
+    """Preserve the existing error text and expose actionable source/owner data."""
+    def __init__(self, message, *, before, after, missing):
+        super().__init__(message)
+        self.before = before
+        self.after = after
+        self.missing_sources = missing
+
+
 def element_sources(obj, alternative_id=None):
     alternatives = getattr(obj, "alternatives", ())
     if alternative_id:
@@ -49,9 +58,10 @@ def validate_rewrite_sources(context, proposal, preview):
             )
         missing = before - after
         if missing:
-            raise ValueError(
+            raise SourceCoverageError(
                 f"changes[{index}] replacement loses exact SourceReferences: "
                 f"{[s.model_dump(mode='json') for s in sorted(missing, key=lambda s: s.model_dump_json())]}. "
                 "Name the actual surviving assertions and preserve their relevant sources; "
-                "do not propagate sources to unrelated facts."
+                "do not propagate sources to unrelated facts.",
+                before=change.before, after=change.after, missing=missing,
             )

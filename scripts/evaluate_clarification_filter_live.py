@@ -167,7 +167,7 @@ def build_cases(results_root):
         return case
 
     resolved = ["question_resolved"]
-    equivalent = ["database_equivalent", "not_relevant"]
+    equivalent = ["database_equivalent"]
     morning = original(
         "debit_card_specializing",
         "1516",
@@ -318,6 +318,85 @@ def build_cases(results_root):
             point.model_copy(update={"options": non_distinct}).model_dump(mode="json")
         ],
     )
+    card_point = ChoicePoint.model_validate(card["choice_points"][0])
+    star = card_point.options[0].model_copy(
+        update={
+            "option_id": "derived_count_star",
+            "statement": "COUNT(*)",
+            "initial_sql_evidence": "COUNT(*)",
+            "evidence_assessment": card_point.options[0].evidence_assessment.model_copy(
+                update={
+                    "explanation": "The controlled initial SQL uses COUNT(*) to count joined rows."
+                }
+            ),
+        }
+    )
+    outer_point = card_point.model_copy(
+        update={
+            "options": (star, card_point.options[1]),
+            "decision_question": "How should the account/card listing rows be counted?",
+        }
+    )
+    variant(
+        card,
+        "outer_join",
+        ["keep"],
+        "Non-NULL card.card_id in the base table does not prevent NULLs on the nullable side of an outer join.",
+        question="How should the account/card listing rows be counted?",
+        initial_sql=(
+            "SELECT COUNT(*) FROM account a LEFT JOIN disp d "
+            "ON a.account_id=d.account_id AND d.type='OWNER' "
+            "LEFT JOIN card ON d.disp_id=card.disp_id AND card.type='gold'"
+        ),
+        choice_points=[outer_point.model_dump(mode="json")],
+    )
+    schema_star = star.model_copy(
+        update={
+            "candidate_sources": ("memory_graph",),
+            "initial_sql_evidence": None,
+            "graph_refs": ("table.card",),
+            "evidence_assessment": star.evidence_assessment.model_copy(
+                update={
+                    "source_types": ("database_schema",),
+                    "explanation": "Schema-grounded row-count alternative on the card-origin joined source.",
+                }
+            ),
+        }
+    )
+    variant(
+        card,
+        "partial_equivalence",
+        ["keep"],
+        "COUNT(*) equals COUNT(card.card_id), but DISTINCT differs after a one-to-many transaction join; keep the whole slot.",
+        initial_sql=(
+            "SELECT COUNT(DISTINCT card.card_id) FROM card JOIN disp ON card.disp_id=disp.disp_id "
+            "JOIN trans ON disp.account_id=trans.account_id "
+            "WHERE card.type='gold' AND disp.type='OWNER'"
+        ),
+        choice_points=[
+            card_point.model_copy(
+                update={
+                    "options": (schema_star, *card_point.options),
+                }
+            ).model_dump(mode="json")
+        ],
+    )
+    cases.append(
+        {
+            **morning,
+            "case_id": "debit_card_specializing_1516_original_batch",
+            "kind": "archived_batch",
+            "choice_points": [*morning["choice_points"], *counting["choice_points"]],
+            "expected_outcomes": [*resolved, *equivalent],
+            "expected_by_slot": {
+                morning["choice_points"][0]["choice_point_id"]: resolved,
+                counting["choice_points"][0]["choice_point_id"]: equivalent,
+            },
+            "expectation_reason": (
+                "Original two slots together: explicit time boundary and base-column count equivalence."
+            ),
+        }
+    )
     return cases
 
 
@@ -345,6 +424,8 @@ async def evaluate(args):
     settings = config.services.online_context.clarification_filter
     resolved = config.llm.resolve("online_context")
     output = args.output_dir
+    if (output / "manifest.json").exists():
+        raise ValueError("Use a fresh output directory to preserve prior live runs")
     output.mkdir(parents=True, exist_ok=True)
     cases = build_cases(args.results_root)
     if args.case_id:
@@ -417,13 +498,18 @@ async def evaluate(args):
             )
             outcomes = [d.outcome for d in result.decisions]
             expected = case["expected_outcomes"]
+            expected_by_slot = case.get("expected_by_slot", {})
             record = {
                 "case_id": case["case_id"],
                 "kind": case["kind"],
                 "repetition": repetition,
                 "expected_outcomes": expected,
                 "outcomes": outcomes,
-                "matches_predeclared_expectation": all(x in expected for x in outcomes),
+                "expected_by_slot": expected_by_slot,
+                "matches_predeclared_expectation": all(
+                    d.outcome in expected_by_slot.get(d.choice_point_id, expected)
+                    for d in result.decisions
+                ),
                 "seconds": round(time.monotonic() - started, 2),
                 "model_calls": usage.calls,
                 "tokens": dict(usage.tokens),

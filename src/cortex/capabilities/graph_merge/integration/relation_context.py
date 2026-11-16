@@ -14,34 +14,24 @@ def indexes(state):
 
 
 def node_view(node):
-    meaning = node.properties.get("definition") or node.description or node.name
-    result = {"id": node.id, "type": node.node_type, "name": node.name,
-              "aliases": node.aliases, "meaning": meaning}
-    if node.node_type == "generation_rule":
-        result["meaning"] = node.properties.get("action") or meaning
-        result["condition"] = node.properties.get("condition")
-    if node.properties.get("relation_metadata"):
-        result["relation_metadata"] = node.properties["relation_metadata"]
+    result = {"id": node.id, "node_type": node.node_type, "name": node.name,
+              "aliases": node.aliases}
+    keys = ("definition", "action", "condition", "relation_metadata")
+    properties = {k: node.properties[k] for k in keys if k in node.properties}
+    if properties:
+        result["properties"] = properties
+    if node.description and node.description != node.properties.get("definition"):
+        result["description"] = node.description
     if node.alternatives:
-        result["alternatives"] = [
-            {"id": a.alternative_id,
-             "name": a.overrides.get("name", node.name),
-             "meaning": a.overrides.get("properties.action",
-                         a.overrides.get("description", meaning)),
-             "condition": a.overrides.get("properties.condition",
-                             node.properties.get("condition"))}
-            for a in node.alternatives
-        ]
+        result["alternative_ids"] = [a.alternative_id for a in node.alternatives]
         result["conflict_points"] = [p.model_dump(mode="json") for p in node.conflict_points]
     return result
 
 
 def edge_view(edge, evidence_ids):
-    row = {"id": edge.id, "from": edge.from_node_id, "relation": edge.edge_type,
-           "to": edge.to_node_id, "description": edge.properties.get("description", ""),
-           "evidence": sorted({i for s in edge.sources for i in evidence_ids.get(s, ())})}
-    if edge.properties.get("alternative_ids"):
-        row["branches"] = edge.properties["alternative_ids"]
+    row = {"id": edge.id, "from_node_id": edge.from_node_id, "edge_type": edge.edge_type,
+           "to_node_id": edge.to_node_id, "properties": dict(edge.properties),
+           "evidence_ids": sorted({i for s in edge.sources for i in evidence_ids.get(s, ())})}
     return row
 
 
@@ -73,6 +63,13 @@ def relation_context(context, current, task, *, before=None, assessment=False):
         physical_roots = {k for k in roots if k in nodes and nodes[k].node_type in PHYSICAL}
         chosen |= {e.id for e in edges.values()
                    if e.edge_type == "grounded_on" and e.to_node_id in physical_roots}
+        # Deleting an incorrect physical input must show the surviving direct
+        # semantic operands too. An unchanged Metric node is not changed_nodes,
+        # so the generic change projection otherwise hides these retained edges.
+        affected_metrics = {k for k in roots if k in nodes and nodes[k].node_type == "metric"}
+        chosen |= {e.id for e in edges.values()
+                   if e.from_node_id in affected_metrics
+                   and e.edge_type in {"depends_on", "grounded_on"}}
     else:
         chosen |= {e.id for e in edges.values()
                    if (e.from_node_id in roots or e.to_node_id in roots)
@@ -111,19 +108,41 @@ def relation_context(context, current, task, *, before=None, assessment=False):
     packet = {
         "view": "light_relations_v1", "phase": task.phase, "task_id": task.id,
         "nodes": [
-            ({"id": k, "type": nodes[k].node_type, "name": nodes[k].name}
+            ({"id": k, "node_type": nodes[k].node_type, "name": nodes[k].name}
              if nodes[k].node_type in PHYSICAL else node_view(nodes[k]))
             for k in sorted(selected) if k in nodes
         ],
         "edges": [edge_view(edges[k], evidence_ids) for k in sorted(chosen)],
-        "contracts": [{"id": k, "meaning": contracts[k].description,
-                       "from_types": contracts[k].from_node_types,
-                       "to_types": contracts[k].to_node_types}
+        "contracts": [{"id": k, "description": contracts[k].description,
+                       "from_node_types": contracts[k].from_node_types,
+                       "to_node_types": contracts[k].to_node_types}
                       for k in sorted(predicates) if k in contracts],
         "evidence": list(rows.values()),
         "feedback": task.feedback,
         "allowed_inference": ["is_a transitivity, same scope and compatible branches only"],
     }
+    # Summarize resolved branch meaning once; full business contents remain
+    # available through selective reads, never inferred from common placeholders.
+    from cortex.application.ontology_graph import GraphManager
+    packet["current_conflict_views"] = [
+        {"node_id": key, "alternatives": [
+            {"alternative_id": alternative.alternative_id,
+             "resolved_content": semantic_summary(GraphManager.resolve_alternative(nodes[key], alternative)),
+             "evidence_ids": sorted({i for ref in alternative.sources for i in evidence_ids.get(ref, ())}),
+             "active_outgoing_edge_ids": sorted(
+                 e.id for e in edges.values() if e.from_node_id == key
+                 and (not e.properties.get("alternative_ids")
+                      or alternative.alternative_id in e.properties["alternative_ids"]))}
+            for alternative in nodes[key].alternatives]}
+        for key in sorted(selected & nodes.keys()) if nodes[key].alternatives
+    ]
+    if packet["current_conflict_views"]:
+        packet["conflict_record_semantics"] = (
+            "The owner contains common fields plus whole-field alternative overrides. "
+            "Its common action/reason may be null and its name may be the owner ID when these vary. "
+            "resolved_content is a lightweight semantic summary, not a complete-field record; omitted fields are available on demand. Branch behavior is evaluated separately, "
+            "one alternative at a time; common nulls/placeholders do not prove a missing field."
+        )
     if assessment:
         packet["actual_changes"] = changes
         packet["before_nodes"] = [node_view(old_nodes[k]) for k in
@@ -174,7 +193,23 @@ def relation_context(context, current, task, *, before=None, assessment=False):
              "value_concepts": sorted(v), "column_concepts": sorted(direct[k])}
             for k, v in sorted(domains.items()) if k in nodes and len(v) > 1
         ]
+    # Evidence may belong to edges alone. Collect before presenting, and render
+    # each body once after the graph, scopes and change information.
+    from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
+    presenter = EvidencePresentation(context)
+    selected_evidence = [e["id"] for e in packet.pop("evidence")]
+    packet["evidence"] = presenter.read(selected_evidence)["items"]
     return packet
+
+
+def semantic_summary(content):
+    """Only relationship-relevant meaning, never the complete formula/reason twice."""
+    row = {"name": content.name, "aliases": content.aliases}
+    if content.description:
+        row["description"] = content.description
+    row["properties"] = {k: v for k, v in content.properties.items()
+                         if k in {"definition", "condition", "action", "relation_metadata"}}
+    return row
 
 
 def relation_signature(context, current, task):

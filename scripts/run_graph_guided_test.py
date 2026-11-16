@@ -119,6 +119,27 @@ async def evaluate(args):
                     'retrieve_db':cfg.services.retrieve_db.model_copy(update={'workspace':folder/'retrieval','embedding_model':None})})})
             model=create_chat_model(casecfg.llm,profile='online_context');model.callbacks=[CallAudit(folder)];audit_http(model,folder/'wire')
             traces=[];worker=SimpleNamespace(service=build_online_context_service(config=casecfg,llm=model,embeddings=None,trace_sink=lambda stage,payload: traces.append({"stage":stage,"payload":payload})),simulator=build_simulated_user_agent(config=casecfg,llm=model),traces=traces)
+            if getattr(args, 'replay_discovery', None):
+                # Controlled comparison only: unchanged pre-Filter inputs, never
+                # prior choices, SQL correctness, or targeted repair feedback.
+                from langgraph.checkpoint.sqlite import SqliteSaver
+                from cortex.application.retrieve_db import RetrieveDbResult
+                from cortex.application.online_context import ChoicePoint
+                original = args.replay_discovery/'cases'/str(case['source_id'])
+                with sqlite3.connect(original/'online.sqlite') as connection:
+                    thread_id=connection.execute('SELECT DISTINCT thread_id FROM checkpoints').fetchone()[0]
+                with SqliteSaver.from_conn_string(str(original/'online.sqlite')) as saver:
+                    snapshot=saver.get_tuple({'configurable':{'thread_id':thread_id}})
+                frozen=RetrieveDbResult.model_validate(snapshot.checkpoint['channel_values']['retrieval'])
+                packets=[read(p)['body'] for p in sorted((original/'wire').glob('*_request.json'))]
+                packet=next(b for b in packets if any('Filter proposed clarification questions' in str(m.get('content','')) for m in b.get('messages',()) if m.get('role')=='system'))
+                source=json.loads(next(m['content'] for m in packet['messages'] if m['role']=='user'))
+                fixed_points=tuple(ChoicePoint.model_validate(p) for p in source['slots'])
+                async def replay_retrieve(request, run_id): return frozen
+                async def replay_discover(request, retrieval): return fixed_points, ()
+                worker.service._engine._retrieve=replay_retrieve
+                worker.service._engine._discover=replay_discover
+                write(folder/'replayed_discovery.json',{'source':str(original),'retrieval':frozen.model_dump(mode='json',exclude={'relevant_graph'}),'points':[p.model_dump(mode='json') for p in fixed_points]})
             run_id=hashlib.sha256(str(case['source_id']).encode()).hexdigest()
             if (folder/'online.sqlite').exists():
                 with sqlite3.connect(folder/'online.sqlite') as connection:
@@ -161,6 +182,6 @@ async def evaluate(args):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for key in ['cases','graph-state','config','database-root','keys','output']:p.add_argument('--'+key,type=Path,required=True)
-    p.add_argument('--model',default='deepseek-v4-pro');p.add_argument('--workers',type=int,default=8);p.add_argument('--limit',type=int);p.add_argument('--control',action='store_true')
+    p.add_argument('--replay-discovery',type=Path,help='Controlled Filter-downstream comparison using an existing discovery snapshot; not a from-zero run');p.add_argument('--model',default='deepseek-v4-pro');p.add_argument('--workers',type=int,default=8);p.add_argument('--limit',type=int);p.add_argument('--control',action='store_true')
     asyncio.run(evaluate(p.parse_args()))
 if __name__=='__main__':main()

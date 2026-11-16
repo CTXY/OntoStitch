@@ -493,6 +493,39 @@ def _task_distinctions(context, current, payload, task, origins, source_ids):
     )
 
 
+def _pending_identity_consolidations(context, current, payload, task):
+    """Expose only controller-confirmed future groups, without merging them.
+
+    During serial content tasks the unpublished union can still contain both
+    live members of a confirmed group scheduled for a later task. This is not
+    evidence for unrelated duplicate bindings or unsupported node contents.
+    """
+    decision = getattr(context, "identity_decision", None) or {}
+    if hasattr(decision, "model_dump"):
+        decision = decision.model_dump(mode="json")
+    active = {frozenset(g["members"]) for g in task.groups}
+    live = {n.id for n in current.graph.nodes}
+    supplied = {n["id"] for n in payload.get("candidate_nodes", [])}
+    rows = []
+    for group in decision.get("groups", []):
+        group = group.model_dump(mode="json") if hasattr(group, "model_dump") else dict(group)
+        members = set(group["members"])
+        # Require the exact live input handles. Rewritten/retired descendants
+        # need the ordinary explicit identity projection and review instead.
+        if (len(members) > 1 and members <= live and members & supplied
+                and frozenset(members) not in active):
+            rows.append(group)
+    if rows:
+        payload["pending_identity_consolidations"] = rows
+        payload["pending_identity_consolidations_scope"] = (
+            "These exact live members belong to controller-confirmed identity groups whose content task is still pending. "
+            "This is an unpublished intermediate union, not the final graph. Do not require their early consolidation "
+            "solely because their same-identity copies still share a binding. The later task must consolidate and review them "
+            "before publication. This does not excuse a different-referent binding contest, unsupported content, lost knowledge "
+            "or a concrete counterexample to the declared identity. Check all other target defects normally."
+        )
+
+
 def build_task_context(
     context, current: GraphState, task: LocalTask, origins=None, before=None
 ):
@@ -550,8 +583,9 @@ def build_task_context(
     selected_nodes.update(row["consumer"] for row in consumer_rows)
     required_edges = root_edges | {
         key for key in selected_edges if edges[key].edge_type in _CORE_DEPENDENCIES
+        and (task.phase != "node_assess" or edges[key].from_node_id in root_nodes)
     }
-    required_nodes = root_nodes | {row["consumer"] for row in consumer_rows}
+    required_nodes = root_nodes | ({row["consumer"] for row in consumer_rows} if task.phase != "node_assess" else set())
     required_nodes.update(
         key
         for eid in root_edges
@@ -567,8 +601,9 @@ def build_task_context(
     for edge in edges.values():
         if edge.edge_type == "applies_to" and edge.to_node_id in operands:
             selected_edges.add(edge.id)
-            required_edges.add(edge.id)
-            required_nodes.update((edge.from_node_id, edge.to_node_id))
+            if task.phase != "node_assess":
+                required_edges.add(edge.id)
+                required_nodes.update((edge.from_node_id, edge.to_node_id))
             selected_nodes.update((edge.from_node_id, edge.to_node_id))
             if edge.from_node_id not in root_nodes:
                 consumer_rows.append(
@@ -681,6 +716,7 @@ def build_task_context(
             or e.to_node_id in primary_source_nodes
         )
         and e.edge_type in _CORE_DEPENDENCIES
+        and (task.phase != "node_assess" or e.from_node_id in primary_source_nodes)
     )
     for key in primary_source_nodes:
         required_source_edges.update(
@@ -854,7 +890,9 @@ def build_task_context(
             for row in evidence
         ],
         "local_contracts": [
-            contracts[k].model_dump(mode="json") for k in sorted(source_only_predicates)
+            contracts[k].model_dump(mode="json")
+            for k in sorted(source_only_predicates)
+            if k in contracts
         ],
         "active_contracts": [
             {
@@ -864,6 +902,7 @@ def build_task_context(
                 ),
             }
             for k in sorted(predicates - source_only_predicates)
+            if k in contracts
         ],
         "node_guidance": guidance,
         "operation_registry": known,
@@ -905,6 +944,37 @@ def build_task_context(
             for operand in sorted(operands)
         ],
     }
+    payload["source_presence"] = {
+        "archived_only_node_ids": sorted({row["id"] for row in payload["nodes"]} - nodes.keys()),
+        "archived_only_edge_ids": sorted({row["id"] for row in payload["relations"]} - edges.keys()),
+        "same_id_modified_nodes": sorted(row["id"] for row in payload["nodes"]
+            if row["id"] in nodes and row != nodes[row["id"]].model_dump(mode="json")),
+        "same_id_modified_edges": sorted(row["id"] for row in payload["relations"]
+            if row["id"] in edges and row != edges[row["id"]].model_dump(mode="json")),
+    }
+    payload["conflict_semantics"] = {
+        "owner_contents": "Alternatives are possible resolved contents of one owner, evaluated one selected alternative at a time.",
+        "edge_scope": "An unscoped edge is shared in each alternative. Listing all owner alternatives is equivalent in this snapshot. Edge scope controls presence within a selected alternative; it does not select or activate alternatives.",
+        "unresolved_choices": "Supported incompatible choices may remain an explicit conflict with overlapping conditions. Do not invent disjoint trigger conditions or simultaneous execution of all alternatives.",
+    }
+    payload["current_conflict_views"] = [
+        {
+            "node_id": key,
+            "alternatives": [
+                {
+                    "alternative_id": alternative.alternative_id,
+                    "active_outgoing_edge_ids": sorted(
+                        edge.id for edge in edges.values()
+                        if edge.from_node_id == key and
+                        (not edge.properties.get("alternative_ids") or
+                         alternative.alternative_id in edge.properties["alternative_ids"])
+                    ),
+                }
+                for alternative in nodes[key].alternatives
+            ],
+        }
+        for key in sorted(required_nodes & nodes.keys()) if nodes[key].alternatives
+    ]
     if task.groups:
         payload["matched_groups"] = list(task.groups)
     if task.phase == "node_assess":
@@ -954,6 +1024,7 @@ def build_task_context(
         for key in (context.edges[eid].from_node_id, context.edges[eid].to_node_id)
     )
     _task_distinctions(context, current, payload, task, origins, required_source_nodes)
+    _pending_identity_consolidations(context, current, payload, task)
     _bound_packet(
         payload,
         required_nodes,

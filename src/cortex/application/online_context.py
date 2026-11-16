@@ -125,9 +125,8 @@ class InteractionQuestion(ClarificationPriority):
 
 class ClarificationFilterDecision(_Model):
     choice_point_id: str
-    outcome: Literal["keep", "question_resolved", "database_equivalent", "not_relevant"]
+    outcome: Literal["keep", "question_resolved", "database_equivalent"]
     reason: str = Field(min_length=1)
-    selected_option_id: str | None = None
     question_evidence: str = ""
     excluded_options: dict[str, str] = Field(default_factory=dict)
     covered_option_ids: tuple[str, ...] = ()
@@ -196,6 +195,7 @@ class DownstreamGuidance(_Model):
 
     usage: str
     guidance_content: str
+    rule_guidance: tuple[dict[str, Any], ...] = ()
     ontology_assets: tuple[dict[str, Any], ...] = ()
     interaction_guidance: tuple[InteractionGuidance, ...] = ()
     resolved_join_paths: tuple[str, ...] = ()

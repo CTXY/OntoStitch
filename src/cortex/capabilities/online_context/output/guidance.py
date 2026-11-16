@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Protocol
+from collections import Counter
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, ConfigDict, Field
@@ -29,13 +30,22 @@ class SlotGuidance(_Model):
     )
 
 
+class RuleGuidance(_Model):
+    rule_id: str
+    include: bool
+    reason: str = Field(min_length=1)
+    instruction: str = ""
+
+
 class GuidanceAgentOutput(_Model):
+    rule_guidance: tuple[RuleGuidance, ...] = ()
     guidance_by_slot: tuple[SlotGuidance, ...] = Field(
         description="One independent guidance item per supplied Slot, in Slot order."
     )
 
 
 class GuidanceSynthesis(_Model):
+    rule_guidance: tuple[RuleGuidance, ...] = ()
     guidance_content: str
     interaction_guidance: tuple[InteractionGuidance, ...]
 
@@ -48,11 +58,12 @@ class GuidanceSynthesizer(Protocol):
         dialect: str,
         choice_points: tuple[ChoicePoint, ...],
         answers: tuple[InteractionAnswer, ...],
+        rule_candidates: tuple[dict, ...] = (),
     ) -> GuidanceSynthesis: ...
 
 
 class GuidanceAgent:
-    """Turn task-local user answers into concise executable guidance."""
+    """Render confirmed choices and assess task-local Rule applicability in one call."""
 
     def __init__(self, llm: BaseChatModel) -> None:
         self._llm = llm
@@ -64,8 +75,9 @@ class GuidanceAgent:
         dialect: str = "mysql",
         choice_points: tuple[ChoicePoint, ...],
         answers: tuple[InteractionAnswer, ...],
+        rule_candidates: tuple[dict, ...] = (),
     ) -> GuidanceSynthesis:
-        if not choice_points:
+        if not choice_points and not rule_candidates:
             return GuidanceSynthesis(guidance_content="", interaction_guidance=())
         expected_answer_ids = {
             f"question:{point.choice_point_id}" for point in choice_points
@@ -82,19 +94,38 @@ class GuidanceAgent:
             "dialect": dialect,
             "slots": [item.model_dump(mode="json") for item in choice_points],
             "user_answers": [item.model_dump(mode="json") for item in answers],
+            "rule_candidates": rule_candidates,
         }
+        expected_rule_ids = {item["rule_id"] for item in rule_candidates}
+        if len(expected_rule_ids) != len(rule_candidates):
+            raise ValueError("rule_candidates must have unique rule_id values")
+        expected_slot_ids = tuple(point.choice_point_id for point in choice_points)
+
+        def validate_output(result):
+            actual = [item.rule_id for item in result.rule_guidance]
+            missing = sorted(expected_rule_ids - set(actual))
+            unknown = sorted(set(actual) - expected_rule_ids)
+            duplicate = sorted(key for key, count in Counter(actual).items() if count > 1)
+            if missing or unknown or duplicate:
+                raise ValueError(f"guidance must assess each candidate Rule exactly once; missing_rule_ids={missing}; unknown_rule_ids={unknown}; duplicate_rule_ids={duplicate}")
+            empty = [item.rule_id for item in result.rule_guidance if item.include and not item.instruction.strip()]
+            if empty:
+                raise ValueError(f"applicable Rules require instructions: {empty}")
+            actual_slots = tuple(item.choice_point_id for item in result.guidance_by_slot)
+            if actual_slots != expected_slot_ids:
+                raise ValueError(f"guidance must cover every Slot exactly once and in order; expected={expected_slot_ids}; actual={actual_slots}")
+            for point, item in zip(choice_points, result.guidance_by_slot):
+                answer = next(a for a in answers if a.question_id == f"question:{point.choice_point_id}")
+                _preserve_confirmed_behavior(item.guidance_content, point, answer)
+
         result = await run_llm_extraction(
             llm=self._llm,
             prompt=load_prompt("guidance"),
             output_model=GuidanceAgentOutput,
             human_payload=payload,
+            output_validator=validate_output,
+            repair_with_context=True,
         )
-        expected_slot_ids = tuple(point.choice_point_id for point in choice_points)
-        actual_slot_ids = tuple(
-            item.choice_point_id for item in result.guidance_by_slot
-        )
-        if actual_slot_ids != expected_slot_ids:
-            raise ValueError("guidance must cover every Slot exactly once and in order")
         point_by_id = {item.choice_point_id: item for item in choice_points}
         guidance_by_id = {
             item.choice_point_id: item
@@ -135,6 +166,7 @@ class GuidanceAgent:
         return GuidanceSynthesis(
             guidance_content="\n".join(item.should_be for item in guidance),
             interaction_guidance=tuple(guidance),
+            rule_guidance=result.rule_guidance,
         )
 
 

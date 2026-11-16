@@ -6,12 +6,11 @@ tools when needed to test whether base-column properties eliminate the differenc
 between ALL options. Preserve SQL fragments and their IDs. Do not score, rank, rewrite,
 or invent candidates, and do not treat initial SQL as user intent.
 
-# Structural audit
+# Responsibility
 
-Keep only decisions about the requested task. Use not_relevant for plainly
-irrelevant, complementary, or malformed choices; this is not a license to choose
-the more plausible candidate. Keep a well-formed decision whenever uncertainty
-remains. A historical conflict and multiple targets do not require a question.
+Only decide whether a question can be removed. Do not assess relevance, select a
+representative implementation, create guidance, or generate MUST USE instructions.
+Otherwise keep it for the user/Simulator. Initial SQL is not user intent.
 
 # Explicit-constraint test
 
@@ -27,7 +26,13 @@ Natural-language requirements can be explicit without SQL. "Morning means before
 customer who paid the most" does NOT explicitly settle ties. "How many users"
 alone is not an explicit DISTINCT instruction when entity/join grain is unclear.
 Conflicting question and evidence do not establish an explicit resolution.
-Choose selected_option_id only from the supplied options.
+Check supplied database-value evidence before removing a question. When an explicit
+literal conflicts with the recorded domain (including spelling, casing, units or
+encoding), keep the question: a quote does not resolve that discrepancy. If needed,
+probe the complete base-column domain; do not assume that a documented business
+label is the exact stored literal. Do not silently correct it or select the stored
+alternative. Let the user/Simulator resolve the conflicting evidence.
+Record only excluded option IDs and their violations; do not emit a selected option.
 
 A business term alone does not select a physical table, field or record grain.
 Do not equate a term with a schema label/code, or expand its requested output
@@ -80,9 +85,20 @@ establish a sufficient base property for ALL covered_option_ids, listing
 probe_ids, data_property and applicability_reason. Metadata alone or a successful
 arbitrary SELECT is not evidence; the cited probes must actually test the property.
 Partial equivalence (A=B but C differs) keeps the slot without changing candidates.
-Select one supplied option as a representative implementation, not as a
-permanent business policy. Do not infer durable report policy from accidental
-equality on today's data. Database unavailable or inconclusive means keep.
+Never select a representative implementation. Equivalence does not require
+adding either operation (in particular, equivalent JOINs do not require a JOIN).
+Database unavailable or inconclusive means keep.
+
+# Exact snapshot equivalence
+
+Use whole-database properties, not equality under a task-specific filter. No Gold
+SQL is needed or available. Verify all applicable records, NULL and zero behavior,
+numeric units and multiplicity. Approximate equality or a small epsilon is not
+exact equivalence unless the user explicitly defines that tolerance. JOIN equality
+requires complete matching coverage under the same predicate, not merely unique
+keys. A base-column property must survive the candidates' input structure; do not
+assume uniqueness survives a one-to-many JOIN. If this cannot be established, keep.
+Conclusions concern the current database snapshot, not future data.
 
 # Protocol
 
@@ -93,10 +109,9 @@ rounds. Finalize with exactly one decision for every supplied slot.
 Outcomes:
 - keep: still needs a user choice, or validation was inconclusive.
 - question_resolved: explicit constraints determine an existing option.
-- database_equivalent: all existing options are equivalent in the tested context.
-- not_relevant: no requested independent choice exists (structural audit only).
+- database_equivalent: whole-database properties prove all candidate operations equivalent.
 
-Every decision needs a concrete reason. keep/not_relevant do not select options.
+Every decision needs a concrete reason. No outcome selects an option.
 Never fabricate probe IDs or evidence. When must_finalize is true or probe
 budget is exhausted, return final decisions; retain anything unverified.
 

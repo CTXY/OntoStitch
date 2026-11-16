@@ -2,6 +2,8 @@
 
 ## 图与节点
 
+以下节点准入要求用于新建节点或实质重构新引入的内容；已接受节点及分支是关系判断的前提，不重新审计其事实、公式、理由或原子性。
+
 Ontology graph 可以包含业务类别、任务相关的具体业务对象，以及它们的数据库表示、计算和生成知识。它不要求枚举全部数据实例。每个节点的指代层次和每种关系的断言含义必须明确。
 
 根据当前含义和证据理解指代，不因名称、字段值或一行记录就认定其为类别或具体对象。无需增加角色字段或新的节点基类。
@@ -81,7 +83,7 @@ Ext 表示同范围内类别对应的对象集合。共同父类或共同字段�
 
 同一业务身份或决策下，相关条件重叠而内容/行为要求不相容、又无可靠条件分界时，保存完整 alternatives、各自条件、来源及分支关系；不以宽泛表述或普通副本绕过冲突。
 
-不同 SQL 写法或可同时成立的互补说明不是冲突。已明确违反契约或与源证据矛盾的错误断言可纠正/弃用，记录理由和来源去向；不为保全文字强造 alternatives，也不因跨 case 差异就判定某个来源错误。
+不同 SQL 写法或可同时成立的互补说明不是冲突。明确违反契约或与源证据矛盾的关系断言、本次整合新引入的错误可纠正/弃用，记录理由和来源去向；不能据此重新否定已接受的输入节点知识；不为保全文字强造 alternatives，也不因跨 case 差异就判定某个来源错误。
 
 上述推导和冗余条件在各相关有效分支内检查，不能混用互斥分支的前提。只有所有相关分支均成立的结论，才能在该范围不带分支条件复用。
 
@@ -92,3 +94,17 @@ Ext 表示同范围内类别对应的对象集合。共同父类或共同字段�
 缺少 SELECT 字段、未逐字描述、未观察到某事实，本身不是矛盾。合理解释和泛化可在训练 evidence 无反例时保留；这不等于证明普遍真理。可选抽象缺失、风格偏好或另一种有效组织不是拒绝理由。
 
 来源覆盖不证明语义正确。保留与事实相关的归属，不因 SQL 没投影端点名称而删除来源，也不将所有原始来源广播给所有结果。
+
+
+## Current records and alternative worlds
+
+When supplied, use `source_presence` to distinguish retired archived records from live candidate objects. An archived-only node/edge is historical evidence, not an ordinary current duplicate. For a shared ID whose record changed, judge the candidate version. A missing supported claim may still be reported, but identify the missing current meaning rather than counting a retired record as active.
+
+A conflict owner stores possible complete resolved contents, evaluated one selected alternative at a time. An unscoped outgoing edge is a common fact present in each alternative; explicitly listing all current alternative IDs means the same fact in this snapshot. Edge scope restricts a relation within a selected alternative and does not choose/activate the alternatives. A common `applies_to` edge to the same operand therefore does not execute two competing Rule actions simultaneously. Check that a shared assertion is valid in each relevant branch. Use a subset scope when the assertion holds only in that subset. Supported unresolved choices may retain overlapping conditions: preserve the explicit conflict instead of inventing disjoint triggers. Ordinary live copies outside the conflict still require the usual compatibility/preservation review. When supplied, `current_conflict_views` gives mechanically computed owner-local edge membership for this check.
+
+Conflict storage is factored: the owner stores only common fields, while each alternative supplies whole-field overrides. A common action/reason may therefore be null, and a varying name may appear as the owner ID. These are storage placeholders, not missing required fields. Interpret the branch meaning and applicability needed by the relationship being judged. Do not fetch every complete branch or audit its reason/required fields merely because alternatives exist; read missing content only for a specific relation decision or necessary node reconstruction. Do not replace two supported incompatible actions with one common action just to populate the common record; preserve the alternatives. When supplied, current_conflict_views.resolved_content is a lightweight summary of the GraphManager expansion; omitted fields remain readable, and its active_outgoing_edge_ids gives the edges present in that selected alternative.
+
+
+## Runtime field contract
+
+The lightweight view omits unnecessary fields but never renames stored content: nodes use node_type, name, description and properties.definition/action/condition; edges use edge_type, from_node_id, to_node_id and properties.description/alternative_ids. Unshown fields are not absent. evidence_ids are transport references, not stored SourceReference objects. Read and edit exact paths; full semantic content and resolved alternatives are available on demand.

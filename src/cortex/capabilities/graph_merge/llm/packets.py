@@ -22,6 +22,8 @@ def compact_node_packet(payload):
         reused[archived] = [row["id"] for row in packet.get(archived, []) if row == index.get(row["id"])]
         packet[archived] = [row for row in packet.get(archived, []) if row["id"] not in reused[archived]]
     packet["source_equals_candidate"] = reused
+    if "evidence" in packet:
+        packet["evidence"] = packet.pop("evidence")
     return packet
 
 

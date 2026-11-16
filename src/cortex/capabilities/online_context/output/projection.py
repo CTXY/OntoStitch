@@ -33,6 +33,7 @@ def build_downstream_guidance(
     unselected_graph_refs: set[str] | None = None,
     interaction_guidance: tuple[InteractionGuidance, ...],
     resolved_guidance_content: str,
+    rule_guidance: tuple[dict, ...] = (),
     resolved_join_paths: tuple[str, ...] = (),
     query_examples=(),
     conflicts=(),
@@ -80,6 +81,7 @@ def build_downstream_guidance(
                     for item in interaction_guidance)
     guidance_content = render_sql_handoff({
         "ontology_assets": assets,
+        "rule_guidance": rule_guidance,
         "interaction_guidance": [item.model_dump(mode="json") for item in interaction_guidance],
     })
     # Compatibility for callers that supplied resolved prose without typed choices.
@@ -114,6 +116,7 @@ def build_downstream_guidance(
         ),
         guidance_content=guidance_content,
         ontology_assets=assets,
+        rule_guidance=rule_guidance,
         interaction_guidance=interaction_guidance,
         resolved_join_paths=resolved_join_paths,
         query_examples=tuple(query_examples),

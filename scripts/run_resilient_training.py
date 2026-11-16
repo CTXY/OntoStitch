@@ -68,7 +68,7 @@ def configuration(args, workspace):
     cfg = cfg.model_copy(update={
         'services': cfg.services.model_copy(update={'sql_training': train}),
         'llm': cfg.llm.model_copy(update={'model': args.model,
-            'api_key': slots[args.slot].api_key, 'timeout': 3600, 'max_retries': 8}),
+            'api_key': slots[args.slot].api_key, 'timeout': 3600, 'max_retries': 1}),
     })
     model = create_chat_model(cfg.llm, profile='sql_training')
     model.streaming = model.stream_usage = getattr(args, 'streaming', False)
@@ -233,6 +233,8 @@ def merge_worker(args):
     for ident in manifest['question_ids']:
         row = read(args.output / 'cases' / str(ident) / 'input.json')
         evidence[row['source_id']] = {k: row[k] for k in ('question', 'sql', 'evidence')}
+    if manifest.get('extra_evidence_path'):
+        evidence.update(read(args.output / manifest['extra_evidence_path']))
     resolver = SqlTrainingGraphMergeEvidenceResolver(MappingEvidenceRepository(evidence))
     merged, omitted = list(manifest.get('merge_base_case_ids', [])), []
     remaining = []
@@ -289,7 +291,7 @@ def merge_worker(args):
             time.sleep(30)
             args.slot = (args.slot + 1) % len(read_key_slots(args.keys))
             _cfg, model = configuration(args, args.output / 'merge')
-            if 'Broken pipe' in str(error):
+            if any(term in str(error) for term in ('Broken pipe', 'incomplete chunked read', 'peer closed connection')):
                 # Some upstream bridges fail while forwarding SSE. Retain the
                 # same dialogue/model/service and try its other HTTP mode.
                 model.streaming = model.stream_usage = not previous_streaming

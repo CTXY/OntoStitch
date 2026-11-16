@@ -86,13 +86,13 @@ def test_relation_reads_share_prior_values_without_discarding_first_read():
     ctx.candidate = ctx.union_state()
     ident = ctx.input_node_map['N']
     def read(call_id):
-        return AIMessage(content='', tool_calls=[{'name': 'inspect_items', 'args': {'ids': [ident], 'fields': ['targets']}, 'id': call_id, 'type': 'tool_call'}])
+        return AIMessage(content='', tool_calls=[{'name': 'inspect_items', 'args': {'ids': [ident], 'fields': ['properties.targets']}, 'id': call_id, 'type': 'tool_call'}])
     model = Chat([read('first'), read('again'), AIMessage(content='{"verdict":"accept"}')])
     agent = SimpleNamespace(llm=model, trace_sink=None, call_budget=None, max_calls=None)
     invoke_relation(agent, 'graph_assess', ctx, {'nodes': [], 'edges': [], 'evidence': []})
     replies = [json.loads(m.content) for m in model.requests[-1] if isinstance(m, ToolMessage)]
-    assert replies[0]['items'][0]['targets']
-    assert replies[1]['items'][0]['already_supplied_fields'] == ['targets']
-    assert replies[1]['items'][0]['targets'] == replies[0]['items'][0]['targets']
+    assert replies[0]['items'][0]['properties']['targets']
+    assert replies[1]['already_supplied'] is True
     from cortex.capabilities.graph_merge.llm.reconciliation import RelationReview
-    assert model.tools == [RelationReview]
+    assert RelationReview in model.tools
+    assert any(getattr(t, "name", None) == "inspect_graph" for t in model.tools)

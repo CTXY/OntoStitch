@@ -41,11 +41,12 @@ from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import GraphSpace, GraphState
 
 
-def matched_batches(groups, nodes, budget=16000):
+def matched_batches(groups, nodes, budget=16000, *, measure=None):
     batches, batch, used = [], [], 0
     for group in groups:
         size = sum(len(nodes[k].model_dump_json()) for k in group["members"])
-        if batch and used + size > budget:
+        proposed_size = measure([*batch, group]) if measure else used + size
+        if batch and proposed_size > budget:
             batches.append(batch)
             batch, used = [], 0
         batch.append(group)
