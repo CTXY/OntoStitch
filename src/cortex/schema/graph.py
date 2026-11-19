@@ -54,6 +54,10 @@ class GraphNode(_SchemaModel):
     tags: list[str] = Field(default_factory=list)
     properties: dict[str, Any] = Field(default_factory=dict)
     sources: tuple[SourceReference, ...] = ()
+    common_sources: tuple[SourceReference, ...] = Field(
+        default=(), exclude_if=lambda value: not value,
+        description="Sources for input knowledge preserved in every complete alternative, not blanket support for branch-specific differences.",
+    )
     merge_status: MergeStatus = MergeStatus.NORMAL
     consolidation_status: Literal["semantic_conflict", "unresolved"] | None = None
     preservation_reasons: tuple[str, ...] = ()
@@ -64,7 +68,8 @@ class GraphNode(_SchemaModel):
     def validate_normal_metadata(self) -> Self:
         MergeStatus(self.merge_status)
         if self.merge_status == MergeStatus.NORMAL and (
-            self.consolidation_status is not None
+            self.common_sources
+            or self.consolidation_status is not None
             or self.preservation_reasons
             or self.alternatives
             or self.conflict_points
@@ -88,6 +93,7 @@ class GraphNode(_SchemaModel):
         if self.merge_status != MergeStatus.CONFLICT:
             for field in (
                 "consolidation_status",
+                "common_sources",
                 "preservation_reasons",
                 "alternatives",
                 "conflict_points",
@@ -102,6 +108,7 @@ class GraphNode(_SchemaModel):
         return self.model_copy(
             update={
                 "merge_status": MergeStatus.CONFLICT,
+                "common_sources": proposal.common_sources,
                 "consolidation_status": proposal.consolidation_status,
                 "preservation_reasons": proposal.preservation_reasons,
                 "alternatives": proposal.alternatives,
@@ -114,6 +121,7 @@ class GraphNode(_SchemaModel):
         return self.model_copy(
             update={
                 "merge_status": MergeStatus.NORMAL,
+                "common_sources": (),
                 "consolidation_status": None,
                 "preservation_reasons": (),
                 "alternatives": (),
@@ -127,6 +135,7 @@ class GraphNode(_SchemaModel):
             raise ValueError("normal node has no conflict metadata")
         return NodeMergeConflict(
             node_id=self.id,
+            common_sources=self.common_sources,
             consolidation_status=self.consolidation_status or "unresolved",
             preservation_reasons=self.preservation_reasons,
             alternatives=self.alternatives,
@@ -191,6 +200,10 @@ class NodeMergeConflict(_SchemaModel):
     consolidation_status: Literal["semantic_conflict", "unresolved"] = "unresolved"
     preservation_reasons: tuple[str, ...] = ()
     node_id: str = Field(min_length=1)
+    common_sources: tuple[SourceReference, ...] = Field(
+        default=(), exclude_if=lambda value: not value,
+        description="Sources for input knowledge preserved in every complete alternative, not blanket support for branch-specific differences.",
+    )
     alternatives: tuple[ConflictAlternative, ...] = Field(min_length=2)
     conflict_points: tuple[ConflictPoint, ...] = ()
 
@@ -249,6 +262,13 @@ class NodeMergeConflict(_SchemaModel):
                     "a conflict point must distinguish at least two alternatives"
                 )
         return self
+
+
+def alternative_sources(node: GraphNode, alternative: ConflictAlternative) -> tuple[SourceReference, ...]:
+    """Effective support; common attribution never mutates branch-specific sources."""
+    from cortex.schema.relationships import _union_sources
+
+    return _union_sources(node.common_sources, alternative.sources)
 
 
 GraphNode.model_rebuild()

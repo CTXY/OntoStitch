@@ -6,7 +6,7 @@ from test_graph_integration import catalog, concept, state
 from test_incremental_agent import Chat
 
 from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.llm.reconciliation import invoke_relation
+from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 from cortex.capabilities.graph_merge.llm.transport import invoke_with_recovery
 from cortex.schema import load_root_schema
 
@@ -16,7 +16,7 @@ def test_recovery_preserves_tool_results_without_repeating_reads():
     ctx.candidate = ctx.union_state()
     ident = ctx.input_node_map["N"]
     read = AIMessage(content="", tool_calls=[{
-        "name": "inspect_items", "args": {"ids": [ident], "fields": ["targets"]},
+        "name": "inspect_graph", "args": {"mode": "items", "ids": [ident], "fields": ["properties.targets"]},
         "id": "read-once", "type": "tool_call",
     }])
 
@@ -35,9 +35,9 @@ def test_recovery_preserves_tool_results_without_repeating_reads():
         failures.append(str(error))
         return replacement
 
-    agent = SimpleNamespace(llm=first, trace_sink=None, call_budget=None,
-                            max_calls=None, recover_transport=recover)
-    result = invoke_relation(agent, "graph_assess", ctx, {
+    agent = IncrementalIntegrationAgent(first, max_calls=None)
+    agent.recover_transport = recover
+    result = agent.invoke("graph_assess", ctx, {
         "task_id": "unit", "nodes": [], "edges": [], "evidence": [],
     })
     assert result.verdict == "accept"

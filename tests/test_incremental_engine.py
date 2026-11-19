@@ -79,7 +79,8 @@ def test_interrupted_assessment_resumes_validated_writer_result_without_repeatin
     with pytest.raises(RuntimeError, match="connection loss"):
         first.merge(state(), source, load_root_schema(), run_id="resume")
     saved = WorkspaceStore(path).load("resume")
-    assert saved["pending_review"]["task_id"] == "content-0"
+    assert saved["task_state"]["task_id"] == "content-0"
+    assert saved["task_state"]["stage"] == "assessing"
     assert saved["identity_read_ids"]
     model = IdentityOnlyAgent()
     resumed = IncrementalGraphIntegrationEngine(model, node_context_max_characters=200000)
@@ -229,7 +230,10 @@ def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
             assert any(n["id"] == r for n in payload["before_nodes"])
             return NodeReview(
                 verdict="revise",
-                issues=("The independent supported presentation choice was erased.",),
+                issues=({'refs': [{'kind': 'node', 'id': r, 'view': 'before'}],
+                         'problem': 'The independent supported presentation choice was erased.',
+                         'basis': [{'kind': 'node', 'id': r, 'view': 'before'}],
+                         'required_outcome': 'Retain the supported presentation behavior.'},),
             )
 
     engine = IncrementalGraphIntegrationEngine(Agent(), max_rounds=0)

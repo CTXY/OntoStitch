@@ -8,9 +8,7 @@ from uuid import uuid4
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
 from cortex.capabilities.graph_merge.integration.batch import (
-    ActiveBatch,
     alias_view,
-    delta,
 )
 from cortex.capabilities.graph_merge.integration.compiler import (
     Preview,
@@ -30,9 +28,7 @@ from cortex.capabilities.graph_merge.integration.provenance import (
 from cortex.capabilities.graph_merge.integration.signals import inspection_signals
 from cortex.capabilities.graph_merge.integration.task_context import (
     LocalTask,
-    affected_query_roots,
     build_task_context,
-    semantic_review_targets,
 )
 from cortex.capabilities.graph_merge.integration.two_stage import matched_batches
 from cortex.schema import GraphState
@@ -130,58 +126,17 @@ def identity_task_projection(current, aliases, lineage):
 
 
 
-def relation_repair_work(engine, task):
-    """Restore an unaccepted repair only against its exact accepted base."""
-    import hashlib
-    import json
-    from cortex.schema.validation import validate_graph_state
-
-    saved = getattr(engine, "pending_relation_work", None)
-    if not saved or task.phase != "reconcile":
-        return None
-    if (saved.get("version") != 1 or saved.get("task_id") != task.id
-            or saved.get("accepted_revision") != engine._revision
-            or saved.get("groups") != task.groups or saved.get("checks") != task.checks
-            or saved.get("base_sha256") != hashlib.sha256(engine.current.model_dump_json().encode()).hexdigest()
-            or saved.get("input_fingerprint") != input_fingerprint(engine.ctx)):
-        return None
-    working = GraphState.model_validate(saved["state"])
-    baseline = GraphState.model_validate(saved["review_baseline"])
-    if baseline != alias_view(engine.current, {})[0]:
-        raise ValueError("Unaccepted relation draft does not retain its original accepted baseline")
-    validate_graph_state(working, engine.ctx.schema)
-    validate_graph_state(baseline, engine.ctx.schema)
-    def physical(state):
-        nodes = {n.id: n for n in state.graph.nodes if n.node_type in PHYSICAL}
-        facts = {
-            json.dumps(e.model_dump(mode="json", exclude={"id", "sources", "reference_origin"}), sort_keys=True)
-            for e in state.graph.edges if e.from_node_id in nodes and e.to_node_id in nodes
-        }
-        return nodes, facts
-    if physical(working) != physical(engine.current) or physical(baseline) != physical(engine.current):
-        raise ValueError("Unaccepted relation draft changed the protected physical catalogue")
-    lineage = LineageIndex.restore(engine.ctx, saved["lineage"])
-    validate_rewrite_sources(
-        engine.ctx, IntegrationProposal(changes=lineage.source_changes(working)),
-        Preview(working, lineage.node_map, lineage.edge_map, []),
-    )
-    return saved, working, baseline, lineage
-
-
 def _signal_targets(check, state):
     edges = {e.id: e for e in state.graph.edges}
-    keys = set(check.get("node_ids", ())) | set(check.get("edge_ids", ()))
-    keys |= {x.get("concept") for x in check.get("members", ())}
-    for eid in check.get("edge_ids", ()):
+    keys = set(check.get('node_ids', ())) | set(check.get('edge_ids', ()))
+    keys |= {x.get('concept') for x in check.get('members', ())}
+    for eid in check.get('edge_ids', ()):
         if eid in edges:
             keys.update((edges[eid].from_node_id, edges[eid].to_node_id))
-    if check.get("kind") == "source_selection_variants":
-        operands = set(check.get("node_ids", ()))
-        keys.update(
-            e.from_node_id
-            for e in edges.values()
-            if e.edge_type == "applies_to" and e.to_node_id in operands
-        )
+    if check.get('kind') == 'source_selection_variants':
+        operands = set(check.get('node_ids', ()))
+        keys.update(e.from_node_id for e in edges.values()
+                    if e.edge_type == 'applies_to' and e.to_node_id in operands)
     return {k for k in keys if k in _nodes(state) or k in edges}
 
 
@@ -296,8 +251,16 @@ class IncrementalGraphIntegrationEngine:
         self.reconciliation_complete = False
         self.pending_relation_work = None
         self.pending_review = None
+        from cortex.capabilities.graph_merge.integration.task_state import (
+            build_contract_versions, validate_checkpoint_contract, TaskState,
+        )
+        self.contract_versions = build_contract_versions(schema)
+        self.task_state = None
+        self.checkpoint_migration = None
         resume = getattr(self, "resume_snapshot", None)
         if resume:
+            validate_checkpoint_contract(resume, self.contract_versions)
+            self.checkpoint_migration = resume.get('migration')
             if resume.get("input_fingerprint") != input_fingerprint(ctx):
                 raise ValueError(
                     "Workspace source/schema/evidence fingerprint mismatch"
@@ -335,6 +298,10 @@ class IncrementalGraphIntegrationEngine:
             self.reconciliation_complete = resume.get("reconciliation_complete", False)
             self.pending_relation_work = resume.get("pending_relation_work")
             self.pending_review = resume.get("pending_review")
+            self.open_tasks = list(resume.get('open_tasks', []))
+            if resume.get('task_state'):
+                restored_task = TaskState.from_dict(resume['task_state'])
+                self.task_state = restored_task if restored_task.stage != 'committed' else None
             normalized, edge_aliases = alias_view(self.current, {})
             if normalized != self.current:
                 self.lineage.observe(
@@ -438,14 +405,13 @@ class IncrementalGraphIntegrationEngine:
                 import json
                 from cortex.capabilities.graph_merge.integration.node_context import compact_task_context
                 from cortex.capabilities.graph_merge.llm.packets import compact_node_packet
-                local_aliases, targets = {}, set()
+                targets = set()
                 for group in groups:
-                    projection, live, _ = identity_task_projection(
+                    _projection, live, _ = identity_task_projection(
                         self.current, {k: aliases[k] for k in group["members"]}, self.lineage
                     )
-                    local_aliases.update(projection)
                     targets.update(live)
-                candidate, _ = alias_view(self.current, local_aliases)
+                candidate = self.current
                 task = LocalTask("input-preflight", "consolidate", targets, groups=groups)
                 packet = build_task_context(ctx, candidate, task, origins=self.lineage, before=self.current)
                 packet = compact_task_context(packet, ctx, candidate, targets, groups, for_review=False)
@@ -507,311 +473,23 @@ class IncrementalGraphIntegrationEngine:
         return result
 
     def _run_task(self, task, run_id, *, aliases=None):
-        repair = relation_repair_work(self, task)
-        saved = None if repair else getattr(self, "pending_review", None)
-        if saved and (
-            saved["revision"] != self._revision or saved["task_id"] != task.id
-            or saved["phase"] != task.phase or saved["aliases"] != (aliases or {})
-            or saved["groups"] != task.groups or saved["checks"] != task.checks
-        ):
-            saved = None
-        if saved:
-            task.targets.update(saved["targets"])
-            task.feedback = list(saved.get("feedback", task.feedback))
-        ctx = self.ctx
-        before = self.current
-        working, review_baseline = before, None
-        new_id_prefix = saved.get("new_id_prefix", f"generated::{uuid4().hex}::") if saved else f"generated::{uuid4().hex}::"
-        projected_lineage = LineageIndex.restore(ctx, self.lineage.snapshot())
-        if repair:
-            saved_work, working, review_baseline, projected_lineage = repair
-            task.targets.update(saved_work["targets"])
-            task.feedback = list(saved_work["feedback"])
-            new_id_prefix = saved_work["new_id_prefix"]
-        batch = ActiveBatch(ctx, working, targets=task.targets, aliases={} if repair else aliases)
-        if review_baseline is None:
-            review_baseline = batch.seed
-        # This projection is controller-owned, so fail before any model call if
-        # its state assumptions are invalid. The Agent cannot repair this map.
-        projected_lineage.observe(
-            working, batch.seed, node_aliases={} if repair else aliases, edge_aliases=batch.edge_aliases
-        )
-        ctx.active_task = task
-        ctx.active_batch = batch
-        self.open_tasks = [
-            {"id": task.id, "phase": task.phase, "targets": sorted(task.targets)}
-        ]
-        self._persist(run_id)
-        ctx.workspace_revision = self._revision
-        extensions = batch.scope_events
-        review_history = list(repair[0].get("review_history", [])) if repair else list(saved.get("review_history", [])) if saved else []
-        resume_relation_review = bool(repair and repair[0].get("status") == "unaccepted_pending_independent_review")
-
-        checks = {s["id"]: s for s in task.checks}
-
-        def validate(candidate, changes, result):
-            found = [c.inspection_id for c in result.inspection_checks]
-            if task.phase != "reconcile" and (set(found) != set(checks) or len(found) != len(set(found))):
-                raise ValueError(
-                    f"Conclude each active inspection once: {sorted(checks)}"
-                )
-            nodes = _nodes(candidate)
-            for check in result.inspection_checks:
-                if check.conclusion == "failed":
-                    raise ValueError("Resolve the named inspection before accepting")
-                if (
-                    checks[check.inspection_id]["kind"]
-                    in {"related_decisions", "source_selection_variants"}
-                    and check.decision_relation is None
-                ):
-                    raise ValueError(
-                        "State compatible/conditional/conflict/different_decision"
-                    )
-                if check.decision_relation == "conflict" and not any(
-                    k in nodes and len(nodes[k].alternatives) > 1
-                    for k in check.result_ids
-                ):
-                    raise ValueError(
-                        "Conflict is not resolved by listing ordinary competing Rules. Put complete sourced alternatives on the relevant current Rule with conflicts; replace obsolete copies and repair consumers in this batch. Include the necessary coupled Rule in the local proposal; the controller supplies missing context. A different label cannot substitute for fixing the same decision."
-                    )
-            # Relation Writer checks its region; actual changes receive the
-            # targeted graph review below, not a retained-Rule checklist.
-            if any(not r.supported for r in result.rationale_checks):
-                raise ValueError("Repair unsupported Rule reasons before accepting")
-            # Origin ledger checks are staged on a clone, so invalid patches do
-            # not pollute the accepted source correspondences.
-            staged = LineageIndex.restore(ctx, projected_lineage.snapshot())
-            staged.observe(batch.seed, candidate, changes)
-            validate_rewrite_sources(
-                ctx,
-                IntegrationProposal(changes=staged.source_changes(candidate)),
-                Preview(candidate, staged.node_map, staged.edge_map, []),
-            )
-            batch.lineage_preview = staged
-
-        def save_relation_work(candidate, status):
-            import hashlib
-            self.pending_relation_work = {
-                "version": 1, "task_id": task.id,
-                "accepted_revision": self._revision,
-                "base_sha256": hashlib.sha256(before.model_dump_json().encode()).hexdigest(),
-                "input_fingerprint": input_fingerprint(ctx),
-                "groups": task.groups, "checks": task.checks,
-                "targets": sorted(task.targets), "feedback": list(task.feedback),
-                "review_history": review_history, "new_id_prefix": new_id_prefix,
-                "review_baseline": review_baseline.model_dump(mode="json"),
-                "state": candidate.model_dump(mode="json"),
-                "lineage": batch.lineage_preview.snapshot(), "status": status,
-            }
-            self._persist(run_id)
-
-        batch.extra_check = validate
-        if saved and saved.get("stage") == "revise":
-            from cortex.capabilities.graph_merge.integration.batch import BatchResult
-            prior = BatchResult.model_validate(saved["result"])
-            batch.restore_pending(saved["pending_state"])
-            batch.submit(BatchResult(inspection_checks=prior.inspection_checks,
-                                     rationale_checks=prior.rationale_checks))
-            saved = None
-        last_relation_review = None
-        for attempt in range(self.max_rounds + 1):
-            ctx.candidate = batch.preview or batch.seed
-            if task.phase == "reconcile":
-                from cortex.capabilities.graph_merge.integration.relation_context import (
-                    relation_context,
-                )
-
-                payload = relation_context(ctx, ctx.candidate, task)
-            else:
-                from cortex.capabilities.graph_merge.integration.node_context import compact_task_context, revision_task
-                input_task = revision_task(task, review_history[-1], batch.aliases) if review_history else task
-                payload = build_task_context(
-                    ctx, ctx.candidate, input_task, origins=getattr(batch, "lineage_preview", self.lineage), before=before
-                )
-                payload = compact_task_context(payload, ctx, ctx.candidate, input_task.targets, input_task.groups, for_review=False)
-            payload["new_id_prefix"] = new_id_prefix
-            if task.phase != "reconcile":
-                payload.setdefault("task_scope", {})["writable_ids"] = sorted(batch.allowed)
-                payload["identity_aliases"] = batch.aliases
-                payload["pending_revision"] = batch.revision
-                if batch.pending or batch.changes or batch.contracts:
-                    from cortex.capabilities.graph_merge.integration.submission import (
-                        edit_key,
-                    )
-
-                    payload["saved_patch"] = {
-                        "edits": [
-                            {
-                                "kind": edit_key(e)[0],
-                                "id": edit_key(e)[1],
-                                "operation": e["operation"],
-                            }
-                            for e in batch.pending.values()
-                        ],
-                        "changes": batch.changes,
-                        "relation_contract_ids": sorted(batch.contracts),
-                        "edge_merges": [
-                            m.model_dump(mode="json") for m in batch.edge_merges.values()
-                        ],
-                    }
-            from cortex.capabilities.graph_merge.integration.proposal_scope import ProposalScope
-            from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
-            proposal_scope = ProposalScope(ctx, payload, EvidencePresentation(ctx, payload.get("evidence", [])))
-            batch.prepare_submission = proposal_scope.prepare
-            ctx.output_validator = batch.submit_atomic
-            if resume_relation_review:
-                from cortex.capabilities.graph_merge.integration.batch import BatchResult
-                result = BatchResult()
-                batch.submit(result)
-                resume_relation_review = False
-            elif saved is not None:
-                from cortex.capabilities.graph_merge.integration.batch import BatchResult
-
-                result = BatchResult.model_validate(saved["result"])
-                if "pending_state" in saved:
-                    batch.restore_pending(saved["pending_state"])
-                    result = BatchResult(
-                        inspection_checks=result.inspection_checks,
-                        rationale_checks=result.rationale_checks,
-                    )
-                batch.submit(result)
-                saved = None
-            else:
-                result = self.agent.invoke(task.phase, ctx, payload)
-            # Injected test agents use the same validation path.
-            if batch.result is not result and batch.preview is None:
-                batch.submit_atomic(result)
-            candidate = batch.preview
-            self.pending_review = {
-                "revision": self._revision, "task_id": task.id, "phase": task.phase,
-                "stage": "assess", "feedback": list(task.feedback),
-                "review_history": list(review_history), "new_id_prefix": new_id_prefix,
-                "aliases": aliases or {}, "targets": sorted(task.targets),
-                "groups": task.groups, "checks": task.checks,
-                "result": batch.result.model_dump(mode="json"),
-                "pending_state": batch.pending_snapshot(),
-            }
-            self._persist(run_id)
-            review = None
-            review_ids = set()
-            if task.phase == "reconcile":
-                if candidate != review_baseline:
-                    save_relation_work(candidate, "unaccepted_pending_independent_review")
-                    from cortex.capabilities.graph_merge.integration.relation_context import (
-                        relation_context,
-                    )
-
-                    reviewtask = LocalTask(
-                        task.id + "-graph-review", "graph_assess", task.targets,
-                        feedback=list(task.feedback),
-                    )
-                    ctx.candidate = candidate
-                    reviewpayload = relation_context(
-                        ctx, candidate, reviewtask, before=review_baseline, assessment=True
-                    )
-                    from cortex.capabilities.graph_merge.integration.edit_feedback import review_key
-                    from cortex.capabilities.graph_merge.integration.relation_edits import RegionIncomplete
-                    key = review_key(reviewpayload)
-                    if last_relation_review is not None and last_relation_review[0] == key:
-                        save_relation_work(candidate, "unaccepted_requires_full_review")
-                        raise RegionIncomplete("Unchanged rejected candidate; prior assessment remains valid. No repeated Assessment was called.")
-                    ctx.output_validator = None
-                    review = self.agent.invoke("graph_assess", ctx, reviewpayload)
-                    last_relation_review = (key, review)
-            else:
-                impact = semantic_review_targets(before, candidate, task.targets)
-                if impact["requires_evidence_check"] and self._needs_evidence_review(before, candidate):
-                    impact = semantic_review_targets(before, candidate, task.targets, evidence_changed=True)
-                review_ids = set(impact["targets"]) | {
-                    k for k in delta(before, candidate)["nodes"]["deleted"]
-                    if _nodes(before)[k].node_type not in PHYSICAL
-                }
-                review_ids |= {k for k in task.targets if k in _nodes(candidate)}
-                if review_ids:
-                    reviewtask = LocalTask(
-                        task.id + "-node-review", "node_assess", review_ids,
-                        groups=task.groups, checks=task.checks, feedback=list(task.feedback),
-                    )
-                    from cortex.capabilities.graph_merge.integration.node_review import assess_nodes
-                    ctx.output_validator = None
-                    review = assess_nodes(self.agent, ctx, candidate, reviewtask,
-                        origins=batch.lineage_preview, before=before,
-                        earlier_findings=review_history[:-1],
-                        max_characters=self.node_context_max_characters)
-            if review is not None and review.verdict != "accept":
-                if review.verdict == "revisit_identity":
-                    raise IntegrationIncomplete(
-                        "Concrete identity counterexample: rebuild this unpublished input batch"
-                    )
-                review_history.append({
-                    "issues": list(review.issues),
-                    "issue_refs": [r.model_dump(mode="json") for r in review.issue_refs],
-                })
-                task.feedback = [{"issues": list(review.issues),
-                    "issue_refs": [r.model_dump(mode="json") for r in review.issue_refs]}]
-                task.targets.update(r.id for r in review.issue_refs)
-                batch.allowed.update(task.targets)
-                # Reviewer-named roots get the same incident-assertion scope as
-                # initial roots; neighbouring nodes stay read-only.
-                batch.allowed.update(
-                    edge.id
-                    for graph in (batch.seed.graph, candidate.graph)
-                    for edge in graph.edges
-                    if edge.from_node_id in task.targets or edge.to_node_id in task.targets
-                )
-                if task.phase == "reconcile":
-                    save_relation_work(candidate, "unaccepted_requires_full_review")
-                    if attempt < self.max_rounds:
-                        projected_lineage = LineageIndex.restore(ctx, batch.lineage_preview.snapshot())
-                        batch = ActiveBatch(ctx, candidate, targets=task.targets)
-                        projected_lineage.observe(candidate, batch.seed, edge_aliases=batch.edge_aliases)
-                        batch.extra_check = validate
-                        ctx.active_batch = batch
-                if task.phase == "reconcile":
-                    self.pending_review = None
-                else:
-                    self.pending_review.update(stage="revise", feedback=list(task.feedback),
-                        targets=sorted(task.targets), review_history=list(review_history),
-                        new_id_prefix=new_id_prefix)
-                self._persist(run_id)
-                continue
-            # No model transaction remains open while persistence runs.
-            self.lineage = batch.lineage_preview
-            self.current = candidate
-            self._mark_reviewed(review_ids)
-            self._revision += 1
-            self.history.append(
-                {
-                    "task_id": task.id,
-                    "phase": task.phase,
-                    "revision": self._revision,
-                    "delta": delta(before, candidate),
-                    "extensions": extensions,
-                    "node_review_ids": sorted(review_ids),
-                    "assessment": ("graph_assess" if task.phase == "reconcile" else "node_assess") if review is not None else "skipped_no_change",
-                    "changes": [
-                        c.model_dump(mode="json") for c in batch.result.changes
-                    ],
-                }
-            )
-            self.open_tasks = []
-            self.pending_relation_work = None
-            self.pending_review = None
-            self._persist(run_id)
-            impacts = affected_query_roots(before, candidate)
-            if task.phase == "reconcile":
-                # The writer has checked its own accepted result. Reopen only
-                # effects outside that reviewed scope, not the same patch again.
-                impacts -= task.targets | set(
-                    delta(before, candidate)["nodes"]["created"]
-                )
-            return impacts
-        raise IntegrationIncomplete(
-            f"{task.id} failed independent node assessment; batch not published"
-        )
+        from cortex.capabilities.graph_merge.integration.task_runner import run_task
+        return run_task(self, task, run_id, aliases=aliases)
 
     def _reconcile(self, run_id, *, first=False, initial_targets=None):
         reviewed = set()
+        saved_task = getattr(self, 'task_state', None)
+        if saved_task is not None and saved_task.phase == 'reconcile':
+            definitions = [r for r in self.open_tasks if r['id'] == saved_task.task_id]
+            if len(definitions) != 1:
+                raise ValueError('Unfinished relation task has no exact saved definition')
+            row = definitions[0]
+            resumed_task = LocalTask(row['id'], row['phase'], set(row['targets']),
+                groups=row.get('groups', []), checks=row.get('checks', []), feedback=row.get('feedback', []))
+            self._run_task(resumed_task, run_id)
+            from cortex.capabilities.graph_merge.integration.relation_context import relation_signature
+            self.relation_coverage.add(relation_signature(self.ctx, self.current, resumed_task))
+            self._persist(run_id)
         incoming_roots = {
             k
             for k, n in _nodes(self.current).items()
@@ -930,41 +608,6 @@ class IncrementalGraphIntegrationEngine:
                 if self.current == before:
                     raise error
 
-    def _evidence_keys(self, references):
-        import hashlib
-        import json
-
-        keys = set()
-        for ref in references:
-            rows = [e for e in self.ctx.evidence if e.source == ref]
-            if not rows:
-                keys.add(None)
-            for row in rows:
-                content = json.dumps(row.content, ensure_ascii=False, sort_keys=True)
-                keys.add((row.id, hashlib.sha256(content.encode()).hexdigest()))
-        return keys
-
-    def _needs_evidence_review(self, before, after):
-        for kind in ("nodes", "edges"):
-            old = {x.id: x for x in getattr(before.graph, kind)}
-            for obj in getattr(after.graph, kind):
-                if obj.id not in old:
-                    continue  # New semantic contents already trigger A.
-                added = set(obj.sources) - set(old[obj.id].sources)
-                removed = set(old[obj.id].sources) - set(obj.sources)
-                if removed:
-                    return True
-                if not added:
-                    continue
-                owner = obj.id if kind == "nodes" else obj.from_node_id
-                seen = self._evidence_keys(self.reviewed_sources.get(owner, set())) - {
-                    None
-                }
-                fresh = self._evidence_keys(added)
-                if None in fresh or not fresh <= seen:
-                    return True
-        return False
-
     def _mark_reviewed(self, ids):
         nodes = _nodes(self.current)
         for key in ids:
@@ -1006,6 +649,9 @@ class IncrementalGraphIntegrationEngine:
             "reconciliation_complete": getattr(self, "reconciliation_complete", False),
             "pending_relation_work": getattr(self, "pending_relation_work", None),
             "pending_review": getattr(self, "pending_review", None),
+            "contract_versions": self.contract_versions.to_dict() if getattr(self, 'contract_versions', None) else None,
+            "task_state": self.task_state.to_dict() if getattr(self, 'task_state', None) else None,
+            **({'migration': self.checkpoint_migration} if getattr(self, 'checkpoint_migration', None) else {}),
             "reviewed_sources": {
                 k: [
                     r.model_dump(mode="json")

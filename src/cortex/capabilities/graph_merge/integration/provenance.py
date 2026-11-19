@@ -13,9 +13,8 @@ class SourceCoverageError(ValueError):
 def element_sources(obj, alternative_id=None):
     alternatives = getattr(obj, "alternatives", ())
     if alternative_id:
-        return set(
-            next(a for a in alternatives if a.alternative_id == alternative_id).sources
-        )
+        from cortex.schema.graph import alternative_sources
+        return set(alternative_sources(obj, next(a for a in alternatives if a.alternative_id == alternative_id)))
     return set(obj.sources) | {s for a in alternatives for s in a.sources}
 
 
@@ -27,6 +26,25 @@ def validate_rewrite_sources(context, proposal, preview):
     """
     nodes = {n.id: n for n in preview.state.graph.nodes}
     edges = {e.id: e for e in preview.state.graph.edges}
+    discarded = {}
+    for change in proposal.changes:
+        if not change.after:
+            for ref in change.before:
+                if ref.kind == "node" and ref.alternative_id:
+                    discarded.setdefault(ref.id, set()).add(ref.alternative_id)
+
+    def required_sources(obj, alternative_id=None):
+        refs = element_sources(obj, alternative_id)
+        removed = discarded.get(obj.id, set())
+        if alternative_id or not removed:
+            return refs
+        # Only evidence exclusive to explicitly discarded alternatives may leave
+        # a whole-node disposition. Shared/common support remains mandatory.
+        retained = set(getattr(obj, "common_sources", ()))
+        dropped = set()
+        for alternative in getattr(obj, "alternatives", ()):
+            (dropped if alternative.alternative_id in removed else retained).update(alternative.sources)
+        return refs - (dropped - retained)
     rewritten = {(ref.kind, ref.id) for c in proposal.changes for ref in c.before}
     for kind, originals, results, aliases in (
         ("node", context.raw_nodes, nodes, preview.node_map),
@@ -36,7 +54,7 @@ def validate_rewrite_sources(context, proposal, preview):
             target = aliases.get(key, key)
             if (kind, key) in rewritten or target not in results:
                 continue
-            missing = element_sources(original) - element_sources(results[target])
+            missing = required_sources(original) - element_sources(results[target])
             if missing:
                 from cortex.capabilities.graph_merge.integration.models import Element
                 raise SourceCoverageError(
@@ -51,7 +69,7 @@ def validate_rewrite_sources(context, proposal, preview):
         after = set()
         for ref in change.before:
             objects = context.raw_nodes if ref.kind == "node" else context.raw_edges
-            before.update(element_sources(objects[ref.id], ref.alternative_id))
+            before.update(required_sources(objects[ref.id], ref.alternative_id))
         for ref in change.after:
             objects = nodes if ref.kind == "node" else edges
             aliases = preview.node_map if ref.kind == "node" else preview.edge_map

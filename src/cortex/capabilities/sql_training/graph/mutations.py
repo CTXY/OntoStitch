@@ -216,8 +216,10 @@ def apply_edit(
             conflict = NodeMergeConflict.model_validate(raw_conflict)
             if (
                 "sources" in raw_node
+                or "common_sources" in raw_node
                 or "merge_status" in raw_node
                 or any(key in raw_node for key in ("alternatives", "conflict_points", "consolidation_status", "preservation_reasons"))
+                or "common_sources" in raw_conflict
                 or any(
                     "sources" in alternative
                     for alternative in raw_conflict.get("alternatives", [])
@@ -241,6 +243,7 @@ def apply_edit(
 
             conflict = conflict.model_copy(
                 update={
+                    "common_sources": previous.common_sources if previous else (),
                     "alternatives": tuple(
                         a.model_copy(
                             update={

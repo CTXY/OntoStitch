@@ -1,6 +1,10 @@
 """Shared complete-focus, light-neighbour transport for node writers and reviews."""
 
 def compact_task_context(payload, context, candidate, ids, groups, *, for_review=True):
+    payload["revision"] = getattr(context, "workspace_revision", 0)
+    from cortex.application.ontology_graph import GraphManager
+    from cortex.capabilities.graph_merge.integration.relation_context import semantic_summary
+    current_nodes = {node.id: node for node in candidate.graph.nodes}
     payload["review_scope" if for_review else "revision_scope"] = "Only reviewed IDs receive verdicts. Other content is dependency context; omitted fields are readable, not absent. All slices use the same immutable candidate; code requires every slice."
     # Full focus/source members and formula operands stay intact. A group
     # neighbour is context, not a request to revalidate all its bindings.
@@ -12,10 +16,18 @@ def compact_task_context(payload, context, candidate, ids, groups, *, for_review
             full.update(references(n))
     for field in ("candidate_nodes", "nodes"):
         payload[field] = [row if row["id"] in full else
-            {k: v for k, v in row.items() if k in {"id", "node_type", "name", "description", "aliases", "alternatives", "conflict_points", "sources"}} |
+            {k: v for k, v in row.items() if k in {"id", "node_type", "name", "description", "aliases", "alternatives", "conflict_points", "sources", "common_sources"}} |
             {"properties": {k: v for k, v in row.get("properties", {}).items() if k in {"definition", "action", "condition"}}}
             for row in payload[field]]
         for row in payload[field]:
+            node = (current_nodes.get(row["id"]) if field == "candidate_nodes" else
+                    context.nodes.get(row["id"]) or context.raw_nodes.get(row["id"]))
+            if node is not None and node.alternatives:
+                row["alternatives"] = [{"alternative_id": alternative.alternative_id,
+                    "content": (GraphManager.resolve_alternative(node, alternative).model_dump(mode="json")
+                                if row["id"] in full else semantic_summary(GraphManager.resolve_alternative(node, alternative))),
+                    "sources": [source.model_dump(mode="json") for source in alternative.sources]}
+                    for alternative in node.alternatives]
             if row["id"] not in full and row.get("description") == row.get("properties", {}).get("definition"):
                 row.pop("description", None)
     current_ids = {node.id for node in candidate.graph.nodes}
@@ -37,17 +49,19 @@ def compact_task_context(payload, context, candidate, ids, groups, *, for_review
             if not row.get(key):
                 row.pop(key, None)
         row.pop("merge_status", None)
+    from cortex.capabilities.graph_merge.integration.relation_context import physical_view
+    nodes = {node.id: node for node in candidate.graph.nodes}
+    payload["physical_facts"] = [physical_view(nodes[row["id"]], nodes, candidate.graph.edges)
+                                  if row["id"] in nodes else row for row in payload.get("physical_facts", [])]
     guides = payload.get("node_guidance", {})
     if guides:
-        from importlib.resources import files
-        guide = files("cortex.capabilities.graph_merge.llm.prompts").joinpath("incremental_content_shared.md").read_text()
-        payload["node_guidance"] = {"types": sorted(guides), "guidance": guide}
-        if not for_review:
-            payload["node_guidance"]["fields_by_type"] = {k: v["fields"] for k, v in guides.items() if "fields" in v}
+        payload["node_guidance"] = {"types": sorted(guides)}
     # Accepted source Rules are not re-audited during integration.
     for key in ("rationale_review_ids", "decision_review_ids", "rationale_scope"):
         payload.pop(key, None)
     scope = payload["task_scope"]
+    if "revision" in scope:
+        payload["candidate_hash"] = scope.pop("revision")
     # These describe the uncompressed controller packet, not the supplied view.
     # Keeping them invites a reviewer to fetch omitted neighbours to "complete"
     # an already complete matched-group review.
@@ -69,17 +83,8 @@ def compact_task_context(payload, context, candidate, ids, groups, *, for_review
     from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
     evidence_rows = EvidencePresentation(context).read([e["id"] for e in payload.pop("evidence", [])])["items"]
     if not for_review:
-        payload["revision_scope"] = "Repair the supplied defects and necessary consequences. Complete focus/source members are provided; other nodes are context with on-demand full reads. Code retains all other matched-group aliases and pending edits; omitted content was not deleted."
+        payload["revision_scope"] = "Integrate the complete supplied focus/source members and repair necessary coupled consequences. Other records are dependency context with full reads available. A summary omission is not deletion; the submitted draft is compiled against the fixed accepted task baseline."
     from cortex.capabilities.graph_merge.integration.edit_feedback import current_repair_fields
-    payload["current_repair_fields"] = current_repair_fields(candidate, payload.get("feedback", []))
+    payload["current_repair_fields"] = current_repair_fields(candidate, payload.get("feedback", []), context=context)
     payload["evidence"] = evidence_rows
     return payload
-
-def revision_task(task, findings, aliases):
-    """Use explicit reviewer references, never NL heuristics, to focus a repair."""
-    from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-    refs = {row['id'] for row in findings.get('issue_refs', [])}
-    if not refs:
-        return task
-    groups = [g for g in task.groups if any(aliases.get(k, k) in refs or k in refs for k in g['members'])]
-    return LocalTask(task.id, task.phase, refs, groups=groups, checks=task.checks, feedback=task.feedback)

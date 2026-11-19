@@ -1,16 +1,17 @@
 import pytest
 from test_graph_integration import catalog, concept, state
-from cortex.capabilities.graph_merge.integration.batch import BatchResult
 from cortex.capabilities.graph_merge.integration.context import IntegrationContext
 from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
 from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+from cortex.capabilities.graph_merge.integration.task_state import TaskState
+from cortex.capabilities.graph_merge.integration.patch import MergePatch
 from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.incremental import NodeReview
 from cortex.schema import GraphState, load_root_schema
 
 
-def test_writer_revision_retains_valid_buffer_and_counterexample_across_transport_loss(tmp_path):
+def test_writer_revision_retains_draft_and_finding_across_transport_loss(tmp_path):
     original = state([*catalog(), concept('A', 'a')])
     path = tmp_path / 'workspace.sqlite'
 
@@ -19,15 +20,18 @@ def test_writer_revision_retains_valid_buffer_and_counterexample_across_transpor
         def invoke(self, phase, ctx, payload):
             key = ctx.input_node_map['A']
             if phase == 'node_assess':
-                return NodeReview.model_validate({'verdict': 'revise', 'issues': ['Use the supported name.'],
-                    'issue_refs': [{'kind': 'node', 'id': key}]})
+                return NodeReview.model_validate({'verdict': 'revise', 'issues': [{
+                    'refs': [{'kind': 'node', 'id': key, 'fields': ['name']}],
+                    'problem': 'Use the supported name.',
+                    'basis': [{'kind': 'node', 'id': key, 'view': 'before', 'fields': ['name']}],
+                    'required_outcome': 'Keep a name supported by the original referent.'}]})
             self.calls += 1
             if self.calls > 1:
-                assert payload['feedback'][0]['issues'] == ['Use the supported name.']
+                assert payload['issues'][0]['problem'] == 'Use the supported name.'
                 raise RuntimeError('transport lost while correcting')
-            raw = next(n for n in ctx.candidate.graph.nodes if n.id == key).model_dump(mode='json')
-            raw['name'] = 'Unaccepted pending name'
-            result = BatchResult.model_validate({'edits': [{'operation': 'update_node', 'node': raw}]})
+            result = MergePatch.model_validate({'node_updates': [{
+                'id': key, 'name': 'Unaccepted pending name', 'explanation': 'Propose a representative name.'}],
+                'explanation': 'Rename the current concept.'})
             ctx.output_validator(result)
             return result
 
@@ -38,6 +42,10 @@ def test_writer_revision_retains_valid_buffer_and_counterexample_across_transpor
         value._revision, value.history, value.reviewed_sources, value.identity_decision = 0, [], {}, {}
         value.workspace_path, value._storage_revision = path, saved['revision'] if saved else None
         value.pending_review = saved['pending_review'] if saved else None
+        if saved:
+            value.task_state = TaskState.from_dict(saved['task_state'])
+            value.contract_versions = value.task_state.versions
+            value.open_tasks = saved['open_tasks']
         return value, LocalTask('content', 'consolidate', {ctx.input_node_map['A']})
 
     first, task = engine(First())
@@ -46,8 +54,9 @@ def test_writer_revision_retains_valid_buffer_and_counterexample_across_transpor
         first._run_task(task, 'revision')
     saved = WorkspaceStore(path).load('revision')
     assert GraphState.model_validate(saved['current']) == before
-    assert saved['pending_review']['stage'] == 'revise'
-    assert saved['pending_review']['feedback'][0]['issues'] == ['Use the supported name.']
+    assert saved['task_state']['stage'] == 'revising'
+    assert saved['task_state']['issues'][0]['problem'] == 'Use the supported name.'
+    assert saved['task_state']['draft']['node_updates'][0]['name'] == 'Unaccepted pending name'
 
     class Corrected:
         phases = []
@@ -55,11 +64,13 @@ def test_writer_revision_retains_valid_buffer_and_counterexample_across_transpor
             self.phases.append(phase)
             if phase == 'node_assess':
                 return NodeReview(verdict='accept')
-            assert payload['feedback'][0]['issues'] == ['Use the supported name.']
-            raw = next(n for n in ctx.candidate.graph.nodes if n.node_type == 'concept').model_dump(mode='json')
-            assert raw['name'] == 'Unaccepted pending name'
-            raw['name'] = 'Supported corrected name'
-            result = BatchResult.model_validate({'edits': [{'operation': 'update_node', 'node': raw}]})
+            assert payload['issues'][0]['problem'] == 'Use the supported name.'
+            current = next(n for n in ctx.candidate.graph.nodes if n.node_type == 'concept')
+            assert current.name == 'Unaccepted pending name'
+            assert next(n for n in ctx.task_before.graph.nodes if n.id == current.id).name != current.name
+            result = MergePatch.model_validate({'node_updates': [{
+                'id': current.id, 'name': 'Supported corrected name', 'explanation': 'Use the supported referent name.'}],
+                'explanation': 'Replace the unaccepted naming draft.'})
             ctx.output_validator(result)
             return result
 

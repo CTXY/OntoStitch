@@ -47,7 +47,8 @@ def test_local_evidence_directory_does_not_include_unrelated_global_cases():
     assert len(payload["evidence_directory"]) == 2
     known = {s for row in payload["evidence_directory"] for s in row["source_ids"]}
     distant = next(n for n in old.graph.nodes if n.id not in known)
-    inspect, read_evidence, _ = build_tools(context)
+    registry = {tool.name: tool for tool in build_tools(context)}
+    inspect, read_evidence = registry['inspect_graph'], registry['read_evidence']
     assert inspect.invoke({"mode": "nodes", "ids": [distant.id]})["items"]
     result = read_evidence.invoke({"ids": [distant.sources[0].source_id]})
     assert result["items"][0]["content"] == {"question": f"Question for {distant.id}"}

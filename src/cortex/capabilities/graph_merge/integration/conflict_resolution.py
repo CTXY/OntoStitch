@@ -2,6 +2,7 @@
 from pydantic import Field
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.integration.models import Model
+from cortex.schema.graph import alternative_sources
 
 
 class ConflictResolution(Model):
@@ -22,7 +23,8 @@ def resolution_edits(current, resolutions):
         if any(not v.strip() for v in resolution.discard_reasons.values()):
             raise ValueError("Each discarded alternative requires an evidenced reason")
         content = GraphManager.resolve_alternative(owner, alternatives[keep])
-        node = owner.without_conflict().model_copy(update=content.model_dump(mode="json"))
+        node = owner.without_conflict().model_copy(update={**content.model_dump(mode="json"),
+            "sources": alternative_sources(owner, alternatives[keep])})
         edits.append({"operation": "update_node", "node": node.model_dump(mode="json")})
         for alternative_id in alternatives:
             changes.append({"before": [{"kind": "node", "id": owner.id, "alternative_id": alternative_id}],

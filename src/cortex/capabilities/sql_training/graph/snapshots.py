@@ -230,6 +230,7 @@ class GraphStore:
         semantic = [a for a in assets if a.node_type in SEMANTIC_TYPES]
         if state is not None:
             from cortex.application.ontology_graph import GraphManager
+            from cortex.schema.graph import alternative_sources
 
             by_node = {n.id: n for n in state.graph.nodes}
             for conflict in state.conflict_nodes:
@@ -238,10 +239,10 @@ class GraphStore:
                     content = GraphManager.resolve_alternative(owner, alternative)
                     semantic.append(
                         semantic_asset(
-                            owner.model_copy(
+                            owner.without_conflict().model_copy(
                                 update={
                                     **content.model_dump(mode="json"),
-                                    "sources": alternative.sources,
+                                    "sources": alternative_sources(owner, alternative),
                                 }
                             )
                         )

@@ -33,3 +33,5 @@ usecase/
 !/tests/*.py
 /baseline/tests/
 /datasets/
+/output/
+/artifacts/

@@ -6,11 +6,12 @@ from test_light_reconciliation import setup
 from test_incremental_agent import Chat
 from test_relation_draft_recovery import setup_engine
 from cortex.capabilities.graph_merge.integration.relation_context import node_view, relation_context
-from cortex.capabilities.graph_merge.integration.relation_edits import RelationPatch, RegionIncomplete, submit_patch, evidence_sources
+from cortex.capabilities.graph_merge.integration.relation_edits import RelationPatch, submit_patch, evidence_sources
 from cortex.capabilities.graph_merge.integration.task_context import LocalTask
 from cortex.capabilities.graph_merge.integration.batch import ActiveBatch, BatchResult
 from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
-from cortex.capabilities.graph_merge.llm.reconciliation import RelationReview
+from cortex.capabilities.graph_merge.integration.review import Review
+from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
 from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import SourceReference
@@ -28,8 +29,9 @@ def test_definition_edit_changes_the_displayed_definition_not_description():
 
 def test_explicit_failure_terminates_without_another_model_call():
     ctx, base, a, b, _ = setup()
-    model = Chat([AIMessage(content="",tool_calls=[{"name":"submit_changes","id":"end","args":{"patch":{"failure":"A required source is unavailable.","explanation":"Cannot safely finish."}}}])])
-    with pytest.raises(RegionIncomplete,match="required source"):
+    model = Chat([AIMessage(content="",tool_calls=[{"name":"submit_patch","id":"end","args":{"failure":"A required source is unavailable.","explanation":"Cannot safely finish."}}])])
+    from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+    with pytest.raises(IntegrationIncomplete,match="required source"):
         IncrementalIntegrationAgent(model,max_calls=None).invoke("reconcile",ctx,relation_context(ctx,base,LocalTask("terminal","reconcile",{a,b})))
     assert len(model.requests)==1 and ctx.active_batch.preview is None
 
@@ -49,24 +51,24 @@ def test_same_rejected_candidate_is_not_assessed_again(tmp_path):
         def invoke(self,phase,ctx,payload):
             if phase=="graph_assess":
                 self.reviews+=1
-                return RelationReview(verdict="revise",issues=("The edge description remains incorrect.",),
-                    issue_refs=({"kind":"edge","id":ctx.input_edge_map["keep"],"fields":["properties.description"]},))
+                ref={"kind":"edge","id":ctx.input_edge_map["keep"],"fields":["properties.description"]}
+                return Review(verdict="revise",issues=[{'refs':[ref], 'basis':[ref],
+                    'problem':'The edge description remains incorrect.',
+                    'required_outcome':'Preserve the original supported relation meaning.'}])
             self.writes+=1
             if self.writes > 1:
-                assert payload["feedback"][0]["issues"] == ["The edge description remains incorrect."]
-                assert "issue_refs" in payload["feedback"][0]
-            if self.writes==1:
-                e=next(e for e in ctx.candidate.graph.edges if e.id==ctx.input_edge_map['keep']).model_dump(mode='json');e['properties']['description']='Pending, not yet accepted.'
-                result=BatchResult.model_validate({'edits':[{'operation':'update_edge','edge':e}]})
-            else:result=BatchResult()
+                assert payload["feedback"][0]["problem"] == "The edge description remains incorrect."
+                assert "refs" in payload["feedback"][0]
+            e=next(e for e in ctx.candidate.graph.edges if e.id==ctx.input_edge_map['keep']).model_dump(mode='json');e['properties']['description']='Pending, not yet accepted.'
+            result=BatchResult.model_validate({'edits':[{'operation':'update_edge','edge':e}]})
             ctx.output_validator(result);return result
     agent=Agent();engine,task=setup_engine(agent,tmp_path/'work.sqlite');engine.max_rounds=5;original=engine.current
-    with pytest.raises(RegionIncomplete,match="Unchanged rejected candidate"):
+    with pytest.raises(IntegrationIncomplete,match="Unchanged.*candidate"):
         engine._run_task(task,'same-candidate')
     assert agent.reviews==1 and agent.writes==2
     assert engine.current==original
     saved=WorkspaceStore(engine.workspace_path).load('same-candidate')
-    assert saved['pending_relation_work']['status']=='unaccepted_requires_full_review'
+    assert saved['task_state']['stage']=='revising'
 
 
 def test_true_noop_skips_review(tmp_path):
@@ -114,22 +116,8 @@ def test_wire_guard_does_not_count_unsent_response_metadata():
         check_request([HumanMessage(content="x"*2000)],[],max_characters=1000)
 
 
-def test_rejection_can_finish_with_partial_checks_but_acceptance_cannot():
-    from cortex.capabilities.graph_merge.llm.incremental import NodeReview
-    ctx,base,a,b,_=setup();ctx.candidate=base
-    payload={'decision_review_ids':['R'], 'rationale_review_ids':['R']}
-    reject=NodeReview(verdict='revise',issues=('A concrete incorrect definition.',),issue_refs=({'kind':'node','id':a,'fields':['properties.definition']},))
-    IncrementalIntegrationAgent._validate(reject,ctx,payload,'node_assess')
-    with pytest.raises(ValueError,match='Check each supplied Rule decision'):
-        IncrementalIntegrationAgent._validate(NodeReview(verdict='accept'),ctx,payload,'node_assess')
 
 
-def test_accept_still_requires_every_requested_rule_reason():
-    from cortex.capabilities.graph_merge.llm.incremental import NodeReview
-    ctx,base,*_=setup();ctx.candidate=base
-    value=NodeReview(verdict='accept',decision_checks=[{'node_id':'R','independent_decisions':['One decision.']}])
-    with pytest.raises(ValueError,match='Check each supplied Rule reason'):
-        IncrementalIntegrationAgent._validate(value,ctx,{'decision_review_ids':['R'],'rationale_review_ids':['R']},'node_assess')
 
 
 def test_explicit_existing_branch_resolution_projects_edges_and_lineage(tmp_path):
@@ -197,13 +185,13 @@ def test_distinct_required_reads_are_not_blocked_after_four_rounds():
     ctx.candidate = ctx.union_state()
     topics = ['concept', 'metric', 'event', 'generation_rule', 'relations', 'concept']
     responses = [AIMessage(content='', tool_calls=[{'name':'read_guidance','args':{'topic':topic},'id':str(i),'type':'tool_call'}]) for i,topic in enumerate(topics)]
-    responses.append(AIMessage(content='', tool_calls=[{'name':'NodeReview','args':{'verdict':'accept'},'id':'done','type':'tool_call'}]))
+    responses.append(AIMessage(content='', tool_calls=[{'name':'Review','args':{'verdict':'accept'},'id':'done','type':'tool_call'}]))
     chat = Chat(responses)
     result = IncrementalIntegrationAgent(chat,max_calls=None).invoke('node_assess',ctx,{'evidence':[]})
     replies = [json.loads(m.content) for m in chat.requests[-1] if isinstance(m,ToolMessage)]
     assert result.verdict == 'accept'
     assert all('Read budget exhausted' not in str(r) for r in replies)
-    assert replies[-1]['already_read'] is True
+    assert 'targets' in replies[-1]['fields']
 
 
 def test_shared_guidance_is_not_rerendered_when_requested():
@@ -213,11 +201,10 @@ def test_shared_guidance_is_not_rerendered_when_requested():
     from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
     from cortex.schema import load_root_schema
     ctx=IntegrationContext(state(),state([*catalog(),concept('N','a')]),load_root_schema());ctx.candidate=ctx.union_state()
-    chat=Chat([AIMessage(content='',tool_calls=[{'name':'read_guidance','args':{'topic':'concept'},'id':'read','type':'tool_call'}]),AIMessage(content='',tool_calls=[{'name':'NodeReview','args':{'verdict':'accept'},'id':'done','type':'tool_call'}])])
+    chat=Chat([AIMessage(content='',tool_calls=[{'name':'read_guidance','args':{'topic':'concept'},'id':'read','type':'tool_call'}]),AIMessage(content='',tool_calls=[{'name':'Review','args':{'verdict':'accept'},'id':'done','type':'tool_call'}])])
     IncrementalIntegrationAgent(chat,max_calls=None).invoke('node_assess',ctx,{'node_guidance':{'types':['concept'],'guidance':'Already complete'},'evidence':[]})
     result=json.loads(next(m.content for m in chat.requests[-1] if isinstance(m,ToolMessage)))
-    assert result['guidance_already_supplied'] and result['location']=='node_guidance'
-    assert 'guidance' not in result  # Do not repeat the supplied semantic instructions.
+    assert 'guidance' in result
     assert 'targets' in result['fields']  # The fixture did not supply the field schema.
 
 
@@ -267,16 +254,6 @@ def test_partial_update_retains_name_bindings_and_sources():
     assert after.sources==original.sources and after.description=='Revised explanation'
 
 
-def test_legacy_pending_keeps_full_property_replacement_on_resume():
-    ctx,base,a,b,_=setup()
-    nodes=[n.model_copy(update={'properties':{**n.properties,'relation_metadata':[]}}) if n.id==a else n for n in base.graph.nodes]
-    base=base.model_copy(update={'graph':base.graph.model_copy(update={'nodes':tuple(nodes)})})
-    raw=next(n for n in base.graph.nodes if n.id==a).model_dump(mode='json')
-    raw['properties'].pop('relation_metadata')
-    saved={'edits':[{'operation':'update_node','node':raw}],'changes':[],'contracts':[],'edge_merges':[]}
-    batch=ActiveBatch(ctx,base,targets={a});batch.restore_pending(saved);batch.submit_atomic(BatchResult())
-    assert 'relation_metadata' not in next(n for n in batch.preview.graph.nodes if n.id==a).properties
-    assert batch.pending_snapshot()['update_semantics']=='partial-v1'
 
 
 def test_repair_verification_reads_current_field_not_old_finding():
@@ -284,9 +261,9 @@ def test_repair_verification_reads_current_field_not_old_finding():
     ctx,base,a,b,_=setup()
     nodes=[n.model_copy(update={'description':'Corrected current description'}) if n.id==a else n for n in base.graph.nodes]
     current=base.model_copy(update={'graph':base.graph.model_copy(update={'nodes':tuple(nodes)})})
-    findings=[{'issues':['Old description was wrong'],'issue_refs':[{'id':a,'kind':'node','fields':['description']}]}]
+    findings=[{'issues':[{'problem':'Old description was wrong','refs':[{'id':a,'kind':'node','fields':['description']}]}]}]
     rows=current_repair_fields(current,findings)
-    assert rows==[{'kind':'node','id':a,'field':'description','current':'Corrected current description'}]
+    assert rows==[{'kind':'node','id':a,'view':'candidate','field':'description','value':'Corrected current description'}]
 
 
 def test_conflict_union_stays_canonical_after_replaying_pending_edits():
@@ -316,10 +293,10 @@ def test_failure_sentinels_are_repairable_validation_errors(sentinel):
 def test_no_change_output_can_repair_null_string_in_same_episode():
     ctx, *_ = setup()
     model = Chat([
-        AIMessage(content="", tool_calls=[{"name": "BatchResult", "id": "bad", "args": {"edits": [], "failure": "null"}}]),
-        AIMessage(content="", tool_calls=[{"name": "BatchResult", "id": "fixed", "args": {"edits": [], "failure": None}}]),
+        AIMessage(content="", tool_calls=[{"name": "submit_patch", "id": "bad", "args": {"failure": "null", "explanation": "No change."}}]),
+        AIMessage(content="", tool_calls=[{"name": "submit_patch", "id": "fixed", "args": {"failure": None, "explanation": "No change."}}]),
     ])
     result = IncrementalIntegrationAgent(model, max_calls=None).invoke("consolidate", ctx, {})
-    assert result.failure is None and not result.edits
+    assert result.failure is None and not result.node_updates
     assert len(model.requests) == 2
     assert "failure must be omitted or JSON null" in str(model.requests[1])

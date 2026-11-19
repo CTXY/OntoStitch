@@ -1,19 +1,14 @@
 """Local repair composition keeps current handles and source ownership separate."""
 
-from types import SimpleNamespace
 
 import pytest
 from test_graph_integration import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.integration.batch import ActiveBatch, BatchResult
 from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.incremental import (
-    IncrementalGraphIntegrationEngine,
-)
 from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
 from cortex.capabilities.graph_merge.integration.models import Change, Element
-from cortex.capabilities.graph_merge.models import EvidenceItem
-from cortex.schema import GraphSpace, GraphState, SourceReference, load_root_schema
+from cortex.schema import SourceReference, load_root_schema
 
 
 def context(edges):
@@ -174,41 +169,3 @@ def test_invalid_pending_writes_and_edge_merges_can_be_withdrawn():
     assert batch.preview == valid
     batch.submit(BatchResult(remove_edge_merges=("missing",)))
     assert not batch.edge_merges and batch.preview == valid
-
-
-@pytest.mark.parametrize("reviewed_owner,needs_review", [("A", False), ("B", True)])
-def test_source_only_review_is_scoped_to_actual_assertion_owner(
-    reviewed_owner, needs_review
-):
-    fresh = SourceReference(source_id="fresh")
-    original = state(
-        [*catalog(), concept("A", "a"), concept("B", "b")],
-        [edge("relation", "A", "B", "has_feature")],
-    )
-    changed_nodes = tuple(
-        n.model_copy(update={"description": "Other touched content."})
-        if n.id == "B"
-        else n
-        for n in original.graph.nodes
-    )
-    changed_edges = tuple(
-        e.model_copy(update={"sources": (fresh,)}) if e.id == "relation" else e
-        for e in original.graph.edges
-    )
-    after = GraphState(
-        graph=GraphSpace(
-            nodes=changed_nodes,
-            edges=changed_edges,
-            relation_contracts=original.graph.relation_contracts,
-        )
-    )
-    engine = IncrementalGraphIntegrationEngine(None)
-    engine.ctx = SimpleNamespace(
-        evidence=(
-            EvidenceItem(
-                id="fresh", source=fresh, case_id=None, content={"sql": "SELECT value"}
-            ),
-        )
-    )
-    engine.reviewed_sources = {reviewed_owner: {fresh}}
-    assert engine._needs_evidence_review(original, after) is needs_review

@@ -117,7 +117,8 @@ def _validate_inline_contract(graph: GraphSpace, *, require_sources: bool) -> No
     for node in graph.nodes:
         if node.merge_status != MergeStatus.CONFLICT:
             if (
-                node.consolidation_status
+                node.common_sources
+                or node.consolidation_status
                 or node.preservation_reasons
                 or node.alternatives
                 or node.conflict_points
@@ -133,14 +134,14 @@ def _validate_inline_contract(graph: GraphSpace, *, require_sources: bool) -> No
             raise ValueError(
                 "inline conflict node and every alternative require nonempty sources"
             )
-        expected_sources = {
+        expected_sources = set(node.common_sources) | {
             source for alt in node.alternatives for source in alt.sources
         }
         if set(node.sources) != expected_sources or len(set(node.sources)) != len(
             node.sources
         ):
             raise ValueError(
-                "conflict node sources must equal the alternatives sources union"
+                "conflict node sources must equal the common and alternatives sources union"
             )
         for path in conflict.alternatives[0].overrides:
             if path.startswith("properties."):

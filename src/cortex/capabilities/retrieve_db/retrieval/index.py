@@ -19,7 +19,7 @@ from cortex.capabilities.retrieve_db.retrieval.normalization import (
     tokenize,
 )
 from cortex.capabilities.retrieve_db.rule_signals import generation_rule_signals
-from cortex.schema import GraphNode, GraphState
+from cortex.schema import GraphNode, GraphState, alternative_sources
 from cortex.schema.bindings import target_views
 
 
@@ -72,8 +72,10 @@ class RepresentationIndex:
                                     "overrides": alternative.overrides,
                                     "sources": [
                                         source.model_dump(mode="json")
-                                        for source in alternative.sources
+                                        for source in alternative_sources(node, alternative)
                                     ],
+                                    **({"common_sources": [source.model_dump(mode="json") for source in node.common_sources]}
+                                       if node.common_sources else {}),
                                 }
                             }
                         )

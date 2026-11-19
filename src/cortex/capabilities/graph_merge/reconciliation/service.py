@@ -93,6 +93,11 @@ class NodeGroupReconciler:
                 evidence_by_ref={},
             )
         if historical_conflict is not None:
+            if historical_conflict.common_sources:
+                raise ValueError(
+                    "Legacy group consolidation cannot reassign common conflict support; "
+                    "use the incremental merge contract. The historical graph is unchanged."
+                )
             group = group.model_copy(
                 update={
                     "members": tuple(

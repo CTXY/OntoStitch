@@ -31,6 +31,7 @@ from cortex.schema.graph import (
     NodeContent,
     NodeMergeConflict,
     alternative_content,
+    alternative_sources,
 )
 from cortex.schema.models import EdgeType
 from cortex.schema.references import property_reference_ids
@@ -170,11 +171,13 @@ class GraphManager:
         consolidation_status="unresolved",
         preservation_reasons=(),
         conflict_points=(),
+        common_sources=None,
     ):
         """Factor complete candidates into common node fields and whole-field overrides.
 
         candidates are (alternative_id, NodeContent, sources) tuples.
         """
+        common_sources = node.common_sources if common_sources is None else tuple(common_sources)
         candidates = [
             (key, NodeContent.model_validate(content), sources)
             for key, content, sources in candidates
@@ -210,12 +213,13 @@ class GraphManager:
         compact_node = node.model_copy(
             update={
                 **common,
-                "sources": _union_sources(*(sources for _, _, sources in candidates)),
+                "sources": _union_sources(common_sources, *(sources for _, _, sources in candidates)),
                 "merge_status": MergeStatus.CONFLICT,
             }
         )
         conflict = NodeMergeConflict(
             node_id=node.id,
+            common_sources=_union_sources(common_sources),
             consolidation_status=consolidation_status,
             preservation_reasons=preservation_reasons,
             conflict_points=conflict_points,
@@ -272,7 +276,7 @@ class GraphManager:
                     id=node.id,
                     node_type=node.node_type,
                     **content.model_dump(mode="json"),
-                    sources=alternative.sources,
+                    sources=alternative_sources(node, alternative),
                 )
             return next(
                 (
@@ -1442,7 +1446,7 @@ class GraphManager:
                         node = node.with_conflict(conflict).model_copy(
                             update={
                                 "sources": _union_sources(
-                                    *(a.sources for a in conflict.alternatives)
+                                    conflict.common_sources, *(a.sources for a in conflict.alternatives)
                                 )
                             }
                         )
@@ -1487,7 +1491,7 @@ class GraphManager:
                             id=node.id,
                             node_type=node.node_type,
                             **content.model_dump(mode="json"),
-                            sources=alternative.sources,
+                            sources=alternative_sources(node, alternative),
                         )
                         del conflicts[node_id]
                         transitions[node_id] = alternative.alternative_id

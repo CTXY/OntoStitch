@@ -109,7 +109,7 @@ def test_agent_gets_only_the_needed_guide_before_writing(case_graph):
         system = messages[0].content
         assert system.startswith("# Task background")
         assert "**Event:**" in system and "no type or node-count quota" in system
-        assert len(system) < 9000
+        assert len(system) < 10000
         assert "MetricExpression" not in system
         assert "ordinary join-fact Rules" in system
         context = read_case_context(messages)

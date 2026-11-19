@@ -268,7 +268,16 @@ def build_tools(context, *, visible_source_ids=()):
             return {"error": "Unknown guidance topic"}
         return context.log("read_guidance", {"topic": topic}, result)
 
-    tools = [inspect_graph, read_evidence, read_guidance]
+    @tool
+    def lookup_catalog(table: str, columns: list[str] | None = None,
+                       view: str = "candidate", offset: int = 0, limit: int = 30) -> dict:
+        """Locate physical IDs by exact table/column names, including current owners."""
+        from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
+        from cortex.capabilities.graph_merge.llm.relation_reads import RelationReads
+        return RelationReads(context, EvidencePresentation(context)).lookup_catalog(
+            table, columns, view=view, offset=offset, limit=limit)
+
+    tools = [inspect_graph, lookup_catalog, read_evidence, read_guidance]
     buffer = getattr(context, "proposal_buffer", None)
     if buffer is not None:
 

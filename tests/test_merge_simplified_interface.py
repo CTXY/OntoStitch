@@ -136,28 +136,28 @@ def test_duplicate_read_does_not_disable_a_different_required_read():
             'args': {'mode': 'items', 'ids': [key], 'fields': [field]}}])
     chat = Chat([read(ids['A'], 'properties.targets', 'one'), read(ids['A'], 'properties.targets', 'again'),
                  read(ids['B'], 'name', 'other'),
-                 AIMessage(content='', tool_calls=[{'name': 'submit_changes', 'id': 'done',
-                     'args': {'patch': {'explanation': 'No modification needed.'}}}])])
+                 AIMessage(content='', tool_calls=[{'name': 'submit_patch', 'id': 'done',
+                     'args': {'explanation': 'No modification needed.'}}])])
     IncrementalIntegrationAgent(chat).invoke('reconcile', ctx, payload)
     replies = [json.loads(m.content) for m in chat.requests[-1] if isinstance(m, ToolMessage)]
     assert replies[0]['items'][0]['properties']['targets']
-    assert replies[1].get('already_supplied') or replies[1].get('already_read')
+    assert replies[1]['items'][0]['properties']['targets'] == replies[0]['items'][0]['properties']['targets']
     assert replies[2]['items'][0]['name']
     assert len(chat.requests) == 4  # No additional submit/finish request.
 
 
 def test_review_schema_contains_no_source_truth_checklist():
-    assert set(NodeReview.model_json_schema()['properties']) == {'verdict', 'issues', 'issue_refs'}
-    # Old checkpoint fields remain parseable, but are not advertised to models.
-    assert NodeReview.model_validate({'verdict': 'accept', 'rationale_checks': [], 'decision_checks': []})
+    assert set(NodeReview.model_json_schema()['properties']) == {'verdict', 'issues'}
+    with pytest.raises(ValueError):
+        NodeReview.model_validate({'verdict': 'accept', 'rationale_checks': [], 'decision_checks': []})
 
 
 def test_writer_scope_feedback_finishes_in_two_outputs_without_extension_call():
     ctx, ids, _, payload = region(visible=False)
-    args = {'patch': {'node_updates': [{'id': ids['B'], 'name': 'Representative referent',
+    args = {'node_updates': [{'id': ids['B'], 'name': 'Representative referent',
                                       'explanation': 'Normalize the same referent.'}],
-                      'explanation': 'A locally coupled naming correction.'}}
-    chat = Chat([AIMessage(content='', tool_calls=[{'name': 'submit_changes', 'id': key, 'args': args}])
+                      'explanation': 'A locally coupled naming correction.'}
+    chat = Chat([AIMessage(content='', tool_calls=[{'name': 'submit_patch', 'id': key, 'args': args}])
                  for key in ('initial', 'corrected')])
     IncrementalIntegrationAgent(chat).invoke('reconcile', ctx, payload)
     feedback = json.loads(chat.requests[1][-1].content)
@@ -182,7 +182,7 @@ def test_edge_only_evidence_is_supplied_once_at_end():
     assert not any('sources' in r for r in payload['nodes'] + payload['edges'])
 
 
-@pytest.mark.parametrize('phase,result_name', [('consolidate', 'BatchResult'), ('node_assess', 'NodeReview')])
+@pytest.mark.parametrize('phase,result_name', [('consolidate', 'submit_patch'), ('node_assess', 'Review')])
 def test_node_roles_receive_same_preservation_guide_without_old_audit_lists(phase, result_name):
     from cortex.capabilities.graph_merge.integration.task_context import build_task_context
     from cortex.capabilities.graph_merge.integration.node_context import compact_task_context
@@ -190,15 +190,16 @@ def test_node_roles_receive_same_preservation_guide_without_old_audit_lists(phas
     task = LocalTask('content', phase, {ids['A']})
     payload = build_task_context(ctx, ctx.candidate, task, before=ctx.candidate)
     payload = compact_task_context(payload, ctx, ctx.candidate, task.targets, [], for_review=phase == 'node_assess')
-    args = {'verdict': 'accept'} if phase == 'node_assess' else {}
+    args = {'verdict': 'accept'} if phase == 'node_assess' else {'explanation': 'No changes needed.'}
     chat = Chat([AIMessage(content='', tool_calls=[{'name': result_name, 'id': 'result', 'args': args}])])
     IncrementalIntegrationAgent(chat).invoke(phase, ctx, payload)
     prompt, packet = chat.requests[0][:2]
     packet = json.loads(packet.content)
     assert list(packet)[-1] == 'evidence'
     assert 'rationale_review_ids' not in packet and 'decision_review_ids' not in packet
-    assert 'Accepted-node integration contract' in packet['node_guidance']['guidance']
-    assert 'Input nodes have already been assessed' in packet['node_guidance']['guidance']
+    assert 'guidance' not in packet['node_guidance']
+    assert prompt.content.count('Accepted-node integration contract') == 1
+    assert 'Input nodes have already been assessed' in prompt.content
     assert 'source text is not self-validating' not in prompt.content.lower()
     assert 'extend_task' not in {getattr(t, 'name', None) for t in chat.tools}
     assert len(chat.requests) == 1

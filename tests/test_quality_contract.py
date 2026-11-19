@@ -63,13 +63,14 @@ def test_relation_requires_predicate_and_endpoint_review(case_graph):
     from cortex.capabilities.sql_training.learning.inputs import ontology_contract
     from cortex.schema import load_root_schema
 
-    for guidance in (
-        payload["quality_rubric"]["predicate_precision"],
-        ontology_contract(load_root_schema())["custom_relations"],
-    ):
-        assert "has_attribute is an abstract base, never an actual edge predicate" in guidance
-        assert "investigate or omit the unsupported edge" in guidance
-        assert "has_attribute is a fallback" not in guidance
+    rubric = payload["quality_rubric"]["predicate_precision"]
+    contract = ontology_contract(load_root_schema())["custom_relations"]
+    assert "has_attribute is abstract" in rubric
+    assert "supported role-specific business predicate and supplied contract" in rubric
+    assert "cannot replace a missing contract" in rubric
+    assert "has_attribute is an abstract base, never an actual edge predicate" in contract
+    assert "investigate or omit the unsupported edge" in contract
+    assert all("has_attribute is a fallback" not in guidance for guidance in (rubric, contract))
 
 
 def test_proved_redundancy_blocks_relation_acceptance(case_graph):
@@ -137,14 +138,13 @@ def test_assessment_guidance_and_rubric_keep_consumer_required_materialization()
 
     criterion = QUALITY_CRITERIA["assertion_nonredundancy"]
     prompt = load_prompt("learning_assessment")
-    assert "retain a materialized assertion" in criterion
-    assert "cannot recover the inference" in criterion
-    assert "do not fail this check" in criterion
-    assert "Direct formula operands and catalog ownership" in criterion
-    assert "Retain a materialized assertion" in prompt
-    assert "must not make assertion_nonredundancy invalid or inconclusive" in prompt
-    assert "must not produce corrective feedback demanding deletion" in prompt
-    assert "proof and safe consolidation are both established" in prompt
+    assert "independent remaining premises" in criterion
+    assert "safe consumer consolidation" in criterion
+    assert "Preserve direct formula/catalog links" in criterion
+    assert "Unproved/unsafe redundancy and structural signals alone are not failure" in criterion
+    assert "consumer support" in prompt
+    assert "Keep necessary direct links" in prompt
+    assert "assertions needed by consumers; structural patterns alone are not defects" in prompt
 
 
 

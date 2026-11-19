@@ -90,6 +90,7 @@ def conflict_operation_schema():
     node["properties"] = {key: value for key, value in node["properties"].items() if key in common_fields}
     node["required"] = [key for key in node.get("required", []) if key in common_fields]
     conflict = convert_to_openai_function(NodeMergeConflict)["parameters"]
+    conflict["properties"].pop("common_sources", None)
     conflict["properties"]["alternatives"]["items"]["properties"].pop("sources", None)
 
     def compact(value):

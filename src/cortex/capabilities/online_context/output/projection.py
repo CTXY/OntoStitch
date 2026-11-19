@@ -16,6 +16,7 @@ from cortex.schema import (
     GraphState,
     MergeStatus,
     SchemaDefinition,
+    alternative_sources,
 )
 from cortex.schema.bindings import select_target_groups, target_groups, target_views
 from cortex.schema.relationships import is_dependency_edge
@@ -289,6 +290,8 @@ def semantic_asset_payload(
                 for item in conflict.alternatives
                 if item.alternative_id not in (excluded_alternative_ids or set())
             ],
+            **({"common_sources": [source.model_dump(mode="json") for source in conflict.common_sources]}
+               if conflict.common_sources else {}),
         }
     return {"node_id": node.id, **asset}
 
@@ -475,7 +478,7 @@ def project_graph(
                 aliases=content["aliases"],
                 tags=content["tags"],
                 properties=content["properties"],
-                sources=alternative.sources,
+                sources=alternative_sources(node, alternative),
                 merge_status=MergeStatus.NORMAL,
             )
             continue

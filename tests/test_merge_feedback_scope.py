@@ -1,6 +1,6 @@
 from test_graph_integration import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.integration.batch import BatchResult
+from cortex.capabilities.graph_merge.integration.patch import MergePatch
 from cortex.capabilities.graph_merge.integration.context import IntegrationContext
 from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
@@ -28,23 +28,39 @@ def test_review_named_node_gets_incident_edge_scope_without_opening_its_neighbou
                 self.reviews += 1
                 if self.reviews == 1:
                     return NodeReview.model_validate({
-                        "verdict": "revise", "issues": ["Repair B's adjacent assertion."],
-                        "issue_refs": [{"kind": "node", "id": b}],
+                        "verdict": "revise", "issues": [{
+                            "refs": [{"kind": "node", "id": b}],
+                            "problem": "The local change needs a coupled B assertion repair.",
+                            "basis": [{"kind": "node", "id": a}, {"kind": "node", "id": b, "view": "before"}],
+                            "required_outcome": "Preserve the directly related B assertion meaning."}],
                     })
                 return NodeReview(verdict="accept")
             assert phase == "consolidate"
             self.writes += 1
             if self.writes == 1:
                 assert bc not in context.active_batch.allowed
-                result = BatchResult()
+                result = MergePatch.model_validate({'node_updates': [{
+                    'id': a, 'name': 'Representative A', 'explanation': 'Normalize the representative referent.'}],
+                    'explanation': 'A local naming change.'})
             else:
-                assert {a, b, bc} <= context.active_batch.allowed
+                assert context.active_task.targets == {a}
+                assert not {c, d} & context.active_task.targets
+                result = MergePatch.model_validate({
+                    'node_updates': [{'id': a, 'name': 'Representative A', 'explanation': 'Retain the valid naming change.'}],
+                    'edge_updates': [{'id': bc, 'properties': {'description': 'The reviewed direct business attribute.'},
+                                      'explanation': 'Repair the reviewer-named coupled assertion.'}],
+                    'explanation': 'Replace the complete local draft with the coupled repair.'})
+            from cortex.capabilities.graph_merge.integration.proposal_scope import ScopeContextRequired
+            try:
+                context.output_validator(result)
+            except ScopeContextRequired as error:
+                assert self.writes == 2
+                assert error.context['nodes'] or error.context['edges']
+                assert context.active_task.targets == {a}
+                context.output_validator(result)
+            if self.writes == 2:
+                assert {a, bc} <= context.active_batch.allowed
                 assert not {c, d, cd} & context.active_batch.allowed
-                item = next(e for e in context.candidate.graph.edges if e.id == bc)
-                raw = item.model_dump(mode="json")
-                raw["properties"]["description"] = "The reviewed direct business attribute."
-                result = BatchResult.model_validate({"edits": [{"operation": "update_edge", "edge": raw}]})
-            context.output_validator(result)
             return result
 
     agent = Agent()
@@ -54,3 +70,4 @@ def test_review_named_node_gets_incident_edge_scope_without_opening_its_neighbou
     engine._run_task(LocalTask("scope", "consolidate", {a}), "unit")
     assert agent.writes == agent.reviews == 2
     assert engine.history[0]["delta"]["edges"]["updated"] == [bc]
+    assert next(n for n in engine.current.graph.nodes if n.id == a).name == 'Representative A'

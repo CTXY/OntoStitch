@@ -32,10 +32,9 @@ def review_key(payload):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
 
-def current_repair_fields(candidate, findings):
-    """Put the current value beside old feedback, not another copy of old assertions."""
+def current_repair_fields(candidate, findings, *, context=None, before=None):
+    """Read issue fields from their explicit view, never substitute old content."""
     from cortex.schema.graph import alternative_content
-    objects = {(kind, item.id): item for kind, items in (("node", candidate.graph.nodes), ("edge", candidate.graph.edges)) for item in items}
     result, seen = [], set()
     def read(value, path):
         for key in path.split("."):
@@ -46,17 +45,29 @@ def current_repair_fields(candidate, findings):
     for finding in findings:
         if not isinstance(finding, dict):
             continue
-        for ref in finding.get("issue_refs", []):
-            obj = objects.get((ref["kind"], ref["id"]))
+        issues = finding.get("issues", []) if "issues" in finding else [finding]
+        for ref in (ref for issue in issues if isinstance(issue, dict) for ref in issue.get("refs", [])):
+            view = ref.get("view", "candidate")
+            if context is not None:
+                from cortex.capabilities.graph_merge.integration.review import graph_view
+                try:
+                    nodes, edges, _ = graph_view(context, view, before=before, candidate=candidate)
+                except ValueError:
+                    nodes, edges = {}, {}
+            else:
+                state = candidate if view == "candidate" else before if view == "before" else None
+                nodes = {item.id: item for item in state.graph.nodes} if state is not None else {}
+                edges = {item.id: item for item in state.graph.edges} if state is not None else {}
+            obj = (nodes if ref["kind"] == "node" else edges).get(ref["id"])
             for field in ref.get("fields", ()):
-                key = (ref["kind"], ref["id"], field)
-                if key in seen or field in {"sources", "reference_origin"}:
+                key = (view, ref["kind"], ref["id"], field)
+                if key in seen or field in {"sources", "common_sources", "reference_origin"}:
                     continue
                 seen.add(key)
-                row = {"kind": ref["kind"], "id": ref["id"], "field": field,
-                       "current": read(obj.model_dump(mode="json"), field) if obj else {"deleted": True}}
+                row = {"kind": ref["kind"], "id": ref["id"], "view": view, "field": field,
+                       "value": read(obj.model_dump(mode="json"), field) if obj else {"not_present": True}}
                 if getattr(obj, "alternatives", ()) and (field.startswith("properties.") or field in {"name", "description", "aliases", "tags"}):
-                    row["current_alternatives"] = {alt.alternative_id: read(alternative_content(obj, alt).model_dump(mode="json"), field) for alt in obj.alternatives}
+                    row["alternatives"] = {alt.alternative_id: read(alternative_content(obj, alt).model_dump(mode="json"), field) for alt in obj.alternatives}
                 result.append(row)
     return result
 

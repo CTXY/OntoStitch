@@ -10,8 +10,9 @@ from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomp
 from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
 from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+from cortex.capabilities.graph_merge.integration.task_state import TaskState, canonical_hash
 from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.reconciliation import RelationReview
+from cortex.capabilities.graph_merge.integration.review import Review
 from cortex.schema import load_root_schema
 
 
@@ -27,7 +28,9 @@ def setup_engine(agent, path, saved=None):
     engine.identity_decision = {}
     engine.pending_relation_work = None
     if saved:
-        engine.pending_relation_work = saved['pending_relation_work']
+        engine.task_state = TaskState.from_dict(saved['task_state'])
+        engine.contract_versions = engine.task_state.versions
+        engine.open_tasks = saved['open_tasks']
         engine._storage_revision = saved['revision']
     return engine, LocalTask('repair', 'reconcile', {ctx.input_node_map['A'], ctx.input_node_map['B']})
 
@@ -42,8 +45,10 @@ def test_unaccepted_draft_restores_and_review_covers_whole_transaction(tmp_path)
             if phase == 'reconcile':
                 if self.resumed:
                     assert next(e for e in ctx.candidate.graph.edges if e.id == keep).properties['description'] == 'Accepted only after independent review'
-                    result = BatchResult.model_validate({'edits': [{'operation': 'delete_edge', 'edge_id': temp}],
-                        'changes': [{'before': [{'kind': 'edge', 'id': temp}], 'after': [], 'explanation': 'Remove unsupported temporary assertion.'}]})
+                    raw = next(e for e in ctx.candidate.graph.edges if e.id == keep).model_dump(mode='json')
+                    # The complete replacement draft keeps the valid change
+                    # and omits the unaccepted temporary creation.
+                    result = BatchResult.model_validate({'edits': [{'operation': 'update_edge', 'edge': raw}]})
                 else:
                     raw = next(e for e in ctx.candidate.graph.edges if e.id == keep).model_dump(mode='json')
                     raw['properties']['description'] = 'Accepted only after independent review'
@@ -57,8 +62,12 @@ def test_unaccepted_draft_restores_and_review_covers_whole_transaction(tmp_path)
                 assert keep in payload['actual_changes']['edges']['updated']
                 assert temp not in payload['actual_changes']['edges']['created']
                 assert temp not in payload['actual_changes']['edges']['deleted']
-                return RelationReview(verdict='accept')
-            return RelationReview.model_validate({'verdict': 'revise', 'issues': ['Remove temporary assertion.'], 'issue_refs': [{'kind': 'edge', 'id': temp}]})
+                return Review(verdict='accept')
+            return Review.model_validate({'verdict': 'revise', 'issues': [{
+                'refs': [{'kind': 'edge', 'id': temp}],
+                'problem': 'The temporary assertion is unsupported.',
+                'basis': [{'kind': 'edge', 'id': temp}],
+                'required_outcome': 'Omit the unsupported creation from the replacement draft.'}]})
 
     path = tmp_path / 'workspace.sqlite'
     first, task = setup_engine(Agent(), path)
@@ -75,17 +84,15 @@ def test_unaccepted_draft_restores_and_review_covers_whole_transaction(tmp_path)
     assert not any(e.id == 'generated::temporary' for e in resumed.current.graph.edges)
 
     corrupt = copy.deepcopy(saved)
-    physical = next(n for n in corrupt['pending_relation_work']['state']['graph']['nodes'] if n['node_type'] == 'column')
+    physical = next(n for n in corrupt['task_state']['last_valid_candidate']['graph']['nodes'] if n['node_type'] == 'column')
     physical['name'] = 'tampered'
-    broken, task = setup_engine(Agent(True), tmp_path / 'broken.sqlite', corrupt)
-    with pytest.raises(ValueError, match='protected physical'):
-        broken._run_task(task, 'draft')
+    with pytest.raises(ValueError, match='candidate hash'):
+        setup_engine(Agent(True), tmp_path / 'broken.sqlite', corrupt)
     corrupt = copy.deepcopy(saved)
-    semantic = next(n for n in corrupt['pending_relation_work']['review_baseline']['graph']['nodes'] if n['node_type'] == 'concept')
+    semantic = next(n for n in corrupt['task_state']['base']['graph']['nodes'] if n['node_type'] == 'concept')
     semantic['description'] = 'A fabricated different review baseline'
-    broken, task = setup_engine(Agent(True), tmp_path / 'wrong-baseline.sqlite', corrupt)
-    with pytest.raises(ValueError, match='original accepted baseline'):
-        broken._run_task(task, 'draft')
+    with pytest.raises(ValueError, match='base hash'):
+        setup_engine(Agent(True), tmp_path / 'wrong-baseline.sqlite', corrupt)
 
 
 def test_interrupted_relation_review_reuses_candidate_without_writer(tmp_path):
@@ -103,7 +110,7 @@ def test_interrupted_relation_review_reuses_candidate_without_writer(tmp_path):
         def invoke(self, phase, ctx, payload):
             assert phase == 'graph_assess'
             assert ctx.input_edge_map['keep'] in payload['actual_changes']['edges']['updated']
-            return RelationReview(verdict='accept')
+            return Review(verdict='accept')
 
     path = tmp_path / 'workspace.sqlite'
     first, task = setup_engine(Interrupted(), path)
@@ -112,8 +119,76 @@ def test_interrupted_relation_review_reuses_candidate_without_writer(tmp_path):
         first._run_task(task, 'draft')
     saved = WorkspaceStore(path).load('draft')
     assert saved['current'] == original.model_dump(mode='json')
-    assert saved['pending_relation_work']['status'] == 'unaccepted_pending_independent_review'
+    assert saved['task_state']['stage'] == 'assessing'
     resumed, task = setup_engine(ReviewOnly(), path, saved)
     resumed._run_task(task, 'draft')
     assert resumed.history[0]['assessment'] == 'graph_assess'
     assert WorkspaceStore(path).load('draft')['pending_relation_work'] is None
+
+
+def test_crash_after_accepted_review_reuses_review_without_model_calls(tmp_path):
+    class Agent:
+        def invoke(self, phase, ctx, payload):
+            if phase == 'graph_assess':
+                return Review(verdict='accept')
+            raw = next(e for e in ctx.candidate.graph.edges if e.id == ctx.input_edge_map['keep']).model_dump(mode='json')
+            raw['properties']['description'] = 'Reviewed, not yet committed'
+            result = BatchResult.model_validate({'edits': [{'operation': 'update_edge', 'edge': raw}]})
+            ctx.output_validator(result)
+            return result
+
+    class NoModel:
+        def invoke(self, *args, **kwargs):
+            raise AssertionError('A compiled and accepted current review must not rerun the model')
+
+    path = tmp_path / 'workspace.sqlite'
+    first, task = setup_engine(Agent(), path)
+    original = first.current
+    persist = first._persist
+
+    def crash_after_review(run_id, final=False):
+        persist(run_id, final=final)
+        if first.task_state.stage == 'ready_to_commit':
+            raise RuntimeError('crash before commit')
+
+    first._persist = crash_after_review
+    with pytest.raises(RuntimeError, match='crash before commit'):
+        first._run_task(task, 'draft')
+    saved = WorkspaceStore(path).load('draft')
+    assert saved['task_state']['stage'] == 'ready_to_commit'
+    assert saved['current'] == original.model_dump(mode='json') and not saved['history']
+    resumed, task = setup_engine(NoModel(), path, saved)
+    resumed._run_task(task, 'draft')
+    assert len(resumed.history) == 1
+    assert next(e for e in resumed.current.graph.edges if e.id == resumed.ctx.input_edge_map['keep']).properties['description'] == 'Reviewed, not yet committed'
+
+
+def test_failed_resume_compilation_preserves_saved_candidate_and_draft(tmp_path):
+    class Interrupted:
+        def invoke(self, phase, ctx, payload):
+            if phase == 'graph_assess':
+                raise RuntimeError('interrupted review')
+            raw = next(e for e in ctx.candidate.graph.edges if e.id == ctx.input_edge_map['keep']).model_dump(mode='json')
+            raw['properties']['description'] = 'The actual proposed change'
+            return BatchResult.model_validate({'edits': [{'operation': 'update_edge', 'edge': raw}]})
+
+    class NoModel:
+        def invoke(self, *args, **kwargs):
+            raise AssertionError('Resume must validate the saved draft first')
+
+    path = tmp_path / 'workspace.sqlite'
+    first, task = setup_engine(Interrupted(), path)
+    with pytest.raises(RuntimeError, match='interrupted review'):
+        first._run_task(task, 'draft')
+    store = WorkspaceStore(path)
+    inconsistent = store.load('draft')
+    candidate = inconsistent['task_state']['last_valid_candidate']
+    next(n for n in candidate['graph']['nodes'] if n['node_type'] == 'concept')['name'] = 'Not produced by this draft'
+    inconsistent['task_state']['candidate_hash'] = canonical_hash(candidate)
+    store.save('draft', inconsistent, expected_revision=inconsistent['revision'])
+    saved = store.load('draft')
+    resumed, task = setup_engine(NoModel(), path, saved)
+    with pytest.raises(ValueError, match='no longer compiles'):
+        resumed._run_task(task, 'draft')
+    assert store.load('draft')['task_state'] == saved['task_state']
+    assert store.load('draft')['current'] == saved['current']

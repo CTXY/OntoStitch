@@ -44,24 +44,21 @@ def test_character_budgets_are_configurable_and_positive():
 
 @pytest.mark.parametrize("budget", [210000, 400000])
 def test_relation_agent_checks_the_configured_complete_request_budget(budget):
-    from types import SimpleNamespace
-
     from langchain_core.messages import AIMessage
     from test_incremental_agent import Chat
 
     from cortex.capabilities.graph_merge.llm.input_budget import RequestInputTooLarge
-    from cortex.capabilities.graph_merge.llm.reconciliation import invoke_relation
+    from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 
     ctx = IntegrationContext(state(), state([*catalog(), concept("N", "a")]), load_root_schema())
     ctx.candidate = ctx.union_state()
     model = Chat([AIMessage(content='{"verdict":"accept"}')])
-    agent = SimpleNamespace(llm=model, max_calls=1, trace_sink=None, call_budget=None,
-                            request_max_characters=budget)
+    agent = IncrementalIntegrationAgent(model, max_calls=1, request_max_characters=budget)
     payload = {"nodes": [], "edges": [], "evidence": [], "complete_source_detail": "x" * 211000}
     if budget == 210000:
         with pytest.raises(RequestInputTooLarge):
-            invoke_relation(agent, "graph_assess", ctx, payload)
+            agent.invoke("graph_assess", ctx, payload)
         assert not model.requests
     else:
-        assert invoke_relation(agent, "graph_assess", ctx, payload).verdict == "accept"
+        assert agent.invoke("graph_assess", ctx, payload).verdict == "accept"
         assert len(model.requests) == 1

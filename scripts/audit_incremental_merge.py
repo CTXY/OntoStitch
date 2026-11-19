@@ -13,7 +13,7 @@ from pathlib import Path
 
 from cortex.application.merge_graph import GraphMergeResult
 from cortex.application.ontology_graph import GraphManager
-from cortex.schema import GraphState, SchemaDefinition, load_root_schema
+from cortex.schema import GraphState, SchemaDefinition, alternative_sources, load_root_schema
 from cortex.schema.references import remap_references
 from cortex.schema.relation_metadata import remap_metadata_edges
 from cortex.schema.relation_vocabulary import require_concrete_relation
@@ -26,9 +26,7 @@ def _json(value):
 def _sources(obj, alternative_id=None):
     alternatives = getattr(obj, "alternatives", ())
     if alternative_id:
-        return set(
-            next(a for a in alternatives if a.alternative_id == alternative_id).sources
-        )
+        return set(alternative_sources(obj, next(a for a in alternatives if a.alternative_id == alternative_id)))
     return set(obj.sources) | {s for a in alternatives for s in a.sources}
 
 
@@ -88,6 +86,23 @@ def audit_result(existing, incoming, result, schema):
         for view, graph in graphs.items()
     }
     dispositions = set()
+    discarded = {}
+    for change in result.rewrites:
+        if not change.after:
+            for ref in change.before:
+                if ref.view in {"existing", "incoming"} and ref.kind == "node" and ref.alternative_id:
+                    discarded.setdefault((ref.view, ref.id), set()).add(ref.alternative_id)
+
+    def required_sources(obj, view, alternative_id=None):
+        refs = _sources(obj, alternative_id)
+        removed = discarded.get((view, obj.id), set())
+        if alternative_id or not removed:
+            return refs
+        retained = set(getattr(obj, "common_sources", ()))
+        dropped = set()
+        for alternative in getattr(obj, "alternatives", ()):
+            (dropped if alternative.alternative_id in removed else retained).update(alternative.sources)
+        return refs - (dropped - retained)
 
     def resolve(ref, expected_view=None):
         if expected_view == "source" and ref.view not in {"existing", "incoming"}:
@@ -114,7 +129,7 @@ def audit_result(existing, incoming, result, schema):
             for ref in change.before:
                 obj = resolve(ref, "source")
                 dispositions.add((ref.view, ref.kind, ref.id, ref.alternative_id))
-                before.update(_sources(obj, ref.alternative_id))
+                before.update(required_sources(obj, ref.view, ref.alternative_id))
             for ref in change.after:
                 after.update(_sources(resolve(ref, "result"), ref.alternative_id))
             if change.after and (missing := before - after):
@@ -152,7 +167,7 @@ def audit_result(existing, incoming, result, schema):
                 if kind == "node" and source.node_type != target.node_type:
                     fail("unsafe_type_alias", view=view, input_id=old, canonical_id=new)
                 if (view, kind, old, None) not in dispositions and (
-                    missing := _sources(source) - _sources(target)
+                    missing := required_sources(source, view) - _sources(target)
                 ):
                     fail(
                         "mapping_source_loss",
@@ -306,6 +321,8 @@ def audit_result(existing, incoming, result, schema):
                     p.model_dump(mode="json") for p in owner.conflict_points
                 ],
                 "alternatives": variants,
+                **({"common_sources": [s.model_dump(mode="json") for s in owner.common_sources]}
+                   if owner.common_sources else {}),
             }
         )
 
@@ -366,7 +383,7 @@ def audit_result(existing, incoming, result, schema):
                         node_id=old.id,
                         alternative_id=alt.alternative_id,
                     )
-                if not branch_rewrite and set(alt.sources) - set(current_alt.sources):
+                if not branch_rewrite and _sources(old, alt.alternative_id) - _sources(current, current_alt.alternative_id):
                     fail(
                         "source_alternative_source_loss",
                         view=view,

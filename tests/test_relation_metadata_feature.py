@@ -7,9 +7,6 @@ from test_explicit_relations import concept, edge, edit_tool, write
 from cortex.capabilities.retrieve_db.graph.context import build_retrieved_graph_state
 from cortex.capabilities.sql_training.graph.nodes import build_incoming_graph
 from cortex.capabilities.sql_training.models import NodeAsset
-from cortex.capabilities.sql_training.training.assessment_inputs import (
-    application_requirement,
-)
 from cortex.schema import GraphState, load_root_schema
 from cortex.schema.models import EdgeType
 from cortex.schema.relation_contracts import authoring_schema, effective_schema
@@ -76,18 +73,6 @@ def test_group_shape_and_anchor_are_checked(case_graph):
         assert result["status"] == "rejected"
 
 
-def test_metadata_only_uses_accepted_diff_without_an_agent_flag():
-    before = {"id": "concept.a", "node_type": "concept", "properties": {"targets": [["column.t.id"]]}}
-    after = deepcopy(before)
-    after["properties"]["relation_metadata"] = [{"id": "g", "edges": ["a", "b"], "description": "Group meaning"}]
-    assert application_requirement(after, accepted_before=before) == "semantic"
-    assert application_requirement(after) == "sql"
-    mixed = deepcopy(after)
-    mixed["properties"]["targets"] = [["column.t.other"]]
-    assert application_requirement(mixed, accepted_before=before) == "sql"
-    assert "relation_metadata" not in before["properties"]
-
-
 def test_attribute_contract_is_one_level_nonmutating_and_not_widened(case_graph):
     store = case_graph[0]
     contract = EdgeType(id="has_profile", name="Profile", extends="has_attribute",
@@ -137,12 +122,14 @@ def test_assessment_sees_metadata_on_unchanged_owner_after_member_edit(case_grap
     assert "relation_metadata_consistency" not in payload["quality_rubric"]
 
 
-def test_real_metadata_only_unit_uses_semantic_application(case_graph):
+def test_metadata_only_change_uses_quality_injection_and_related_sql_checks(case_graph):
+    from assessment_fixtures import response_for_payload
     from conftest import seed_accepted
     from test_agent_feedback import payload_for
     from test_agent_runtime import session_for
 
     from cortex.capabilities.sql_training.graph.mutations import normalize_groups
+    from cortex.capabilities.sql_training.training.assessment_models import AssessmentFeedback
 
     store = populate(case_graph)
     seed_accepted(store)
@@ -151,9 +138,20 @@ def test_real_metadata_only_unit_uses_semantic_application(case_graph):
     owner["properties"]["relation_metadata"][0]["description"] = "The declared categories may share members within the case scope."
     result = write(edit_tool(case_graph), store, "description_only", upserts=[owner])
     assert result["status"] == "ok", result
-    payload = payload_for(session_for(case_graph), before, normalize_groups([], before, store.working))
+    groups = normalize_groups([], before, store.working)
+    payload = payload_for(session_for(case_graph), before, groups)
     assert len(payload["units"]) == 1
-    assert payload["units"][0]["application_requirement"] == "semantic"
+    unit = payload['units'][0]
+    assert 'application_requirement' not in unit
+    assert unit['candidate']['properties']['relation_metadata'][0]['description'] == owner['properties']['relation_metadata'][0]['description']
+    assert unit['candidate']['properties']['relation_metadata'] != unit['accepted_before']['properties']['relation_metadata']
+    assert 'graph_consistency' in unit['quality_requirements']
+    assessment = AssessmentFeedback.model_validate(response_for_payload(payload))
+    assessment.validate_evidence(payload)
+    assert assessment.unit_results[0].quality == 'valid'
+    assert assessment.retrieval_results[0].status == 'injected'
+    assert assessment.unit_results[0].feedback == []
+    assert assessment.acceptable(groups)
 
 
 @pytest.mark.parametrize("change", [

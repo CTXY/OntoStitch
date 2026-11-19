@@ -72,13 +72,13 @@ def assess_nodes(agent, context, candidate, task, *, origins, before, earlier_fi
         if payload.get("feedback") == list(earlier_findings):
             payload.pop("feedback")
         payload["current_repair_fields"] = current_repair_fields(candidate, earlier_findings)
+        if getattr(context, 'task_required_context', ()):
+            payload['required_context'] = list(context.task_required_context)
         reviews.append(agent.invoke("node_assess", context, payload))
         if reviews[-1].verdict == "revisit_identity":
             return reviews[-1]
     return NodeReview(
-        verdict="accept" if all(r.verdict == "accept" for r in reviews) else "revise",
+        verdict=("accept" if all(r.verdict == "accept" for r in reviews)
+                 else "needs_context" if any(r.verdict == 'needs_context' for r in reviews) else "revise"),
         issues=tuple(i for r in reviews for i in r.issues),
-        issue_refs=tuple(i for r in reviews for i in r.issue_refs),
-        rationale_checks=tuple(i for r in reviews for i in r.rationale_checks),
-        decision_checks=tuple(i for r in reviews for i in r.decision_checks),
     )

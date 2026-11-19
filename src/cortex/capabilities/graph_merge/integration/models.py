@@ -35,6 +35,20 @@ class Element(Model):
     alternative_id: str | None = None
 
 
+class SourceDisposition(Model):
+    source_node_id: str
+    source_alternative_id: str | None = None
+    target_alternative_ids: tuple[str, ...] = ()
+    retained_in_common: bool = False
+    explanation: str = Field(min_length=1)
+
+    @model_validator(mode='after')
+    def one_destination(self):
+        if self.retained_in_common and self.target_alternative_ids:
+            raise ValueError('Choose common preservation or named branches, not both')
+        return self
+
+
 class Change(Model):
     before: tuple[Element, ...] = Field(min_length=1)
     after: tuple[Element, ...] = ()

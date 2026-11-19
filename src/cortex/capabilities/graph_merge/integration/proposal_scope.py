@@ -2,7 +2,7 @@
 import json
 
 from cortex.capabilities.graph_merge.integration.context import PHYSICAL, references
-from cortex.capabilities.graph_merge.integration.relation_context import node_view, edge_view, semantic_summary
+from cortex.capabilities.graph_merge.integration.relation_context import node_view, edge_view, physical_view
 from cortex.application.ontology_graph import GraphManager
 
 
@@ -77,14 +77,17 @@ class ProposalScope:
             ):
                 local_nodes.add(node.id)
         local_edges = {e.id for e in edges.values()
-                       if {e.from_node_id, e.to_node_id} & (roots | (requested & local_nodes))
+                       if ({e.from_node_id, e.to_node_id} & (roots | (requested & local_nodes))
+                           or (e.id in requested and {e.from_node_id, e.to_node_id} & local_nodes))
                        and not all(nodes[k].node_type in PHYSICAL for k in (e.from_node_id, e.to_node_id))}
         unrelated = outside - local_nodes - local_edges
         if unrelated:
             raise ValueError(f"Outside this local task: {sorted(unrelated)}. Return only the coupled change; unrelated work is not implicitly authorized by reading it.")
         missing = (outside | endpoints) - self.visible
         if missing:
-            packet = {"view": "candidate", "nodes": [node_view(nodes[k]) for k in sorted(missing & nodes.keys())],
+            packet = {"view": "candidate", "nodes": [physical_view(nodes[k], nodes, edges.values()) if nodes[k].node_type in PHYSICAL
+                                                      else node_view(nodes[k], evidence_ids=self.evidence.by_source)
+                                                      for k in sorted(missing & nodes.keys())],
                       "edges": [edge_view(edges[k], self.evidence.by_source) for k in sorted(missing & edges.keys())]}
             # Include the exact old property values a partial writer proposes
             # to replace, rather than demanding a second inspection round.
@@ -105,7 +108,7 @@ class ProposalScope:
                 node = nodes[row["id"]]
                 if node.alternatives:
                     row["alternatives"] = [{"alternative_id": a.alternative_id,
-                        "content": semantic_summary(GraphManager.resolve_alternative(node, a)),
+                        "content": GraphManager.resolve_alternative(node, a).model_dump(mode="json"),
                         "evidence_ids": self.evidence.ids_for(a.sources)} for a in node.alternatives]
                     refs.extend(s for a in node.alternatives for s in a.sources)
             prior_seen = set(self.evidence.seen)

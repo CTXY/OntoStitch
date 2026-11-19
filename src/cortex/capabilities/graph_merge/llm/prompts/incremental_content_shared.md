@@ -6,6 +6,8 @@ Input nodes have already been assessed. Preserve their material knowledge, scope
 
 Relationship, hierarchy and pairing facts already stated inside input node content are also knowledge to preserve. Deferring graph organization to Reconciliation does not defer or waive preservation of those facts. Keep them in the integrated content or an explicit equivalent successor; a physical column name alone does not preserve its business meaning.
 
+Conflict sources distinguish common evidence from branch evidence. common_evidence_ids records input knowledge preserved in every complete alternative; it does not claim each source proves all stronger statements in each branch. Branch evidence stays attached to its actual alternative. A source cannot be placed in common merely to satisfy coverage if one resulting branch drops or contradicts its original knowledge. Do not fabricate an extra conflict branch for a compatible weaker statement.
+
 Choose the most representative business referent as the name. A name or identifier can represent an entity/role, just as school names and school codes can represent School. Do not conflate representation with a distinct name attribute or infer real-world uniqueness from a database key. Preserve meaningful aliases and align the definition without changing identity.
 
 ## By node type

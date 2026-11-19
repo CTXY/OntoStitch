@@ -18,15 +18,15 @@ class EvidencePresentation:
     def ids_for(self, sources):
         return sorted({key for source in sources for key in self.by_source.get(source, ())})
 
-    def read(self, ids):
+    def read(self, ids, *, refresh=False):
         requested = set(ids)
         groups = {}
-        for key in sorted(requested - self.seen):
+        for key in sorted(requested if refresh else requested - self.seen):
             if key in self.contents:
                 signature = json.dumps(self.contents[key], sort_keys=True, ensure_ascii=False)
                 groups.setdefault(signature, []).append(key)
-        previous = {json.dumps(self.contents[key], sort_keys=True, ensure_ascii=False): key
-                    for key in sorted(self.seen) if key in self.contents}
+        previous = {} if refresh else {json.dumps(self.contents[key], sort_keys=True, ensure_ascii=False): key
+                                      for key in sorted(self.seen) if key in self.contents}
         rows = []
         for signature, keys in groups.items():
             row = {"id": keys[0]}
@@ -37,7 +37,7 @@ class EvidencePresentation:
             if len(keys) > 1:
                 row["evidence_ids"] = keys
             rows.append(row)
-        result = {"items": rows, "already_supplied": sorted(requested & self.seen),
+        result = {"items": rows, "already_supplied": [] if refresh else sorted(requested & self.seen),
                   "missing_ids": sorted(requested - self.contents.keys())}
         self.seen.update(requested & self.contents.keys())
         return result
@@ -71,10 +71,13 @@ def compact_attribution(value, context):
             return item
         attributed = "sources" in item and any(key in item for key in ("node_type", "edge_type", "alternative_id"))
         result = {key: val if key in {"properties", "content", "overrides"} else walk(val)
-                  for key, val in item.items() if key != "sources" or not attributed}
+                  for key, val in item.items() if key not in {"sources", "common_sources"} or not attributed}
         if attributed:
             result["evidence_ids"] = sorted({ident for ref in item["sources"]
                 for ident in index.get(SourceReference.model_validate(ref).model_dump_json(), ())})
+            if item.get("common_sources"):
+                result["common_evidence_ids"] = sorted({ident for ref in item["common_sources"]
+                    for ident in index.get(SourceReference.model_validate(ref).model_dump_json(), ())})
         return result
 
     return walk(value)

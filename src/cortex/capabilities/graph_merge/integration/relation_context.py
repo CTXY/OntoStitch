@@ -5,7 +5,7 @@ No inferred business edges, field-name classifiers or source broadcasting.
 from collections import defaultdict
 
 from cortex.capabilities.graph_merge.integration.batch import delta
-from cortex.capabilities.graph_merge.integration.context import PHYSICAL
+from cortex.capabilities.graph_merge.integration.context import PHYSICAL, references
 from cortex.schema.relation_contracts import effective_schema
 
 
@@ -13,11 +13,11 @@ def indexes(state):
     return ({n.id: n for n in state.graph.nodes}, {e.id: e for e in state.graph.edges})
 
 
-def node_view(node):
+def node_view(node, *, full=False, evidence_ids=None):
     result = {"id": node.id, "node_type": node.node_type, "name": node.name,
               "aliases": node.aliases}
     keys = ("definition", "action", "condition", "relation_metadata")
-    properties = {k: node.properties[k] for k in keys if k in node.properties}
+    properties = dict(node.properties) if full else {k: node.properties[k] for k in keys if k in node.properties}
     if properties:
         result["properties"] = properties
     if node.description and node.description != node.properties.get("definition"):
@@ -25,7 +25,34 @@ def node_view(node):
     if node.alternatives:
         result["alternative_ids"] = [a.alternative_id for a in node.alternatives]
         result["conflict_points"] = [p.model_dump(mode="json") for p in node.conflict_points]
+    common = getattr(node, "common_sources", ())
+    if common and evidence_ids is not None:
+        result["common_evidence_ids"] = sorted({i for source in common for i in evidence_ids.get(source, ())})
     return result
+
+
+def physical_view(node, nodes, edges=()):
+    """A physical ID is readable without exposing samples or catalog metadata."""
+    row = {"id": node.id, "node_type": node.node_type, "name": node.name}
+    if node.node_type == "table":
+        row["table"] = node.properties.get("table_name", node.name)
+    elif node.node_type == "column":
+        table = nodes.get(node.properties.get("table_ref"))
+        row["table"] = table.properties.get("table_name", table.name) if table else node.properties.get("table_ref")
+        row["column"] = node.properties.get("column_name", node.name)
+    elif node.node_type == "dimension_value":
+        column = nodes.get(node.properties.get("column_ref"))
+        if column is not None:
+            parent = physical_view(column, nodes)
+            row.update({key: parent[key] for key in ("table", "column") if key in parent})
+        row["value"] = node.properties.get("value", node.name)
+    owners = [edge for edge in edges if edge.edge_type == "grounded_on" and edge.to_node_id == node.id
+              and nodes[edge.from_node_id].node_type == "concept"]
+    if owners:
+        row["owners"] = [{"id": edge.from_node_id, "edge_id": edge.id,
+                          **({"alternative_ids": edge.properties["alternative_ids"]}
+                             if edge.properties.get("alternative_ids") else {})} for edge in owners]
+    return row
 
 
 def edge_view(edge, evidence_ids):
@@ -37,6 +64,8 @@ def edge_view(edge, evidence_ids):
 
 def relation_context(context, current, task, *, before=None, assessment=False):
     context.candidate = current
+    if before is not None:
+        context.task_before = before
     context.phase = task.phase
     nodes, edges = indexes(current)
     old_nodes, old_edges = indexes(before) if before is not None else ({}, {})
@@ -53,6 +82,8 @@ def relation_context(context, current, task, *, before=None, assessment=False):
             k for eid in old_changed_edges
             for k in (old_edges[eid].from_node_id, old_edges[eid].to_node_id)
         }
+        from cortex.capabilities.graph_merge.integration.task_context import semantic_review_targets
+        roots.update(semantic_review_targets(before, current, task.targets)['targets'])
         chosen = changed_edges | {
             e.id for e in edges.values()
             if (e.from_node_id in roots and e.to_node_id in roots)
@@ -91,6 +122,14 @@ def relation_context(context, current, task, *, before=None, assessment=False):
             break
     selected = roots | {k for eid in chosen for k in
                         (edges[eid].from_node_id, edges[eid].to_node_id)}
+    # Matching/formula references are necessary premises, even when a direct
+    # grounding edge is intentionally owned by another Concept.
+    physical = {ref for key in selected if key in nodes
+                for ref in references(nodes[key]) if ref in nodes and nodes[ref].node_type in PHYSICAL}
+    physical |= {key for key in selected if key in nodes and nodes[key].node_type in PHYSICAL}
+    chosen |= {edge.id for edge in edges.values()
+               if edge.edge_type == "grounded_on" and edge.to_node_id in physical}
+    selected |= physical | {key for eid in chosen for key in (edges[eid].from_node_id, edges[eid].to_node_id)}
     refs = {s for k in selected if k in nodes for s in nodes[k].sources}
     refs |= {s for k in selected if k in nodes for a in nodes[k].alternatives for s in a.sources}
     refs |= {s for eid in chosen for s in edges[eid].sources}
@@ -107,9 +146,11 @@ def relation_context(context, current, task, *, before=None, assessment=False):
     predicates = {edges[k].edge_type for k in chosen}
     packet = {
         "view": "light_relations_v1", "phase": task.phase, "task_id": task.id,
+        "revision": getattr(context, "workspace_revision", 0),
+        "presentation": "Focus properties are complete; neighbours are summaries. Unshown fields remain readable by exact path.",
         "nodes": [
-            ({"id": k, "node_type": nodes[k].node_type, "name": nodes[k].name}
-             if nodes[k].node_type in PHYSICAL else node_view(nodes[k]))
+            (physical_view(nodes[k], nodes, edges.values())
+             if nodes[k].node_type in PHYSICAL else node_view(nodes[k], full=k in roots, evidence_ids=evidence_ids))
             for k in sorted(selected) if k in nodes
         ],
         "edges": [edge_view(edges[k], evidence_ids) for k in sorted(chosen)],
@@ -125,9 +166,13 @@ def relation_context(context, current, task, *, before=None, assessment=False):
     # available through selective reads, never inferred from common placeholders.
     from cortex.application.ontology_graph import GraphManager
     packet["current_conflict_views"] = [
-        {"node_id": key, "alternatives": [
+        {"node_id": key,
+         **({"common_evidence_ids": sorted({i for source in getattr(nodes[key], "common_sources", ()) for i in evidence_ids.get(source, ())})}
+            if getattr(nodes[key], "common_sources", ()) else {}),
+         "alternatives": [
             {"alternative_id": alternative.alternative_id,
-             "resolved_content": semantic_summary(GraphManager.resolve_alternative(nodes[key], alternative)),
+             "resolved_content": (GraphManager.resolve_alternative(nodes[key], alternative).model_dump(mode="json")
+                                  if key in roots else semantic_summary(GraphManager.resolve_alternative(nodes[key], alternative))),
              "evidence_ids": sorted({i for ref in alternative.sources for i in evidence_ids.get(ref, ())}),
              "active_outgoing_edge_ids": sorted(
                  e.id for e in edges.values() if e.from_node_id == key
@@ -145,17 +190,10 @@ def relation_context(context, current, task, *, before=None, assessment=False):
         )
     if assessment:
         packet["actual_changes"] = changes
-        packet["before_nodes"] = [node_view(old_nodes[k]) for k in
+        packet["before_nodes"] = [node_view(old_nodes[k], full=True, evidence_ids=evidence_ids) for k in
                                   changes["nodes"]["updated"] + changes["nodes"]["deleted"]]
         packet["before_edges"] = [edge_view(old_edges[k], evidence_ids) for k in
                                   changes["edges"]["updated"] + changes["edges"]["deleted"]]
-        # Full details only for actually changed protected semantics.
-        packet["changed_contents"] = [
-            {"id": k, "properties": nodes[k].properties}
-            for k in changes["nodes"]["created"] + changes["nodes"]["updated"]
-            if k in nodes and (
-                k not in old_nodes or nodes[k].properties != old_nodes[k].properties)
-        ]
         packet["new_contracts"] = [
             c.model_dump(mode="json") for c in current.graph.relation_contracts
             if c not in before.graph.relation_contracts

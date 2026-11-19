@@ -61,7 +61,7 @@ def test_shared_edge_is_present_in_each_selected_branch_while_a_subset_stays_loc
     assert observed[2] == {key: key == all_ids[0] for key in all_ids}
 
 
-def test_relation_packet_shows_light_branch_contents_without_mutation():
+def test_relation_packet_shows_complete_focus_branches_without_mutation():
     from ontology_v2_fixtures import discussion_state
     from cortex.capabilities.graph_merge.integration.relation_context import relation_context
     original = discussion_state()
@@ -81,8 +81,7 @@ def test_relation_packet_shows_light_branch_contents_without_mutation():
         full = GraphManager.resolve_alternative(owner, alternative)
         assert row['resolved_content']['properties']['action'] == full.properties['action']
         assert row['resolved_content']['properties']['action']
-        assert 'reason' not in row['resolved_content']['properties']
-        assert 'targets' not in row['resolved_content']['properties']
+        assert row['resolved_content'] == full.model_dump(mode='json')
         assert 'common-operand' in row['active_outgoing_edge_ids']
         assert ('local-operand' in row['active_outgoing_edge_ids']) == (alternative.alternative_id == ids[0])
     assert 'common action/reason may be null' in packet['conflict_record_semantics']

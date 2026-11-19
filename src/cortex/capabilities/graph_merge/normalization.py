@@ -4,9 +4,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-import sqlglot
-from sqlglot import exp
-from sqlglot.errors import SqlglotError
 
 from cortex.capabilities.graph_merge.models import FinalNodeGroup
 from cortex.schema import SchemaDefinition

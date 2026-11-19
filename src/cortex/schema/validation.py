@@ -250,12 +250,12 @@ def _validate_conflicts(state: GraphState, schema: SchemaDefinition) -> None:
                 )
         expected_sources = _stable_sources(
             source
-            for alternative in conflict.alternatives
-            for source in alternative.sources
+            for group in (conflict.common_sources, *(alternative.sources for alternative in conflict.alternatives))
+            for source in group
         )
         if node.sources != expected_sources:
             raise InvalidGraphState(
-                f"conflict node {node_id!r} sources are not the alternatives union"
+                f"conflict node {node_id!r} sources are not the common and alternatives union"
             )
         canonical_exact = _identity_values(
             _node_content(node), node_type.identity_policy

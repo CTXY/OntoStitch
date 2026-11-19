@@ -62,22 +62,21 @@ def test_scope_feedback_includes_only_changed_property_old_value():
 
 @pytest.mark.parametrize('refs', [[], ()])
 def test_revise_requires_an_affected_object_reference(refs):
-    from cortex.capabilities.graph_merge.llm.reconciliation import RelationReview
-    with pytest.raises(ValueError, match='nonempty issue_refs'):
-        RelationReview(verdict='revise', issues=('Incorrect attribute bearer.',), issue_refs=refs)
+    from cortex.capabilities.graph_merge.integration.review import Review
+    with pytest.raises(ValueError):
+        Review(verdict='revise', issues=[{'refs': refs, 'basis': [{'kind':'edge','id':'edge.one'}], 'problem':'Incorrect attribute bearer.', 'required_outcome':'Attach the attribute to its true bearer.'}])
 
 
 def test_structural_review_accepts_cross_object_references_without_field_paths():
-    from cortex.capabilities.graph_merge.llm.reconciliation import RelationReview
-    review = RelationReview(verdict='revise', issues=('The relation is attached to the wrong bearer.',),
-        issue_refs=({'kind': 'edge', 'id': 'edge.one'}, {'kind': 'node', 'id': 'concept.bearer'}))
+    from cortex.capabilities.graph_merge.integration.review import Review
+    review = Review(verdict='revise', issues=[{'refs': [{'kind':'edge','id':'edge.one'}, {'kind':'node','id':'concept.bearer'}], 'basis':[{'kind':'edge','id':'edge.one'}], 'problem':'The relation is attached to the wrong bearer.', 'required_outcome':'Use the original supported bearer.'}])
     assert review.verdict == 'revise'
     assert all(not ref.fields for ref in review.issue_refs)
 
 
 def test_review_acceptance_does_not_require_references():
-    from cortex.capabilities.graph_merge.llm.reconciliation import RelationReview
-    assert RelationReview(verdict='accept').issue_refs == ()
+    from cortex.capabilities.graph_merge.integration.review import Review
+    assert Review(verdict='accept').issue_refs == ()
 
 
 def test_unknown_field_feedback_does_not_advertise_blocked_whole_properties():
@@ -106,13 +105,13 @@ def test_writer_examples_match_actual_submission_schema():
     import re
     from importlib.resources import files
     text = files('cortex.capabilities.graph_merge.llm.prompts').joinpath('incremental_relation_write.md').read_text()
-    from cortex.capabilities.graph_merge.integration.proposal_repair import PatchSubmission
-    examples = [PatchSubmission.model_validate(json.loads(raw)) for raw in re.findall(r'```json\n(.*?)\n```', text, re.S)]
-    creation = next(e.patch for e in examples if e.patch and e.patch.create_edges)
-    update = next(e.patch for e in examples if e.patch and e.patch.edge_updates)
+    from cortex.capabilities.graph_merge.integration.patch import MergePatch
+    examples = [MergePatch.model_validate(json.loads(raw)) for raw in re.findall(r'```json\n(.*?)\n```', text, re.S)]
+    creation = next(e for e in examples if e.create_edges)
+    update = next(e for e in examples if e.edge_updates)
     assert creation.create_edges[0].evidence_ids and creation.create_edges[0].properties['description']
     assert update.edge_updates[0].add_evidence and update.edge_updates[0].properties['description']
-    assert any(e.corrections for e in examples)
+    assert all(not hasattr(e, "corrections") for e in examples)
 
 
 def test_validation_feedback_keeps_all_paths_without_echoing_patch():
@@ -125,3 +124,16 @@ def test_validation_feedback_keeps_all_paths_without_echoing_patch():
     assert 'edge_merges.0.source_ids' in text and 'edge_merges.0.survivor_id' in text
     assert 'edge_merges.0.kept_edge_id' in text and 'explanation' in text
     assert 'SECRET_BODY_SENTINEL' not in text and 'https://' not in text
+
+
+@pytest.mark.parametrize('model,data', [
+    ('NodeUpdate', {'id':'node', 'relation_metadata':[], 'explanation':'Old spelling.'}),
+    ('EdgeUpdate', {'id':'edge', 'description':'Old spelling.'}),
+    ('EdgeUpdate', {'id':'edge', 'branches':[]}),
+    ('NewEdge', {'id':'edge', 'edge_type':'has_feature', 'from_node_id':'left', 'to_node_id':'right',
+                 'properties':{'description':'A real relation.'}, 'evidence':['Q1']}),
+])
+def test_obsolete_field_aliases_are_rejected_instead_of_silently_rewritten(model, data):
+    from cortex.capabilities.graph_merge.integration import relation_edits
+    with pytest.raises(ValueError):
+        getattr(relation_edits, model).model_validate(data)

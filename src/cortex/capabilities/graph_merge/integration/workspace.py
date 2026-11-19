@@ -45,6 +45,16 @@ def _normalize(payload):
         if not isinstance(value, (list, tuple)):
             raise TypeError(f"Workspace {key} must be a list")
         normalized[key] = list(value)
+    if payload.get("task_state") is not None:
+        from cortex.capabilities.graph_merge.integration.task_state import TaskState, canonical_hash
+
+        task = TaskState.from_dict(payload["task_state"])
+        normalized["task_state"] = task.to_dict()
+        if payload.get("contract_versions") != task.versions.to_dict():
+            raise ValueError("Task and workspace contracts differ")
+        expected_graph = task.candidate_hash if task.stage == "committed" else task.base_hash
+        if canonical_hash(normalized["current"]) != expected_graph:
+            raise ValueError("Task state does not belong to the accepted workspace graph")
     return normalized
 
 

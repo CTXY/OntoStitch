@@ -40,6 +40,7 @@ class ConflictWrite(Model):
     node_id: str
     alternatives: tuple[CompleteAlternative, ...] = Field(min_length=2)
     conflict_points: tuple[ConflictPoint, ...] = Field(min_length=1)
+    common_evidence_ids: tuple[str, ...] = ()
 
 
 class EdgeMerge(Model):
@@ -123,6 +124,8 @@ def alias_view(state, aliases):
     merged = {}
     for n in nodes.values():
         key = aliases.get(n.id, n.id)
+        if key != n.id and (n.alternatives or nodes[key].alternatives):
+            raise ValueError('Conflict identity projection requires a complete integrate_groups result; source attribution cannot be inferred')
         if key not in merged:
             merged[key] = remap_node(nodes[key], aliases)
         first = merged[key]
@@ -171,7 +174,6 @@ class ActiveBatch:
             if e.from_node_id in self.targets or e.to_node_id in self.targets
         }
         self.pending = {}
-        self._full_property_edits = set()
         self.changes = []
         self.contracts = {}
         self.edge_merges = {}
@@ -182,28 +184,9 @@ class ActiveBatch:
         self.prepare_submission = None
         self.scope_events = []
 
-    def pending_snapshot(self):
-        """Complete accumulated draft, not just the latest partial submission."""
-        return {
-            "update_semantics": "partial-v1",
-            "full_property_edits": [list(key) for key in sorted(self._full_property_edits)],
-            "edits": deepcopy(list(self.pending.values())),
-            "changes": deepcopy(self.changes),
-            "contracts": [c.model_dump(mode="json") for c in self.contracts.values()],
-            "edge_merges": [m.model_dump(mode="json") for m in self.edge_merges.values()],
-        }
-
-    def restore_pending(self, saved):
-        self.pending = {edit_key(e): deepcopy(e) for e in saved["edits"]}
-        self._full_property_edits = ({tuple(key) for key in saved.get("full_property_edits", [])}
-            if saved.get("update_semantics") == "partial-v1" else set(self.pending))
-        self.changes = deepcopy(saved["changes"])
-        self.contracts = {c["id"]: EdgeType.model_validate(c) for c in saved["contracts"]}
-        self.edge_merges = {m["survivor_id"]: EdgeMerge.model_validate(m) for m in saved["edge_merges"]}
-
     def submit_atomic(self, result):
         """Keep the last valid draft when a new structured submission is invalid."""
-        fields = ("pending", "changes", "contracts", "edge_merges", "_full_property_edits", "allowed", "targets")
+        fields = ("pending", "changes", "contracts", "edge_merges", "allowed", "targets")
         saved = {k: deepcopy(getattr(self, k)) for k in fields}
         saved.update({k: getattr(self, k) for k in ("preview", "result", "revision")})
         candidate = self.context.candidate
@@ -214,9 +197,6 @@ class ActiveBatch:
             value = self.submit(result)
             if added:
                 self.scope_events.append({"ids": sorted(added), "reason": "Explicit coupled patch objects"})
-                task = getattr(self.context, "active_task", None)
-                if task is not None:
-                    task.targets.update(added)
             return value
         except (ValueError, TypeError, KeyError):
             for key, value in saved.items():
@@ -277,7 +257,6 @@ class ActiveBatch:
                     f"{edit['operation']} requires the object id inside node/edge"
                 ) from exc
             old = self.pending.get(key)
-            self._full_property_edits.discard(key)
             if (
                 old
                 and old["operation"].startswith("create_")
@@ -383,7 +362,7 @@ class ActiveBatch:
             current_object = prior_objects[kind].get(key) or previous
             if current_object is not None:
                 stored = current_object.model_dump(mode="json")
-                properties = {} if op == "set_conflict" or (kind, raw_key) in self._full_property_edits else dict(stored.get("properties", {}))
+                properties = {} if op == "set_conflict" else dict(stored.get("properties", {}))
                 for field, value in raw.get("properties", {}).items():
                     if value is None:
                         properties.pop(field, None)
@@ -393,11 +372,12 @@ class ActiveBatch:
             if kind == "node" and raw.get("merge_status") == "normal":
                 # Normal GraphNode serialization omits empty conflict fields.
                 # A full resolution must not inherit the old conflict envelope.
-                raw.update(consolidation_status=None, preservation_reasons=[], alternatives=[], conflict_points=[])
+                raw.update(consolidation_status=None, preservation_reasons=[], alternatives=[], conflict_points=[], common_sources=[])
             if edit.get("evidence_ids"):
                 raw["sources"] = [s.model_dump(mode="json") for s in evidence_sources(self.context, edit["evidence_ids"])]
             saved_object = prior_objects[kind].get(key)
-            if previous or saved_object:
+            resolving = kind == 'node' and previous and previous.alternatives and raw.get('merge_status') == 'normal'
+            if (previous or saved_object) and not resolving:
                 supplied = raw.get("sources", [])
                 refs = tuple(dict.fromkeys((*(previous.sources if previous else ()), *(saved_object.sources if saved_object else ()))))
                 raw["sources"] = [s.model_dump(mode="json") for s in refs]
@@ -406,7 +386,8 @@ class ActiveBatch:
                 from cortex.schema.validation import _stable_sources
                 raw["sources"] = [s.model_dump(mode="json") for s in _stable_sources(
                     SourceReference.model_validate(ref)
-                    for alternative in raw["alternatives"] for ref in alternative["sources"])]
+                    for ref in [*raw.get('common_sources', []),
+                                *(r for alternative in raw['alternatives'] for r in alternative['sources'])])]
             try:
                 obj = (GraphNode if kind == "node" else GraphEdge).model_validate(raw)
             except (ValueError, TypeError) as error:
@@ -479,6 +460,8 @@ class ActiveBatch:
                 ],
                 consolidation_status="semantic_conflict",
                 conflict_points=conflict.conflict_points,
+                common_sources=(evidence_sources(self.context, conflict.common_evidence_ids)
+                    if 'common_evidence_ids' in conflict.model_fields_set else None),
             )
             nodes[compact.id] = compact
             # Persist successful complete alternative input for local retry.

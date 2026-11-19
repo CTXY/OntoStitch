@@ -39,15 +39,15 @@ def test_light_payload_and_runtime_use_real_partial_tool_without_metadata():
     assert "physical_facts" not in payload and "node_guidance" not in payload
     assert "candidate_nodes" not in payload and "sources" not in json.dumps(payload)
     model = Chat([AIMessage(content="", tool_calls=[{
-        "name": "submit_changes", "id": "patch",
-        "args": {"patch": {"edge_updates": [{"id": e, "description": "A precise business feature."}],
-                           "explanation": "Clarify the existing business relation."}}
+        "name": "submit_patch", "id": "patch",
+        "args": {"edge_updates": [{"id": e, "properties": {"description": "A precise business feature."}}],
+                           "explanation": "Clarify the existing business relation."}
     }])])
     result = IncrementalIntegrationAgent(model).invoke("reconcile", ctx, payload)
     assert len(model.requests) == 1
     tools = {getattr(t, "name", None) for t in model.tools}
-    assert tools == {"inspect_graph", "read_evidence", "read_guidance", "submit_changes"}
-    assert result.edits
+    assert tools == {"inspect_graph", "lookup_catalog", "read_evidence", "read_guidance", "inspect_draft", "submit_patch"}
+    assert result.edge_updates
     current = ctx.active_batch.preview
     assert current.graph.nodes == ctx.active_batch.seed.graph.nodes
     changed = next(x for x in current.graph.edges if x.id == e)
@@ -56,7 +56,7 @@ def test_light_payload_and_runtime_use_real_partial_tool_without_metadata():
     review = relation_context(ctx, current, LocalTask("review", "graph_assess", {a, b}),
                               before=base, assessment=True)
     assert review["actual_changes"]["edges"]["updated"] == [e]
-    assert not review["before_nodes"] and not review["changed_contents"]
+    assert not review["before_nodes"] and "changed_contents" not in review
     assert "nodes" in review and not any("targets" in n for n in review["nodes"])
 
 
@@ -89,8 +89,8 @@ def test_selective_reads_reject_full_properties_and_preserve_requested_fields():
     ctx, base, a, b, _e = setup()
     payload = relation_context(ctx, base, LocalTask("read", "reconcile", {a, b}))
     model = Chat([
-        AIMessage(content="", tool_calls=[{"name": "inspect_items", "id": "read",
-                                           "args": {"ids": [a], "fields": ["properties.targets"]}}]),
+        AIMessage(content="", tool_calls=[{"name": "inspect_graph", "id": "read",
+                                           "args": {"mode": "items", "ids": [a], "fields": ["properties.targets"]}}]),
         AIMessage(content='{"explanation":"No justified change."}')
     ])
     IncrementalIntegrationAgent(model).invoke("reconcile", ctx, payload)
@@ -169,8 +169,8 @@ def test_selective_reads_use_the_same_edge_fields_as_the_light_view():
     ctx, base, a, b, e = setup()
     payload = relation_context(ctx, base, LocalTask("read", "reconcile", {a, b}))
     model = Chat([
-        AIMessage(content="", tool_calls=[{"name": "inspect_items", "id": "read",
-            "args": {"ids": [e], "fields": ["from_node_id", "to_node_id", "edge_type", "evidence_ids"]}}]),
+        AIMessage(content="", tool_calls=[{"name": "inspect_graph", "id": "read",
+            "args": {"mode": "items", "ids": [e], "fields": ["from_node_id", "to_node_id", "edge_type", "evidence_ids"]}}]),
         AIMessage(content='{"explanation":"No change."}')
     ])
     IncrementalIntegrationAgent(model).invoke("reconcile", ctx, payload)
@@ -197,7 +197,9 @@ def test_grounding_endpoints_have_readable_names_without_physical_metadata():
         update={"edges": (*base.graph.edges, link)})})
     payload = relation_context(ctx, current, LocalTask("grounding", "reconcile", {a, b, link.id}))
     shown = next(n for n in payload["nodes"] if n["id"] == physical.id)
-    assert shown == {"id": physical.id, "node_type": "column", "name": physical.name}
+    assert shown["id"] == physical.id and shown["node_type"] == "column"
+    assert shown["table"] == "objects" and shown["column"] == physical.name
+    assert shown["owners"][0]["id"] == a
 
 
 def test_metadata_shape_is_rejected_before_scope_expansion_without_poisoning_draft():
@@ -217,8 +219,8 @@ def test_absent_optional_group_and_branch_fields_have_clear_empty_values():
     payload = relation_context(ctx, base, LocalTask("read", "reconcile", {a, b}))
     model = Chat([
         AIMessage(content="", tool_calls=[
-            {"name": "inspect_items", "id": "groups", "args": {"ids": [a], "fields": ["properties.relation_metadata"]}},
-            {"name": "inspect_items", "id": "branches", "args": {"ids": [e], "fields": ["properties.alternative_ids"]}}]),
+            {"name": "inspect_graph", "id": "groups", "args": {"mode": "items", "ids": [a], "fields": ["properties.relation_metadata"]}},
+            {"name": "inspect_graph", "id": "branches", "args": {"mode": "items", "ids": [e], "fields": ["properties.alternative_ids"]}}]),
         AIMessage(content='{"explanation":"No change."}')])
     IncrementalIntegrationAgent(model).invoke("reconcile", ctx, payload)
     assert json.loads(model.requests[1][-2].content)["items"][0]["properties"]["relation_metadata"] is None
@@ -229,8 +231,8 @@ def test_read_batch_keeps_valid_results_when_one_id_or_field_is_invalid():
     ctx, base, a, b, e = setup()
     payload = relation_context(ctx, base, LocalTask("read", "reconcile", {a, b}))
     model = Chat([
-        AIMessage(content="", tool_calls=[{"name": "inspect_items", "id": "read",
-            "args": {"ids": [a, e, "retired-id"], "fields": ["properties.targets", "properties"]}}]),
+        AIMessage(content="", tool_calls=[{"name": "inspect_graph", "id": "read",
+            "args": {"mode": "items", "ids": [a, e, "retired-id"], "fields": ["properties.targets", "properties"]}}]),
         AIMessage(content='{"explanation":"No change."}')])
     IncrementalIntegrationAgent(model).invoke("reconcile", ctx, payload)
     result = json.loads(model.requests[1][-1].content)
@@ -244,20 +246,19 @@ def test_last_call_reserves_completion_without_turning_failure_into_empty_succes
     ctx, base, a, b, _e = setup()
     payload = relation_context(ctx, base, LocalTask("bounded", "reconcile", {a, b}))
     model = Chat([
-        AIMessage(content="", tool_calls=[{"name": "inspect_items", "id": "read",
-            "args": {"ids": [a], "fields": ["properties.targets"]}}]),
+        AIMessage(content="", tool_calls=[{"name": "inspect_graph", "id": "read",
+            "args": {"mode": "items", "ids": [a], "fields": ["properties.targets"]}}]),
         AIMessage(content='{"explanation":"Completed regional review; no justified change."}')])
     IncrementalIntegrationAgent(model, max_calls=2).invoke("reconcile", ctx, payload)
-    assert [t.name for t in model.tools] == ["submit_changes"]
-    assert "reserved completion call" in model.requests[1][-1].content
+    assert [t.name for t in model.tools] == ["submit_patch"]
     assert ctx.active_batch.preview == base
     from cortex.capabilities.graph_merge.integration.relation_edits import RegionIncomplete
     with pytest.raises(RegionIncomplete, match="Missing a required relation contract"):
         submit_patch(ctx, RelationPatch(failure="Missing a required relation contract", explanation="Cannot safely complete."))
     fresh, state_before, x, y, _edge = setup()
     reader = Chat([AIMessage(content="", tool_calls=[{
-        "name": "inspect_items", "id": "late-read", "args": {"ids": [x], "fields": ["properties.targets"]}}])])
-    with pytest.raises(ValueError, match="exceeded local call budget"):
+        "name": "inspect_graph", "id": "late-read", "args": {"mode": "items", "ids": [x], "fields": ["properties.targets"]}}])])
+    with pytest.raises(RuntimeError, match="exhausted.*local call budget"):
         IncrementalIntegrationAgent(reader, max_calls=1).invoke(
             "reconcile", fresh, relation_context(fresh, state_before, LocalTask("late", "reconcile", {x, y})))
     assert fresh.active_batch.preview is None

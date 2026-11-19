@@ -1,6 +1,6 @@
 """Partial edits compiled into the existing validated local transaction."""
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 
 from cortex.capabilities.graph_merge.integration.batch import (
     BatchResult,
@@ -8,7 +8,7 @@ from cortex.capabilities.graph_merge.integration.batch import (
     EdgeMerge,
 )
 from cortex.capabilities.graph_merge.integration.context import PHYSICAL
-from cortex.capabilities.graph_merge.integration.models import Change, Element, Model
+from cortex.capabilities.graph_merge.integration.models import Change, Element, Model, SourceDisposition
 from cortex.schema import NodeContent, ConflictPoint
 from cortex.schema.relation_metadata import validate_metadata_items
 
@@ -27,6 +27,8 @@ class EvidenceConflict(Model):
     node_id: str
     alternatives: tuple[EvidenceAlternative, ...] = Field(min_length=2)
     conflict_points: tuple[ConflictPoint, ...] = Field(min_length=1)
+    common_evidence_ids: tuple[str, ...] = ()
+    branch_dispositions: tuple[SourceDisposition, ...] = Field(default=(), description='For an existing owner, map every old branch and common/ordinary member scope to the new branches, common preservation, or an explained branch discard. Branch identity is source_node_id plus source_alternative_id.')
 
 
 from cortex.capabilities.graph_merge.integration.evidence_refs import evidence_sources
@@ -43,21 +45,6 @@ class NodeUpdate(Model):
     properties: dict = Field(default_factory=dict, description="Only changed property keys; each supplied property's value replaces that key, all other keys are preserved.")
     explanation: str = Field(min_length=1)
 
-    @model_validator(mode="before")
-    @classmethod
-    def legacy_metadata(cls, value):
-        if isinstance(value, dict) and "relation_metadata" in value:
-            value = dict(value)
-            props = dict(value.get("properties", {}))
-            if "relation_metadata" in props:
-                raise ValueError("Supply properties.relation_metadata once")
-            meta = value.pop("relation_metadata")
-            if meta is not None:
-                props["relation_metadata"] = meta
-            value["properties"] = props
-        return value
-
-
 class EdgeUpdate(Model):
     id: str
     edge_type: str | None = None
@@ -67,38 +54,7 @@ class EdgeUpdate(Model):
     add_evidence: tuple[str, ...] = Field(default=(), description="Only displayed evidence IDs supporting this edge; exact sources are resolved by code.")
     properties: dict = Field(default_factory=dict, description="Changed real properties, including description and alternative_ids. Each supplied property replaces that key; omitted keys stay unchanged.")
 
-    @model_validator(mode="before")
-    @classmethod
-    def legacy_paths(cls, value):
-        # Read old callers without exposing obsolete aliases in model tools.
-        if not isinstance(value, dict):
-            return value
-        value = dict(value)
-        props = dict(value.get("properties", {}))
-        for old, actual in (("description", "description"), ("branches", "alternative_ids")):
-            if old in value:
-                val = value.pop(old)
-                if val is not None:
-                    if actual in props and props[actual] != val:
-                        raise ValueError(f"Supply properties.{actual} once")
-                    props[actual] = val
-        value["properties"] = props
-        return value
-
-
-class EvidenceWrite(Model):
-    @model_validator(mode="before")
-    @classmethod
-    def legacy_evidence(cls, value):
-        if isinstance(value, dict) and "evidence" in value:
-            value = dict(value)
-            if "evidence_ids" in value:
-                raise ValueError("Supply evidence_ids once")
-            value["evidence_ids"] = value.pop("evidence")
-        return value
-
-
-class NewNode(EvidenceWrite):
+class NewNode(Model):
     id: str
     node_type: str
     name: str
@@ -108,21 +64,13 @@ class NewNode(EvidenceWrite):
     evidence_ids: tuple[str, ...] = Field(min_length=1)
 
 
-class NewEdge(EvidenceWrite):
+class NewEdge(Model):
     id: str = Field(description="Fresh edge ID for this creation; rejected proposals do not create it in the graph.")
     edge_type: str
     from_node_id: str
     to_node_id: str
     properties: dict = Field(description="Complete edge properties, including description and any required alternative_ids scope.")
     evidence_ids: tuple[str, ...] = Field(min_length=1, description="Displayed evidence IDs supporting this new edge. For existing edges, use edge_updates.add_evidence instead.")
-
-    @model_validator(mode="before")
-    @classmethod
-    def legacy_paths(cls, value):
-        # Accept historical top-level description/branches without exposing
-        # update-only fields in the new-edge schema.
-        return EdgeUpdate.legacy_paths(value)
-
 
 class Retirement(Model):
     before: tuple[Element, ...] = Field(min_length=1, description="Current assertions being replaced. Code deletes before objects absent from after.")
@@ -163,6 +111,8 @@ class RelationPatch(Model):
 def submit_patch(context, patch):
     if patch.failure:
         raise RegionIncomplete(patch.failure)
+    if any(c.branch_dispositions for c in patch.conflicts):
+        raise ValueError('Compile branch dispositions through the MergePatch compiler')
     batch = context.active_batch
     current = batch.preview or batch.seed
     nodes = {n.id: n for n in current.graph.nodes}
@@ -293,6 +243,8 @@ def submit_patch(context, patch):
                 "sources": [s.model_dump(mode="json") for s in evidence_sources(context, a.evidence_ids)]}
                 for a in conflict.alternatives],
             "conflict_points": [p.model_dump(mode="json") for p in conflict.conflict_points],
+            **({'common_evidence_ids': conflict.common_evidence_ids}
+               if 'common_evidence_ids' in conflict.model_fields_set else {}),
         }) for conflict in patch.conflicts],
         "relation_contracts": [c.model_dump(mode="json", exclude_none=True) for c in patch.relation_contracts],
     })

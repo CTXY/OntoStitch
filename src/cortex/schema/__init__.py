@@ -12,6 +12,7 @@ from cortex.schema.graph import (
     NodeContent,
     NodeMergeConflict,
     SourceReference,
+    alternative_sources,
 )
 from cortex.schema.graph_io import export_inline_graph, with_conflicts
 from cortex.schema.models import (
@@ -58,6 +59,7 @@ __all__ = [
     "SchemaDefinition",
     "SchemaFamily",
     "SourceReference",
+    "alternative_sources",
     "calculate_schema_hash",
     "export_inline_graph",
     "load_root_schema",

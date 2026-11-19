@@ -56,7 +56,7 @@ def test_current_owner_only_when_one_source_group_member_is_present(current_memb
     assert 'current_owner' not in group  # Transport annotation cannot mutate controller identity groups.
 
 
-def test_empty_predicate_filter_is_unfiltered_and_current_owner_replaces_false_flag():
+def test_empty_predicate_filter_is_unfiltered_and_current_owner_is_explicit():
     import json
     from langchain_core.messages import AIMessage, ToolMessage
     from test_graph_integration import edge
@@ -72,13 +72,13 @@ def test_empty_predicate_filter_is_unfiltered_and_current_owner_replaces_false_f
     task = LocalTask('content', 'consolidate', {a}, groups=[group])
     payload = compact_task_context(build_task_context(ctx, ctx.candidate, task, before=ctx.candidate),
                                    ctx, ctx.candidate, {a}, [group], for_review=False)
-    payload.update(identity_aliases={}, provisional_identity_projection=False)
     model = Chat([AIMessage(content='', tool_calls=[{'name': 'inspect_graph', 'id': 'read', 'args': {
         'mode': 'relations', 'ids': [a], 'edge_types': []}}]),
-        AIMessage(content='', tool_calls=[{'name': 'BatchResult', 'id': 'final', 'args': {}}])])
+        AIMessage(content='', tool_calls=[{'name': 'submit_patch', 'id': 'final', 'args': {'explanation': 'No changes.'}}])])
     IncrementalIntegrationAgent(model, max_calls=None).invoke('consolidate', ctx, payload)
     supplied = json.loads(model.requests[0][1].content)
     assert 'provisional_identity_projection' not in supplied
     assert supplied['matched_groups'][0]['current_owner'] == a
     reply = next(json.loads(m.content) for m in model.requests[1] if isinstance(m, ToolMessage))
-    assert 'error' not in reply and reply['total'] == 1
+    assert 'error' not in reply and reply['complete']
+    assert len(reply['items']) == 1

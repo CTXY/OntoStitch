@@ -88,7 +88,7 @@ def test_preloaded_evidence_is_local_and_large_items_remain_readable():
     )
     payload = ctx.payload("propose")
     assert payload["evidence"] == [ctx.evidence_rows()[1]]
-    full = build_tools(ctx)[1].invoke({"ids": ["local"]})
+    full = {tool.name: tool for tool in build_tools(ctx)}['read_evidence'].invoke({"ids": ["local"]})
     assert len(full["items"]) == 2
     assert bounded_items([{"x": "x" * 100}, {"x": "small"}], budget=30) == [
         {"x": "small"}

@@ -80,7 +80,45 @@ def prepared_catalog_arguments(args):
 
 
 def merge_mode_arguments(args):
-    return ['--merge-http-mode', getattr(args, 'merge_http_mode', 'stream')]
+    result = ['--merge-http-mode', getattr(args, 'merge_http_mode', 'stream')]
+    migration = getattr(args, 'merge_checkpoint_migration', None)
+    if migration is not None:
+        result += ['--merge-checkpoint-migration', str(migration)]
+    return result
+
+
+def validate_merge_migration(args, batch_id, snapshot):
+    """A migrated copy is resumed only with its explicit, matching plan."""
+    from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+
+    path = getattr(args, 'merge_checkpoint_migration', None)
+    if path is None:
+        if snapshot and snapshot.get('migration'):
+            raise ValueError('Migrated merge requires --merge-checkpoint-migration PLAN')
+        return
+    plan = read(path)
+    if plan.get('version') != 1 or Path(plan['destination_output']).resolve() != args.output.resolve():
+        raise ValueError('Merge migration plan does not belong to this output')
+    entry = plan.get('checkpoints', {}).get(batch_id)
+    if entry is None:
+        # Subsequent new batches have no legacy state to migrate.
+        if snapshot and snapshot.get('migration'):
+            raise ValueError('Migrated checkpoint is missing from its plan')
+        return
+    if not snapshot or not snapshot.get('migration'):
+        raise ValueError('Migration plan points to an unmigrated checkpoint')
+    expected = args.output / 'merge' / batch_id / 'workspace.sqlite'
+    if Path(entry['workspace']).resolve() != expected.resolve():
+        raise ValueError('Migration plan points to a different workspace')
+    migration = snapshot['migration']
+    if (migration['source_sha256'] != entry['source_sha256']
+            or migration['source_input_fingerprint'] != entry['source_input_fingerprint']
+            or migration['accepted_graph_hash'] != entry['accepted_graph_hash']):
+        raise ValueError('Migrated checkpoint provenance differs from its plan')
+    if snapshot.get('contract_versions') != plan.get('contract_versions'):
+        raise ValueError('Migrated checkpoint contract differs from its plan')
+    if snapshot.get('revision') == 1 and canonical_hash(snapshot['current']) != entry['accepted_graph_hash']:
+        raise ValueError('Migrated accepted graph differs from its plan')
 
 
 def prepare_catalog(args):
@@ -452,6 +490,7 @@ def merge_worker(args):
             engine.identity_trace_path = out / 'agents.jsonl'
             if engine.workspace_path.exists():
                 engine.resume_snapshot = WorkspaceStore(engine.workspace_path).load(f'train-merge-{ident}')
+                validate_merge_migration(args, ident, engine.resume_snapshot)
             write(args.output / 'merge_status.json', {'status': 'running', 'question_id': ident,
                 'question_ids': batch, 'merged': merged, 'omitted': omitted,
                 'slot': args.slot, 'updated': time.time()})
@@ -569,6 +608,7 @@ def watch(args):
             slot = next_key_slot(args, read(args.output / 'merge_status.json').get('slot', args.slot))
             with (args.output / 'supervisor.log').open('a') as log:
                 child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
+                    *(['--mode', 'merge'] if getattr(args, 'merge_checkpoint_migration', None) is not None else []),
                     '--output', str(args.output), '--config', str(args.config),
                     '--keys', str(args.keys), '--model', args.model, '--slot', str(slot),
                     '--merge-batch-size', str(args.merge_batch_size),
@@ -692,8 +732,12 @@ def main():
         help='Case graphs per merge invocation; 0 combines all remaining cases')
     parser.add_argument('--merge-http-mode', choices=['stream', 'nonstream'], default='stream',
         help='Merge HTTP mode; keep the chosen mode on retries. Extraction settings are separate.')
+    parser.add_argument('--merge-checkpoint-migration', type=Path, default=None,
+        help='Explicit plan for resuming a separate migrated merge output; never rewrites old fingerprints')
     parser.add_argument('--streaming', action='store_true', help='Use streamed completions to keep long gateway responses active; preserve SSE/usage in wire audit')
     args = parser.parse_args()
+    if args.merge_checkpoint_migration is not None and args.mode not in ('merge', 'watch'):
+        parser.error('Migrated outputs are merge-only; use --mode merge or --mode watch')
     if args.merge_batch_size < 0:
         parser.error('--merge-batch-size must be nonnegative')
     if args.case_workers is not None and args.case_workers < 1:

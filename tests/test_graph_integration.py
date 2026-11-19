@@ -119,7 +119,7 @@ def test_evidence_bodies_are_shared_without_losing_provenance_or_variants():
         EvidenceItem(id="case", case_id="case", source=refs[0], content={"sql": "B"})
     )
     c = IntegrationContext(state(), state(), load_root_schema(), evidence=evidence)
-    result = build_tools(c)[1].invoke({"ids": ["case"]})
+    result = {tool.name: tool for tool in build_tools(c)}['read_evidence'].invoke({"ids": ["case"]})
     assert result["total"] == 2
     assert len(result["items"][0]["source_refs"]) == 2
     assert {x["content"]["sql"] for x in result["items"]} == {"A", "B"}

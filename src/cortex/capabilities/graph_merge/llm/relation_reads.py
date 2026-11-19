@@ -1,27 +1,43 @@
 """Selective current/source graph reads with real paths and one evidence section."""
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.integration.context import PHYSICAL
-from cortex.capabilities.graph_merge.integration.relation_context import node_view, edge_view, semantic_summary
+from cortex.capabilities.graph_merge.integration.catalog import select_catalog_nodes
+from cortex.capabilities.graph_merge.integration.relation_context import node_view, edge_view, physical_view
+from cortex.capabilities.graph_merge.integration.review import graph_view
 from cortex.capabilities.graph_merge.integration.scope import content_consumers
 from cortex.schema.relation_contracts import effective_schema
 
 
 class RelationReads:
-    def __init__(self, context, evidence, scope=None):
-        self.context, self.evidence, self.scope = context, evidence, scope
+    def __init__(self, context, evidence, scope=None, before=None):
+        self.context, self.evidence, self.scope, self.before = context, evidence, scope, before
+
+    def lookup_catalog(self, table, columns=None, *, view="candidate", offset=0, limit=30):
+        if offset < 0 or not 1 <= limit <= 100:
+            raise ValueError("Use offset >= 0 and limit between 1 and 100")
+        nodes, edges, _ = graph_view(self.context, view, before=self.before)
+        selected, information = select_catalog_nodes(nodes, table, columns)
+        page = selected[offset:offset + limit]
+        if self.scope:
+            self.scope.observe([{"id": node.id} for node in page], view)
+        return {"view": view, **information, "items": [physical_view(node, nodes, edges.values()) for node in page],
+                "complete": offset + limit >= len(selected),
+                "next_offset": offset + limit if offset + limit < len(selected) else None}
 
     def read(self, mode, ids, fields=None, view="candidate", offset=0, limit=30,
              direction="both", edge_types=None):
         if offset < 0 or not 1 <= limit <= 100:
             raise ValueError("Use offset >= 0 and limit between 1 and 100")
+        if mode not in {"items", "relations", "consumers", "contracts"}:
+            raise ValueError("mode must be items, relations, consumers, or contracts")
         ctx = self.context
-        nodes = ctx.nodes if view == "input" else {n.id: n for n in ctx.candidate.graph.nodes}
-        edges = ctx.edges if view == "input" else {e.id: e for e in ctx.candidate.graph.edges}
-        ids = list(dict.fromkeys(ids))
+        nodes, edges, graph = graph_view(ctx, view, before=self.before)
+        ids = list(dict.fromkeys(ids or []))
+        if not ids and mode != "contracts":
+            raise ValueError("Supply exact node/edge IDs; use lookup_catalog to locate a table or column")
         rows, errors, refs = [], [], []
         if mode == "contracts":
-            graph = ctx.union_state().graph if view == "input" else ctx.candidate.graph
-            rows = [r.model_dump(mode="json") for r in effective_schema(ctx.schema, graph).edge_types if r.id in ids]
+            rows = [r.model_dump(mode="json") for r in effective_schema(ctx.schema, graph).edge_types if not ids or r.id in ids]
         elif mode == "consumers":
             rows = content_consumers(nodes.values(), ids)
         else:
@@ -36,16 +52,15 @@ class RelationReads:
                 if obj is None:
                     continue
                 refs.extend(obj.sources)
-                raw = obj.model_dump(mode="json")
                 row = self._fields(obj, fields, errors) if fields else (
-                    node_view(obj) if obj.id in nodes else edge_view(obj, self.evidence.by_source))
+                    node_view(obj, evidence_ids=self.evidence.by_source) if obj.id in nodes else edge_view(obj, self.evidence.by_source))
                 if obj.id in nodes and obj.node_type in PHYSICAL and not fields:
-                    row = {k: raw[k] for k in ("id", "node_type", "name")}
+                    row = physical_view(obj, nodes, edges.values())
                 if getattr(obj, "alternatives", ()):
                     refs.extend(s for a in obj.alternatives for s in a.sources)
                     if not fields:
                         row["alternatives"] = [{"alternative_id": a.alternative_id,
-                            "content": semantic_summary(GraphManager.resolve_alternative(obj, a)),
+                            "content": GraphManager.resolve_alternative(obj, a).model_dump(mode="json"),
                             "evidence_ids": self.evidence.ids_for(a.sources)} for a in obj.alternatives]
                 rows.append(row)
             if self.scope:
@@ -59,7 +74,7 @@ class RelationReads:
             if mode == "relations":
                 endpoints = {k for obj in objects[offset:offset + limit] for k in (obj.from_node_id, obj.to_node_id)}
                 result["endpoint_nodes"] = [node_view(nodes[k]) if nodes[k].node_type not in PHYSICAL
-                    else {"id": k, "node_type": nodes[k].node_type, "name": nodes[k].name} for k in sorted(endpoints)]
+                    else physical_view(nodes[k], nodes, edges.values()) for k in sorted(endpoints)]
                 if self.scope:
                     self.scope.observe(result["endpoint_nodes"], view)
             if errors:
@@ -74,8 +89,9 @@ class RelationReads:
         is_node = "node_type" in raw
         row = {"id": obj.id}
         for field in fields:
-            if field == "evidence_ids":
-                refs = (*obj.sources, *(s for a in getattr(obj, "alternatives", ()) for s in a.sources))
+            if field in {"evidence_ids", "common_evidence_ids"}:
+                refs = (getattr(obj, "common_sources", ()) if field == "common_evidence_ids" else
+                        (*obj.sources, *(s for a in getattr(obj, "alternatives", ()) for s in a.sources)))
                 row[field] = self.evidence.ids_for(refs)
                 continue
             if field == "alternatives" and is_node:
@@ -86,7 +102,7 @@ class RelationReads:
             if field == "content" and is_node and obj.node_type not in PHYSICAL:
                 row[field] = {k: raw[k] for k in ("name", "description", "aliases", "tags", "properties")}
                 continue
-            if field in {"sources", "*", "properties", "source_metadata", "table_schema"}:
+            if field in {"sources", "common_sources", "*", "properties", "source_metadata", "table_schema"}:
                 errors.append({"id": obj.id, "field": field, "error": "Use exact paths, evidence_ids for attribution, or content for node reconstruction"})
                 continue
             value, exists = raw, True

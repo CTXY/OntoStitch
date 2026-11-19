@@ -52,13 +52,18 @@ def test_connection_retry_preserves_messages_and_is_bounded():
 
     ctx = IntegrationContext(state(), state(), load_root_schema())
     model = Disconnected(1)
-    assert not IncrementalIntegrationAgent(model).invoke("identity", ctx, {}).groups
+    agent = IncrementalIntegrationAgent(model)
+    agent.recover_transport = lambda error: model
+    assert not agent.invoke("identity", ctx, {}).groups
     assert len(model.requests) == 2
     assert model.requests[0] == model.requests[1]
-    model = Disconnected(2)
-    with pytest.raises(OpenAIConnectionError):
-        IncrementalIntegrationAgent(model).invoke("identity", ctx, {})
-    assert len(model.requests) == 2
+    model = Disconnected(3)
+    agent = IncrementalIntegrationAgent(model)
+    agent.recover_transport = lambda error: model
+    from cortex.capabilities.graph_merge.llm.transport import TransportRecoveryStopped
+    with pytest.raises(TransportRecoveryStopped):
+        agent.invoke("identity", ctx, {})
+    assert len(model.requests) == 3
 
 
 def test_upstream_retry_excludes_balance_or_auth_errors():
@@ -87,7 +92,9 @@ def test_upstream_retry_excludes_balance_or_auth_errors():
 
     ctx = IntegrationContext(state(), state(), load_root_schema())
     model = Failed(502)
-    IncrementalIntegrationAgent(model).invoke("identity", ctx, {})
+    agent = IncrementalIntegrationAgent(model)
+    agent.recover_transport = lambda error: model if error.response.status_code == 502 else None
+    agent.invoke("identity", ctx, {})
     assert len(model.requests) == 2
     for status in [401, 402]:
         model = Failed(status)
@@ -118,96 +125,39 @@ def test_malformed_tool_json_receives_matching_tool_error_before_retry():
     assert all(getattr(t, "__name__", None) != "IdentityDecision" for t in model.tools)
 
 
-def test_acceptance_requires_atomic_decisions_and_exact_rule_coverage():
-    import pytest
-    from pydantic import ValidationError
-
-    from cortex.capabilities.graph_merge.llm.incremental import NodeReview
-
-    with pytest.raises(ValidationError, match="Acceptance"):
-        NodeReview(
-            verdict="accept",
-            decision_checks=[
-                {
-                    "node_id": "r",
-                    "independent_decisions": ["choose rows", "choose fields"],
-                }
-            ],
-        )
-    with pytest.raises(ValidationError, match="Acceptance"):
-        NodeReview(
-            verdict="accept",
-            decision_checks=[
-                {
-                    "node_id": "r",
-                    "independent_decisions": ["choose fields"],
-                    "issues": [
-                        "Unscoped ordinary policy bypasses a competing saved branch"
-                    ],
-                }
-            ],
-        )
+def test_empty_draft_is_inspectable_without_advertising_legacy_pending_tools():
+    import json
+    from cortex.capabilities.graph_merge.integration.batch import ActiveBatch
     ctx = IntegrationContext(state(), state(), load_root_schema())
-    with pytest.raises(ValueError, match="each supplied Rule decision"):
-        IncrementalIntegrationAgent._validate(
-            NodeReview(verdict="accept"),
-            ctx,
-            {"decision_review_ids": ["r"]},
-            "node_assess",
-        )
+    ctx.candidate = ctx.union_state()
+    ctx.active_batch = ActiveBatch(ctx, ctx.candidate, targets=set())
+    model = Chat([
+        AIMessage(content='', tool_calls=[{'name':'inspect_draft','id':'read','args':{}}]),
+        AIMessage(content='', tool_calls=[{'name':'submit_patch','id':'done','args':{'explanation':'No changes needed.'}}]),
+    ])
+    IncrementalIntegrationAgent(model).invoke('consolidate', ctx, {})
+    reply = next(json.loads(m.content) for m in model.requests[1] if isinstance(m, ToolMessage))
+    assert reply == {'status':'no_draft'}
+    names = {getattr(tool, 'name', None) for tool in model.tools}
+    assert 'inspect_draft' in names and 'inspect_pending' not in names
 
 
-def test_empty_pending_tool_is_not_advertised():
-    model = Chat([AIMessage(content='{"edits":[]}')])
-    ctx = IntegrationContext(state(), state(), load_root_schema())
-    IncrementalIntegrationAgent(model).invoke("consolidate", ctx, {})
-    assert "inspect_pending" not in [getattr(t, "name", None) for t in model.tools]
-
-
-def test_reason_finding_cannot_quote_a_retired_source_version():
-    import pytest
-
-    from cortex.capabilities.graph_merge.llm.incremental import NodeReview
-    from cortex.schema import GraphNode, GraphSpace, GraphState
-
-    ctx = IntegrationContext(state(), state(), load_root_schema())
-    ctx.candidate = GraphState(
-        graph=GraphSpace(
-            nodes=(
-                GraphNode(
-                    id="r",
-                    node_type="generation_rule",
-                    name="order outputs",
-                    properties={
-                        "reason": "Gold orders the requested columns; uniqueness is guaranteed."
-                    },
-                ),
-            )
-        )
-    )
-    payload = {"rationale_review_ids": ["r"]}
-    stale = NodeReview(
-        verdict="revise",
-        issues=["A claimed observation lacks evidence"],
-        issue_refs=[{"kind":"node","id":"r","fields":["properties.reason"]}],
-        rationale_checks=[
-            {
-                "node_id": "r",
-                "supported": False,
-                "explanation": "The quoted observed-history claim has no supplied evidence.",
-                "unsupported_claims": ["The validated attempt returned eight rows."],
-            }
-        ],
-    )
-    with pytest.raises(ValueError, match="actual CURRENT reason"):
-        IncrementalIntegrationAgent._validate(stale, ctx, payload, "node_assess")
-    current = stale.model_copy(
-        update={
-            "rationale_checks": (
-                stale.rationale_checks[0].model_copy(
-                    update={"unsupported_claims": ("uniqueness is guaranteed",)}
-                ),
-            )
-        }
-    )
-    IncrementalIntegrationAgent._validate(current, ctx, payload, "node_assess")
+def test_review_repairs_exact_reference_paths_without_rule_checklists():
+    import json
+    from test_light_reconciliation import setup
+    ctx, base, a, _, _ = setup()
+    ctx.task_before = base
+    issue = {'refs':[{'kind':'node','id':a,'fields':['meaning']}],
+             'basis':[{'kind':'node','id':a,'view':'before'}],
+             'problem':'The recorded definition was distorted.',
+             'required_outcome':'Preserve the original object meaning.'}
+    corrected = {**issue, 'refs':[{'kind':'node','id':a,'fields':['properties.definition']}]}
+    model = Chat([
+        AIMessage(content='', tool_calls=[{'name':'Review','id':'bad','args':{'verdict':'revise','issues':[issue]}}]),
+        AIMessage(content='', tool_calls=[{'name':'Review','id':'fixed','args':{'verdict':'revise','issues':[corrected]}}]),
+    ])
+    result = IncrementalIntegrationAgent(model).invoke('node_assess', ctx, {'evidence':[]})
+    assert result.verdict == 'revise'
+    reply = next(json.loads(m.content) for m in model.requests[1] if isinstance(m, ToolMessage))
+    assert 'Unknown review field' in reply['error']
+    assert ctx.candidate == base

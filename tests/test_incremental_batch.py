@@ -57,20 +57,6 @@ def test_deleting_an_already_projected_source_does_not_delete_the_canonical():
     assert a in {n.id for n in batch.seed.graph.nodes}
 
 
-def test_pending_checkpoint_preserves_multiple_partial_submissions():
-    ctx, batch, a, b = setup_batch()
-    for key, description in ((a, "First accepted draft edit"), (b, "Later repair edit")):
-        raw = ctx.nodes[key].model_dump(mode="json")
-        raw["description"] = description
-        batch.submit(BatchResult.model_validate({"edits": [write(raw)]}))
-    assert len(batch.result.edits) == 1  # Latest response alone is incomplete.
-    restored = ActiveBatch(ctx, batch.base, targets={a, b})
-    restored.restore_pending(batch.pending_snapshot())
-    restored.submit(BatchResult())
-    assert restored.preview == batch.preview
-    assert len(restored.pending) == 2
-
-
 @pytest.mark.parametrize("scope", [["foreign-branch"], [], "foreign-branch", [None]])
 def test_batch_rejects_branch_scope_on_a_normal_source_before_acceptance(scope):
     _ctx, batch, a, b = setup_batch()
@@ -396,10 +382,10 @@ def test_alias_projection_does_not_assign_new_evidence_to_an_unselected_conflict
             edges=tuple(ctx.edges.values()),
         )
     )
-    preview, _ = alias_view(base, {"new_input": a})
-    current = next(n for n in preview.graph.nodes if n.id == a)
-    assert current.sources == owner.sources and current.aliases == []
-    assert current.alternatives == owner.alternatives
+    before = base.model_dump_json()
+    with pytest.raises(ValueError, match='complete integrate_groups'):
+        alias_view(base, {"new_input": a})
+    assert base.model_dump_json() == before
 
 
 def test_correspondence_is_not_a_graph_operation_and_archived_remaps_remain_valid():
