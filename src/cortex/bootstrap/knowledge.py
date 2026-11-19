@@ -140,6 +140,7 @@ def build_sql_extraction(
                 retrieve_db=build_retrieve_db_service(
                     config=config,
                     llm=retrieval_llm,
+                    relevance_filter=config.services.sql_training.retrieval_relevance_filter,
                 ),
                 generation_client=InProcessOntologySqlGenerator(
                     llm=semantic_llm,

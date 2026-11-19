@@ -24,6 +24,32 @@ For every valid Slot:
 
 Use `gold_aliases` to replace ordinary query-local aliases with real table names. Preserve aliases only when multiple instances of one table must be distinguished. Preserve literal text exactly. Reject any source, output expression, operand, modifier, transformation, or constraint that is not implemented or entailed by Gold, even when it appears reasonable from the Question.
 
+# Mandatory check for invented behavior
+
+Recheck every positive behavioral clause against the SAME query block and SQL
+role in Gold. "Entailed" does not license adding a SQL operation based on unique
+keys, current-data equality, business convention or SQL style. Do not repair Gold
+to satisfy another SQL engine's grouping rules.
+
+Absence is binding. If a grouping Slot's relevant Gold SELECT is an aggregate
+without GROUP BY, reject all Candidates that add grouping and replace any
+tentative grouping answer with:
+"Do not add GROUP BY; aggregate all qualifying rows as one group."
+The presence of a non-aggregate selected column does not authorize GROUP BY.
+Nested-query grouping does not authorize outer-query grouping.
+
+Apply the same check to DISTINCT, JOINs, predicates, output columns, casts,
+NULL handling, ORDER BY, LIMIT and tie-breaking. Preserve the actual aggregate
+operator, counted operand and extremum population. Reject a whole Candidate if
+it combines matching behavior with an unsupported addition. A Slot presupposing
+an absent operation can be answered by stating its absence; do not invent that
+operation or mark the Slot invalid solely for this presupposition.
+
+Tentative and prior answers are not authority over Gold. If a prior answer
+contradicts Gold, do not add further behavior to make the current answer agree
+with it; report the affected current question as invalid rather than propagate
+the contradiction. Never emit a behavior merely to make an answer sound complete.
+
 If answering a Slot correctly requires deciding multiple independent aspects of the query, put its unchanged `question_id` in `invalid_question_ids` and omit its answer. Invalidity is review metadata, not an explanation or guidance behavior.
 
 # Output schema

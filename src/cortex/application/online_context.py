@@ -124,6 +124,7 @@ class InteractionQuestion(ClarificationPriority):
 
 
 class ClarificationFilterDecision(_Model):
+    basis: Literal["explicit_intent", "database_equivalence", "duplicate"] | None = None
     choice_point_id: str
     outcome: Literal["keep", "question_resolved", "database_equivalent"]
     reason: str = Field(min_length=1)

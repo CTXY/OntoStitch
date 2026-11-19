@@ -22,6 +22,7 @@ def edited_ids(result):
     ids.update(c.node_id for c in result.resolutions)
     for merge in result.edge_merges:
         ids.update((merge.survivor_id, *merge.source_ids))
+    ids.update(ref.id for change in result.changes for ref in (*change.before, *change.after))
     return ids - {None}
 
 
@@ -55,6 +56,15 @@ class ProposalScope:
                                                for k in (e.from_node_id, e.to_node_id)}
         roots = {k for k in roots if nodes[k].node_type not in PHYSICAL}
         local_nodes = set(roots)
+        # An explicit local replacement couples its named successors even when
+        # a duplicate is isolated and therefore has no graph path to them.
+        # This grants neither unrelated writes nor permission through reads.
+        for change in result.changes:
+            before = {ref.id for ref in change.before}
+            if before and before <= batch.allowed:
+                local_nodes.update(ref.id for ref in change.after
+                                   if ref.kind == "node" and ref.id in nodes
+                                   and nodes[ref.id].node_type not in PHYSICAL)
         for edge in edges.values():
             ends = {edge.from_node_id, edge.to_node_id}
             if ends & roots and all(nodes[k].node_type not in PHYSICAL for k in ends):

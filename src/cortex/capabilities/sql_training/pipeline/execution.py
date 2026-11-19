@@ -10,6 +10,7 @@ from cortex.capabilities.sql_training.training.trace import TrainTraceLogger
 from cortex.capabilities.sql_training.validation import build_generation_request
 from cortex.capabilities.sql_training.validation.in_process import (
     OntologyGenerationError,
+    OntologyGenerationUnavailable,
 )
 from cortex.capabilities.sql_training.validation.models import GenerationResponse
 from cortex.infrastructure.database.execution import QueryExecutionResult, execute_query
@@ -49,6 +50,17 @@ class GoldQueryCache:
             return self._entries[key], False
 
 
+class GenerationUnavailableReason(str):
+    """String-compatible diagnostic with typed infrastructure facts in-process."""
+
+    def __new__(cls, error: OntologyGenerationUnavailable):
+        reason = super().__new__(cls, str(error))
+        reason.error_type = error.error_type
+        reason.http_status = error.http_status
+        reason.retryable = error.retryable
+        return reason
+
+
 def evaluate_record(
     config: CortexConfig,
     record: dict[str, Any],
@@ -86,7 +98,7 @@ def evaluate_record(
         infrastructure_failure = bool(
             errors
             and all(
-                error.startswith(
+                isinstance(error, GenerationUnavailableReason) or error.startswith(
                     (
                         "validation service request failed:",
                         "validation service returned HTTP",
@@ -96,12 +108,13 @@ def evaluate_record(
                         "validation generation response schema is invalid:",
                         "Cortex RetrieveDB failed:",
                         "Cortex RetrieveDB did not produce a completed subGraph:",
+                        "SQL generation infrastructure unavailable:",
                     )
                 )
                 for error in errors
             )
         )
-        failure_kind = "generation" if not query else "validation"
+        failure_kind = "infrastructure" if infrastructure_failure else "generation" if not query else "validation"
         result = {
             "correct": False,
             "evaluation_available": not infrastructure_failure,
@@ -118,9 +131,15 @@ def evaluate_record(
                 "kind": failure_kind,
                 "message": failure_message,
                 "query": query,
-                "retryable": not infrastructure_failure,
+                "retryable": all(getattr(error, "retryable", True) for error in errors) if infrastructure_failure else True,
             },
         }
+        if infrastructure_failure:
+            result["infrastructure_errors"] = [
+                {"error_type": error.error_type, "http_status": error.http_status,
+                 "retryable": error.retryable}
+                for error in errors if isinstance(error, GenerationUnavailableReason)
+            ]
         trace_sql_evaluation(
             trace_logger,
             source_id=source_id,
@@ -308,6 +327,13 @@ def generate_sql(
     )
     try:
         generation = validation_client.generate(generation_request)
+    except OntologyGenerationUnavailable as exc:
+        trace_validation_error(
+            trace_logger, source_id=source_id, case_index=case_index,
+            phase=phase, step="ontology_sql_generation",
+            request=generation_request, error=str(exc),
+        )
+        return None, [GenerationUnavailableReason(exc)]
     except OntologyGenerationError as exc:
         trace_validation_error(
             trace_logger,

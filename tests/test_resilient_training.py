@@ -43,6 +43,47 @@ def test_key_slots_are_ordered_private_and_validate_duplicates(tmp_path):
         read_key_slots(path)
 
 
+def test_selected_credentials_receive_independent_request_limits(tmp_path, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace
+    import httpx
+    from cortex.config.models import CortexConfig, LLMConfig, SQLiteDatabaseConfig
+
+    spec = importlib.util.spec_from_file_location('credential_request_scopes', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    keys = tmp_path / 'pool.keys'
+    keys.write_text('credential-alpha\ncredential-beta\n')
+    config = CortexConfig(llm=LLMConfig(model='test', base_url='https://offline.invalid'),
+                          database=SQLiteDatabaseConfig(path=tmp_path / 'database.sqlite'))
+    clients, selected = [], []
+
+    def model(llm, **kwargs):
+        selected.append(llm.api_key.get_secret_value())
+        client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b'ok')))
+        clients.append(client)
+        return SimpleNamespace(root_client=SimpleNamespace(_client=client))
+
+    monkeypatch.setattr(runner, 'load_config', lambda _: config)
+    monkeypatch.setattr(runner, 'create_chat_model', model)
+    monkeypatch.setenv('CORTEX_LLM_REQUEST_LEASE_DIR', str(tmp_path / 'leases'))
+    monkeypatch.setenv('CORTEX_LLM_REQUEST_LIMIT_SCOPE', 'credential')
+    monkeypatch.setenv('CORTEX_LLM_MAX_INFLIGHT_REQUESTS', '1')
+    try:
+        for slot in [0, 1, 0]:
+            runner.configuration(SimpleNamespace(config=tmp_path / 'config.yaml', keys=keys,
+                model='test', slot=slot), tmp_path / 'workspace')
+        assert selected == ['credential-alpha', 'credential-beta', 'credential-alpha']
+        scopes = [client._cortex_request_limit for client in clients]
+        assert scopes[0] == scopes[2] and scopes[0] != scopes[1]
+        assert all(scope[1] == 1 for scope in scopes)
+        assert all(client.get('https://offline.invalid/check').content == b'ok' for client in clients)
+    finally:
+        for client in clients:
+            client.close()
+
+
 def test_uncapped_merge_can_correct_format_beyond_twelve_calls():
     context = IntegrationContext(state(), state([*catalog(), concept('A', 'a')]), load_root_schema())
     # Malformed output is never accepted; the thirteenth valid result can finish.
@@ -72,6 +113,49 @@ def test_supervisor_restart_after_extraction_enters_merge_without_new_workers(tm
     monkeypatch.setattr(runner.subprocess, 'Popen', lambda *a, **k: pytest.fail('No worker should restart'))
     runner.supervise(SimpleNamespace(output=tmp_path, keys=keys))
     assert merged == [True]
+    assert runner.read(tmp_path / 'progress.json')['phase'] == 'finished'
+
+
+def test_shared_credential_runs_isolated_cases_concurrently_before_merge(tmp_path, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location('shared_credential_runner', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    keys = tmp_path / 'pool.keys'
+    keys.write_text('single-test-credential')
+    runner.write(tmp_path / 'manifest.json', {'question_ids': ['one', 'two', 'three']})
+    for ident in ['one', 'two', 'three']:
+        (tmp_path / 'cases' / ident).mkdir(parents=True)
+    commands, concurrency, merged = [], [0, 0], []
+
+    class Process:
+        def __init__(self, command, **kwargs):
+            self.pid = 123 + len(commands)
+            self.done = False
+            commands.append(command)
+            concurrency[0] += 1
+            concurrency[1] = max(concurrency)
+            ident = command[command.index('--case') + 1]
+            runner.write(tmp_path / 'cases' / ident / 'status.json', {'status': 'passed'})
+
+        def poll(self):
+            if not self.done:
+                concurrency[0] -= 1
+                self.done = True
+            return 0
+
+    monkeypatch.setattr(runner.subprocess, 'Popen', Process)
+    monkeypatch.setattr(runner.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(runner, 'merge_worker', lambda args: merged.append(args.slot))
+    runner.supervise(SimpleNamespace(output=tmp_path, keys=keys, config=tmp_path / 'config.yaml',
+        model='test', key_slots=[0], case_workers=3, slot=0))
+    assert concurrency[1] == 3
+    assert {c[c.index('--case') + 1] for c in commands} == {'one', 'two', 'three'}
+    assert all(c[c.index('--slot') + 1] == '0' for c in commands)
+    assert merged == [0]
     assert runner.read(tmp_path / 'progress.json')['phase'] == 'finished'
 
 
@@ -249,7 +333,9 @@ def test_merge_worker_submits_multiple_case_graphs_per_operator_call(tmp_path, m
 
     monkeypatch.setattr(integration, 'IncrementalGraphIntegrationEngine', Engine)
     monkeypatch.setitem(sys.modules, 'audit_incremental_merge', SimpleNamespace(audit_result=lambda *args: {'status': 'passed'}))
-    monkeypatch.setattr(runner, 'configuration', lambda *args: (None, object()))
+    from cortex.config.models import GraphMergeConfig
+    configured = SimpleNamespace(services=SimpleNamespace(graph_merge=GraphMergeConfig()))
+    monkeypatch.setattr(runner, 'configuration', lambda *args: (configured, object()))
     monkeypatch.setattr(runner, 'observe', lambda *args: None)
     monkeypatch.setattr(runner, 'render_graph_html', lambda *args, **kwargs: 'graph')
     runner.merge_worker(SimpleNamespace(output=tmp_path, merge_batch_size=2, slot=0))

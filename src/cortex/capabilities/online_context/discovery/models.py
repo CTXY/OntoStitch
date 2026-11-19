@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cortex.application.online_context import (
     CandidateEvidenceAssessment,
@@ -23,12 +23,12 @@ class CandidateDraft(_Model):
     graph_refs: tuple[str, ...] = Field(
         default=(),
         description=(
-            "Exact supplied handles supporting this Candidate. For expressions such as "
+            "Only supplied graph handles; never Q1/E1 user evidence IDs. Explain user evidence in statement/assessment. For expressions such as "
             "COUNT(*) that have no direct Column handle, cite the supporting rule, "
             "alternative, or parent signal handle."
         ),
     )
-    initial_sql_evidence: str | None = None
+    initial_sql_evidence: str | None = Field(default=None, description="The actual initial SQL behavior, never hypothetical alternatives; at most one candidate per slot may cite initial SQL.")
     evidence_assessment: CandidateEvidenceAssessment
 
 
@@ -37,6 +37,12 @@ class SlotDraft(_Model):
     scope: SlotScope
     decision_question: str
     candidates: tuple[CandidateDraft, ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def one_initial_sql_candidate(self):
+        from .contracts import validate_initial_sql_sources
+        validate_initial_sql_sources((self,))
+        return self
 
 
 class IntraNodeAssessment(_Model):
@@ -54,7 +60,7 @@ class IntraNodeOutput(_Model):
 class ProvenanceAddition(_Model):
     candidate_id: str
     graph_refs: tuple[str, ...] = ()
-    initial_sql_evidence: str | None = None
+    initial_sql_evidence: str | None = Field(default=None, description="The actual initial SQL behavior, never hypothetical alternatives; at most one candidate per slot may cite initial SQL.")
     evidence_assessment: CandidateEvidenceAssessment
 
 

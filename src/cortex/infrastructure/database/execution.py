@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import concurrent.futures
+import base64
+import json
+import os
+from pathlib import Path
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import create_engine, event
+from sqlalchemy.engine import make_url
 
 QueryResult = dict[str, list[str] | list[list[Any]]]
 
@@ -25,6 +31,34 @@ def execute_query(
     read_only: bool = True,
     row_limit: int | None = None,
 ) -> QueryExecutionResult:
+    worker = os.environ.get("CORTEX_SQLITE_PYTHON")
+    if worker and make_url(database_url).get_backend_name() == "sqlite":
+        url = make_url(database_url)
+        database = url.database or ":memory:"
+        if database == ":memory:":
+            return QueryExecutionResult(False, error="An external SQLite worker requires a file-backed database")
+        if not database.startswith("file:"):
+            database = Path(database).resolve().as_uri()
+        from urllib.parse import urlencode
+        parameters = {k: v for k, v in url.query.items() if k != "uri"}
+        if read_only:
+            parameters["mode"] = "ro"
+        database += ("&" if "?" in database else "?") + urlencode(parameters)
+        request = {"database": database, "sql": sql, "timeout": timeout,
+                   "read_only": read_only, "row_limit": row_limit}
+        try:
+            result = subprocess.run([worker, str(Path(__file__).with_name("sqlite_worker.py"))],
+                input=json.dumps(request), text=True, capture_output=True, timeout=timeout + 2, check=True)
+            def decode(value):
+                if set(value) == {"__sqlite_blob__"}:
+                    return base64.b64decode(value["__sqlite_blob__"])
+                return value
+            packet = json.loads(result.stdout, object_hook=decode)
+            return QueryExecutionResult(**packet["execution"])
+        except subprocess.TimeoutExpired:
+            return QueryExecutionResult(False, error=f"query execution timed out after {timeout} seconds")
+        except (OSError, subprocess.CalledProcessError, ValueError, KeyError) as error:
+            return QueryExecutionResult(False, error=f"SQLite worker unavailable: {error}")
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = executor.submit(
         _execute_query, sql, database_url, timeout, read_only, row_limit

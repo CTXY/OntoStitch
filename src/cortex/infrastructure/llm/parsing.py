@@ -221,7 +221,12 @@ def _strip_json_fence(text: str) -> str:
     match = re.fullmatch(
         r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL | re.IGNORECASE
     )
-    return match.group(1).strip() if match else stripped
+    if match:
+        return match.group(1).strip()
+    # A single explicit code block is unambiguous even with a prose preamble.
+    # Multiple blocks remain an error; never guess which result the model meant.
+    blocks = list(re.finditer(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL | re.IGNORECASE))
+    return blocks[0].group(1).strip() if len(blocks) == 1 else stripped
 
 
 def _build_repair_messages(

@@ -86,6 +86,7 @@ def build_graph_merge_operator(
                 llm or create_chat_model(root.llm, profile="graph_merge"),
                 max_calls=config.consolidation_max_calls,
                 trace_sink=trace_sink,
+                request_max_characters=config.request_max_characters,
             ),
             evidence_resolver=CachedEvidenceResolver(evidence_resolver)
             if evidence_resolver
@@ -96,6 +97,7 @@ def build_graph_merge_operator(
             runtime_signature=config_fingerprint(root),
             sql_dialect=root.services.sql_training.validation.dialect,
             model_call_budget=config.merge_model_call_budget,
+            node_context_max_characters=config.node_context_max_characters,
         )
         checkpoint_url = config.checkpoint_url.get_secret_value()
         if checkpointer is None and checkpoint_url.startswith("sqlite:///"):

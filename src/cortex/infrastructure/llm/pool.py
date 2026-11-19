@@ -8,11 +8,20 @@ from threading import Condition
 from typing import Any
 
 from langchain_core.embeddings import Embeddings
-from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.language_models.chat_models import BaseChatModel, generate_from_stream
 from langchain_core.outputs import ChatResult
 from pydantic import PrivateAttr
 
 from cortex.infrastructure.llm.providers import LLMInvocationError
+
+
+def _generate_sync(model, messages, *, stop=None, **kwargs: Any) -> ChatResult:
+    # Provider _generate hooks can return an SDK Stream when streaming=True.
+    # The public model normally consumes _stream above that hook; these adapters
+    # own that same boundary while keeping HTTP clients on synchronous threads.
+    if kwargs.get("stream", getattr(model, "streaming", False)):
+        return generate_from_stream(model._stream(messages, stop=stop, **kwargs))
+    return model._generate(messages, stop=stop, **kwargs)
 
 
 class KeyScheduler:
@@ -83,7 +92,7 @@ class ThreadedChatModel(BaseChatModel):
         return "cortex-threaded-chat"
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
-        return self._model._generate(messages, stop=stop, **kwargs)
+        return _generate_sync(self._model, messages, stop=stop, **kwargs)
 
     def _get_ls_params(self, stop=None, **kwargs):
         return self._model._get_ls_params(stop=stop, **kwargs)
@@ -180,7 +189,7 @@ class PooledChatModel(BaseChatModel):
             try:
                 # Use the model's generation hook: the outer model owns callbacks.
                 # A nested public invoke would emit unsanitized provider errors to callbacks.
-                return self._models[index]._generate(messages, stop=stop, **kwargs)
+                return _generate_sync(self._models[index], messages, stop=stop, **kwargs)
             except Exception as exc:
                 status = getattr(exc, "status_code", None)
                 disabled = status in (401, 403)

@@ -19,7 +19,7 @@ from cortex.capabilities.graph_merge.integration.relation_edits import (
 )
 from cortex.capabilities.graph_merge.integration.tools import build_tools
 from cortex.capabilities.graph_merge.llm.trace import EpisodeTrace
-from cortex.capabilities.graph_merge.llm.packets import action_message
+from cortex.capabilities.graph_merge.llm.packets import action_message, compact_relation_history
 from cortex.capabilities.graph_merge.llm.transport import invoke_with_recovery
 
 
@@ -124,7 +124,7 @@ def invoke_relation(agent, phase, context, payload):
 
     @tool(args_schema=PatchSubmission)
     def submit_changes(patch: RelationPatch | None = None, corrections: list[Correction] | None = None) -> dict:
-        """Final output: supply exactly one of patch or corrections. First use a complete patch. After rejection, corrections edit the saved, UNAPPLIED patch using JSON Pointer (add/replace/remove/move), so do not resend valid parts. Example: corrections=[{op:'move',from_path:'/new_edges',path:'/create_edges'}]. New edges use create_edges with id/evidence_ids; existing edge support uses edge_updates with id/add_evidence. Nothing from a rejected patch is created in the graph. A fully valid result ends the Writer and awaits Assessment; no extra finish tool."""
+        """Final output: supply exactly one of patch or corrections. First use a complete patch. After rejection, corrections edit the saved, UNAPPLIED patch using JSON Pointer (add/replace/remove/move), so do not resend valid parts. Example: corrections=[{op:'move',from_path:'/new_edges',path:'/create_edges'}]. New edges use create_edges with id/evidence_ids; existing edge support uses edge_updates with id/add_evidence. Named successors of local retirements are coupled; include their required support updates. Code supplies missing context before admitting writes. Nothing from a rejected patch is created in the graph. A fully valid result ends the Writer and awaits Assessment; no extra finish tool."""
         return apply_proposal({"patch": patch.model_dump(exclude_unset=True, mode="json") if patch else None,
                                "corrections": [c.model_dump(exclude_unset=True) for c in corrections] if corrections else None})
 
@@ -159,9 +159,11 @@ def invoke_relation(agent, phase, context, payload):
                     + ("Use failure if a necessary safe decision remains impossible; do not hide unresolved required repairs in an empty success." if writer
                        else "Return the bounded assessment of actual changes, with concrete defects only, not speculative missing facts.")))
             from cortex.capabilities.graph_merge.llm.input_budget import check_request
-            check_request(messages, available)
+            request_messages = compact_relation_history(messages)
+            check_request(request_messages, available,
+                          max_characters=getattr(agent, "request_max_characters", 210000))
             response = invoke_with_recovery(
-                agent, available, messages, config={"callbacks": [trace]},
+                agent, available, request_messages, config={"callbacks": [trace]},
                 tool_choice="auto" if plain_fallback else "required")
             messages.append(action_message(response))
             fallback_notice = None

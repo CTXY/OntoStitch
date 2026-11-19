@@ -2,6 +2,8 @@
 
 from cortex.infrastructure.llm.stream_audit import UpstreamResponseIncomplete
 
+RETRYABLE_HTTP_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504})
+
 
 class TransportRecoveryStopped(RuntimeError):
     """A persistent provider failure requires intervention, not another replay."""
@@ -12,6 +14,11 @@ def _connection_failure(error):
     seen = set()
     while error is not None and id(error) not in seen:
         seen.add(id(error))
+        status = getattr(error, "status_code", None)
+        if status is None:
+            status = getattr(getattr(error, "response", None), "status_code", None)
+        if status in RETRYABLE_HTTP_STATUS:
+            return True
         if isinstance(error, (UpstreamResponseIncomplete, ConnectionError, TimeoutError)) or type(error).__name__ in {
             'APIConnectionError', 'OpenAIConnectionError', 'RemoteProtocolError',
             'ReadError', 'ReadTimeout', 'ConnectError', 'ConnectTimeout',
@@ -22,14 +29,14 @@ def _connection_failure(error):
 
 
 def invoke_with_recovery(agent, tools, messages, *, config, tool_choice="required"):
-    truncations = 0
+    failures = 0
     while True:
         model = agent.llm.bind_tools(tools, tool_choice=tool_choice) if tools else agent.llm
         try:
             return model.invoke(messages, config=config)
         except Exception as error:
-            truncations = truncations + 1 if _connection_failure(error) else 0
-            if truncations >= 3:
+            failures = failures + 1 if _connection_failure(error) else 0
+            if failures >= 3:
                 raise TransportRecoveryStopped(
                     'Transport failed for the same logical request three consecutive times. '
                     'Stopped automatic replay; retain the accepted checkpoint and verify service recovery before resuming.'

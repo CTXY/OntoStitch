@@ -1,53 +1,37 @@
 # Task
 
-Assess proposed ontology knowledge for one NLQ–Gold SQL case independently. Separate content quality, SQL application, fixed-target resolution and regression. Do not edit the graph, create new targets or authorize final acceptance.
+Independently assess (1) ontology quality, (2) recorded injection into the SQL Agent, and (3) actual related SQL errors. Do not edit the graph, invent targets or authorize acceptance. Do not judge whether every unit was used by SQL.
 
 {shared_extraction_contract}
 
 # Inputs
 
-units is the exact inventory. Each supplies candidate, optional accepted predecessor, quality_requirements, application_requirement, application_options and recorded context_facts. application_options lists mechanically legal labels, not a semantic verdict: choose only from it using the SQL evidence; inconclusive still needs a concrete explanation. quality_rubric defines the applicable checks. Read related_knowledge and supplied relation contracts together with units; definitions need not be duplicated. Historical definitions are comparison evidence, not current assertions. A missing contract cannot have valid predicate_precision.
+units is the exact review inventory: candidate, optional accepted_before, quality_requirements and context_facts. quality_rubric supplies the checks. Read related_knowledge and supplied relation contracts with the units. physical_context contains relevant endpoints, not the whole catalog; scoped omissions do not establish database-wide absence. Historical definitions and round_baseline are comparison evidence, not current assertions.
 
-case and physical_context supply business/database evidence. attempts supplies all SQL verification for this candidate. context_facts establishes inclusion, not quality or application; actual presence overrides incomplete selection tracing, and explicit absence overrides selection. Do not invent inclusion paths. change_groups controls joint retention. round_baseline is an older comparison, not the accepted predecessor. fixed_targets and prior_evidence apply only when supplied.
+attempts contains the current SQL evidence. fixed_targets defines existing repair obligations; prior_evidence supports regression comparisons. change_groups controls joint retention. Code owns injection observations and the derived quality summary.
 
 # Evaluation
 
-First inspect the supplied SQL attempts and their actual execution/result differences. Then compare the responsible knowledge and fixed targets. Function names or agreement with a Diagnosis explanation do not prove semantic application or error: verify the actual populations, groups, comparisons and NULL behavior. SQL patterns are illustrative unless their particular behavior is required; equivalent implementations remain valid. Result equality alone still does not prove equivalence beyond the observed data.
-
-Diagnosis identifies observed failures; its causal explanation is not an axiom. If that explanation or a candidate Rule prohibits a valid implementation without evidence, report the unsupported restriction as a knowledge defect. Do not reinforce it by declaring the implementation wrong merely because the Rule or target says so.
-
 ## 1. Content and consistency
 
-Evaluate exactly each unit's quality_requirements using the shared contract and rubric. Review Metric/Rule content before lengthy edge inventories; valid edges do not prove node quality.
+Judge exactly the supplied quality_requirements. Inspect definitions, bindings, formulas, operands, business meaning and relation contracts. A missing contract cannot have valid predicate_precision. For minimality defects identify independently meaningful units, their distinct matches and the composition. For conflicting or redundant assertions identify the actual claims and scope. Preserve necessary direct operands and assertions needed by consumers; structural patterns alone are not defects. Use inconclusive only for a specific material gap that prevents a mandatory judgment.
 
-For minimality failure give units, distinct field/value/operation matches and composition. For relation defects identify incompatible endpoint meaning, predicate contract or scope. Compare related Rules' shared decisions and overlapping conditions, including obligations embedded in compound actions; separate Gold support does not prove compatibility.
+SQL success does not excuse a defective ontology definition. Conversely, an unused supported node, an unselected endpoint or a missing preferred SQL spelling is not a quality defect. Check causal explanations against the evidence instead of treating Diagnosis as an axiom.
 
-For redundant assertions identify equivalent facts or a declared rule and independent remaining premises. Preserve limits, consumers and direct operands; assess deletion against the final remaining graph, not mutually deleted witnesses. Report concrete defects, not missing-knowledge coverage or preferences for smaller graphs.
+## 2. Injection
 
-Assess optional relation_metadata under its owner's support/graph_consistency; no extra assessment object or SQL requirement. Use inconclusive only for a specific material gap preventing a mandatory check or interpretation of the actual claim, and identify the gap.
+Actual context presence establishes injection and overrides incomplete selection tracing; explicit absence overrides selection. A recorded dependency path can establish inclusion without direct selection. Raw recall alone is not injection. Read these code-recorded facts; do not output retrieval judgments or demand that an injected unit be used. Do not invent missing paths or change correct SQL to exercise knowledge.
 
-## 2. SQL application
+## 3. Related SQL errors
 
-Follow each unit's application_requirement. For sql, verify its candidate-owned behavior in every attempt. For semantic, supported relations/representation edges need no new SQL syntax. For none, check deletion safety.
+Inspect actual SQL behavior: an unresolved target due to inaccurate/incomplete knowledge, a new related error, or a regression against prior_evidence. An unrelated SQL error does not condemn this unit. Equivalent implementations are allowed; result equality alone is not a general equivalence proof. Values may be used in CASE, projections, joins, comparisons and calculations, not only WHERE filters. SQL uses physical names, not ontology IDs.
 
-For Concepts check request-relevant meaning, population and required matching behavior, not selection of every target or identifier. For Metrics/Rules verify the calculation/decision with required operands and supported grain/NULL behavior. Context inclusion alone is insufficient; equivalent SQL is allowed.
+For a unit's sql_error feedback cite its exact unit ID, affected current attempt_ids and a verbatim sql_excerpt. Explain the concrete error, the responsible knowledge gap, the necessary correction and behavior to preserve. Do not invent causality or report harmless non-use as an error.
 
-Return applied only for complete behavior and recorded inclusion in every attempt. Distinguish partial application, included-but-unimplemented behavior and missing attribution using the schema. not_applicable is allowed for deletions or semantic units without a current SQL obligation. An unrelated SQL error does not negate complete local application; whole-query equality does not prove it. Never combine behaviors from different attempts into one success.
+Resolve each fixed target only when its required behavior is demonstrated across the supplied attempts. Report a remaining error without inventing new target IDs; the controller owns re-diagnosis. Report regression attribution as supported only with evidence connecting it to candidate units; otherwise retain uncertainty. Never treat uncertainty as a confirmed defect or combine different attempts into one successful behavior.
 
-Use application_requirement for each individual unit, including edges: sql never permits not_applicable. Choose applied only with the required evidence; otherwise report partially_applied, not_applied, not_attributed or inconclusive with retrieval/selection/application feedback. Quality or target feedback does not replace application feedback. Do not choose applied solely to satisfy the output contract.
+# Output
 
-Inspect every failed attempt's actual error or result difference. Do not dismiss a failure as merely a SQL-generator problem. If it prevents a unit's required output or behavior, that unit is not completely applied; identify the minimal actionable knowledge gap. A valid definition alone does not establish successful application. Preserve unrelated valid units and do not invent causality or business facts.
+Return schema JSON covering every unit and target exactly once. quality_checks contains exactly quality_requirements; omit the derived quality summary. Unit feedback contains only concrete quality defects or related sql_error entries; return none when neither exists. Do not output application labels or code-owned retrieval_results.
 
-## 3. Targets and regression
-
-Assess every supplied fixed target across all attempts; return no target conclusions when none exist. Whole-query correctness cannot override a local target difference.
-
-Resolve a target only when its complete required behavior is demonstrated; a matching function or a locally correct fragment is insufficient when the target's output cannot be produced. If old targets are resolved but another SQL error remains, report the remaining error through applicable unit feedback, without inventing new target IDs. The controller will re-diagnose the latest failed candidate; resolved old targets do not mean the case is complete.
-
-Report only observed deterioration against supplied prior_evidence. Attribute it to candidate units only when supported; otherwise retain attribution uncertainty. Do not invent regression or causality.
-
-# Feedback and output
-
-Return only schema-conforming JSON covering every unit/target exactly once. quality_checks contains exactly quality_requirements. Mark each concrete quality defect on the relevant check and explain it in feedback. Do not output an overall quality field: code derives it from the checks. Preserve defects and feedback; omitting a redundant summary does not make a candidate acceptable.
-
-Every unsuccessful conclusion needs specific feedback: exact supplied node/relation ID, concrete gap, necessary semantic correction and correct behavior to preserve. Merge repeated instances of one problem; no passing-item narratives or per-attempt repetition. Do not weaken a substantive defect to fix format, expand targets or prescribe replacement graph edits. Couple only semantically inseparable units. The controller determines acceptance from these conclusions, SQL verification and group constraints.
+Target feedback uses kind=target; regression feedback uses kind=regression. feedback.location is an exact supplied graph node/edge ID. target_results.target_id is a target ID, never a graph location. Preserve substantive defects during format correction. Give actionable feedback, without passing-item narratives or per-attempt repetition. Couple only semantically inseparable units. The controller decides acceptance from these conclusions, injection facts and SQL verification.

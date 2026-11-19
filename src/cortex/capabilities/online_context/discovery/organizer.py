@@ -152,6 +152,8 @@ class LlmChoiceOrganizer:
                         llm=self._llm,
                         prompt=load_prompt("initial_sql_memory_conflicts"),
                         output_model=InitialSqlMemoryOutput,
+                        repair_with_context=True,
+                        output_validator=lambda result: _apply_augmentations(slots, result),
                         trace_capture=initial_memory_trace,
                         human_payload=initial_memory_payload,
                     )
@@ -204,6 +206,8 @@ class LlmChoiceOrganizer:
                     llm=self._llm,
                     prompt=load_prompt("cross_node_conflicts"),
                     output_model=CrossNodeOutput,
+                        repair_with_context=True,
+                        output_validator=lambda result: _apply_augmentations(slots, result),
                     trace_capture=cross_trace,
                     human_payload=cross_payload,
                 )
@@ -508,6 +512,8 @@ def _apply_augmentations(
         if slot.choice_point_id in by_id:
             continue
         by_id[slot.choice_point_id] = slot
+    from .contracts import validate_initial_sql_sources
+    validate_initial_sql_sources(tuple(by_id.values()))
     return tuple(by_id.values())
 
 

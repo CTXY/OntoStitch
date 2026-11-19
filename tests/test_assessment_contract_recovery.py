@@ -25,71 +25,45 @@ def two_units(case_graph):
     return payload, groups
 
 
-def test_reports_every_incompatible_application_label(case_graph):
+def test_removed_application_labels_are_rejected(case_graph):
     payload, _ = two_units(case_graph)
-    data = response_for_payload(payload)
-    for row in data["unit_results"]:
-        row.update(application="not_applicable", feedback=[])
-    original = deepcopy(data)
-    with pytest.raises(ValueError) as error:
-        AssessmentFeedback.model_validate(data).validate_evidence(payload)
-    for row in data["unit_results"]:
-        assert f"unit_results[{row['unit_id']}].application" in str(error.value)
-    assert data == original
+    data=response_for_payload(payload)
+    for row in data["unit_results"]: row["application"]="applied"
+    with pytest.raises(ValueError, match="Extra inputs"):
+        AssessmentFeedback.model_validate(data)
 
 
-def test_all_missing_application_feedback_is_reported(case_graph):
-    payload, _ = two_units(case_graph)
-    data = response_for_payload(payload)
-    for row in data["unit_results"]:
-        row.update(application="not_applied", feedback=[])
-    with pytest.raises(ValueError) as error:
-        AssessmentFeedback.model_validate(data).validate_evidence(payload)
-    for row in data["unit_results"]:
-        assert f"unit_results[{row['unit_id']}].feedback" in str(error.value)
-    assert "retrieval, selection or application" in str(error.value)
+def test_all_incomplete_quality_checks_are_reported(case_graph):
+    payload, _ = two_units(case_graph);data=response_for_payload(payload)
+    for row in data["unit_results"]: row["quality_checks"].pop(next(iter(row["quality_checks"])))
+    with pytest.raises(ValueError) as error: AssessmentFeedback.model_validate(data).validate_evidence(payload)
+    for row in data["unit_results"]: assert f"unit_results[{row['unit_id']}].quality_checks" in str(error.value)
 
 
-def test_one_correction_can_address_all_units_without_another_trial(case_graph):
-    payload, groups = two_units(case_graph)
-    valid = response_for_payload(payload)
-    invalid = deepcopy(valid)
-    for row in invalid["unit_results"]:
-        row["application"] = "not_applicable"
-
+def test_one_format_correction_covers_all_units_without_another_trial(case_graph):
+    payload, groups=two_units(case_graph);valid=response_for_payload(payload);invalid=deepcopy(valid)
+    for row in invalid["unit_results"]: row["quality_checks"].pop(next(iter(row["quality_checks"])))
     def correction(messages):
-        for row in invalid["unit_results"]:
-            assert row["unit_id"] in messages[-1].content
-        assert "do not blindly preserve an invalid label" in messages[-1].content
-        supplied = json.loads(messages[1].content)
-        for unit in supplied["units"]:
-            assert "not_applicable" not in unit.pop("application_options")
+        for row in invalid["unit_results"]: assert row["unit_id"] in messages[-1].content
+        supplied=json.loads(messages[1].content)
         assert supplied == json.loads(json.dumps(payload))
+        assert all("application_options" not in u for u in supplied["units"])
         return AIMessage(content=json.dumps(valid))
-
-    model = ScriptModel([AIMessage(content=json.dumps(invalid)), correction])
-    result = assess_payload(model, payload=payload, groups=groups, context_limit=64000)
-    assert len(model._calls) == 2
-    assert result.acceptable(groups)
+    model=ScriptModel([AIMessage(content=json.dumps(invalid)),correction])
+    result=assess_payload(model,payload=payload,groups=groups,context_limit=64000)
+    assert len(model._calls)==2 and result.acceptable(groups)
 
 
 def test_exhausted_format_recovery_is_not_a_transient_network_failure(case_graph):
     import importlib.util
     from pathlib import Path
-    spec = importlib.util.spec_from_file_location("assessment_recovery_runner", Path(__file__).parents[1] / "scripts/run_resilient_training.py")
-    runner = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(runner)
-
-    payload, groups = two_units(case_graph)
-    invalid = response_for_payload(payload)
-    for row in invalid["unit_results"]:
-        row["application"] = "not_applicable"
-    model = ScriptModel([AIMessage(content=json.dumps(invalid))] * 2)
-    with pytest.raises(AssessmentOutputInvalid) as error:
-        assess_payload(model, payload=payload, groups=groups, context_limit=64000)
-    assert len(model._calls) == 2
-    assert not runner.transient(error.value)
-    assert not runner.transient(str(error.value))  # Pipeline results serialize the exception.
+    spec=importlib.util.spec_from_file_location("assessment_recovery_runner",Path(__file__).parents[1]/"scripts/run_resilient_training.py")
+    runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
+    payload,groups=two_units(case_graph);invalid=response_for_payload(payload)
+    for row in invalid["unit_results"]: row["quality_checks"].pop(next(iter(row["quality_checks"])))
+    model=ScriptModel([AIMessage(content=json.dumps(invalid))]*2)
+    with pytest.raises(AssessmentOutputInvalid) as error: assess_payload(model,payload=payload,groups=groups,context_limit=64000)
+    assert len(model._calls)==2 and not runner.transient(error.value) and not runner.transient(str(error.value))
 
 
 @pytest.mark.parametrize("checks,expected", [({"one": "valid"}, "valid"),
@@ -97,7 +71,7 @@ def test_exhausted_format_recovery_is_not_a_transient_network_failure(case_graph
     ({"one": "invalid", "two": "inconclusive"}, "invalid")])
 def test_missing_summary_is_derived_without_changing_individual_judgments(checks, expected):
     from cortex.capabilities.sql_training.training.assessment_models import UnitResult
-    data = {"unit_id": "concept.example", "quality_checks": checks, "application": "not_applied", "feedback": []}
+    data = {"unit_id": "concept.example", "quality_checks": checks, "feedback": []}
     result = UnitResult.model_validate(data)
     assert result.quality == expected
     assert result.quality_checks == checks
@@ -117,6 +91,17 @@ def test_runtime_schema_omits_summary_but_still_requires_all_checks(case_graph):
     result.unit_results[0].quality_checks.pop(next(iter(result.unit_results[0].quality_checks)))
     with pytest.raises(ValueError, match="quality_checks"):
         result.validate_evidence(payload)
+
+
+def test_feedback_schema_lists_graph_locations_and_never_target_ids(case_graph):
+    from cortex.capabilities.sql_training.training.assessment_models import feedback_locations
+    payload, _ = two_units(case_graph)
+    payload['fixed_targets'] = [{'target_id': 'E1', 'instruction': 'Investigate the unit'}]
+    schema = json.loads(assessment_messages(payload)[0].content.split('Response schema:\n', 1)[1])
+    locations = schema['$defs']['QualityFeedback']['properties']['location']['enum']
+    assert set(locations) == feedback_locations(payload)
+    assert 'E1' not in locations
+    assert all(unit['unit_id'] in locations for unit in payload['units'])
 
 
 def test_derived_summary_does_not_erase_quality_feedback_or_accept_a_defect(case_graph):

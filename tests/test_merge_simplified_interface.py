@@ -66,6 +66,25 @@ def test_reading_unrelated_object_never_grants_permission():
     assert not ctx.active_batch.pending and ids['X'] not in ctx.active_batch.allowed
 
 
+def test_explicit_local_replacement_can_include_an_isolated_successor():
+    ctx, ids, _, _ = region()
+    successor = next(n for n in ctx.candidate.graph.nodes if n.id == ids['X'])
+    result = BatchResult.model_validate({
+        'edits': [{'operation': 'update_node', 'node': successor.model_dump(mode='json')}],
+        'changes': [{'before': [{'kind': 'node', 'id': ids['A']}],
+                     'after': [{'kind': 'node', 'id': ids['X']}],
+                     'explanation': 'Explicitly identify the retained representation of the local assertion.'}],
+    })
+    with pytest.raises(ScopeContextRequired) as error:
+        ctx.active_batch.submit_atomic(result)
+    assert ids['X'] in {row['id'] for row in error.value.context['nodes']}
+    assert ids['X'] not in ctx.active_batch.allowed
+    admitted = ctx.active_batch.prepare_submission(result)
+    assert ids['X'] in admitted
+    assert ids['Y'] not in admitted
+    assert not ctx.active_batch.pending  # Scope approval does not execute the replacement.
+
+
 def test_invalid_patch_rolls_back_temporary_scope_and_edits():
     ctx, ids, _, _ = region()
     before = set(ctx.active_batch.allowed)

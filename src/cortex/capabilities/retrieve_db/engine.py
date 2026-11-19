@@ -17,6 +17,7 @@ from cortex.capabilities.retrieve_db.llm.prompts import prompt_version
 from cortex.capabilities.retrieve_db.retrieval.recall import TypedRecall
 from cortex.capabilities.retrieve_db.retrieval.selection import (
     LlmRelevanceSelector,
+    KeepRecalledSelector,
     RelevanceOutput,
 )
 from cortex.capabilities.retrieve_db.workflow.nodes import RetrievalNodes
@@ -34,6 +35,7 @@ class RetrieveDbCapability:
         llm=None,
         embeddings=None,
         relevance_selector=None,
+        relevance_filter=True,
         typed_recall=None,
         initial_sql_generator=None,
         schema_renderer=None,
@@ -44,7 +46,7 @@ class RetrieveDbCapability:
         embedding_identity=None,
         context_settings=None,
     ):
-        if relevance_selector is None and llm is None:
+        if relevance_filter and relevance_selector is None and llm is None:
             raise ValueError("retrieval requires an LLM or a relevance selector")
         self._schema = ontology_schema or load_root_schema()
         recall = typed_recall or TypedRecall(
@@ -62,7 +64,7 @@ class RetrieveDbCapability:
         )
         nodes = RetrievalNodes(
             recall=recall,
-            selector=relevance_selector or LlmRelevanceSelector(llm),
+            selector=(relevance_selector or LlmRelevanceSelector(llm)) if relevance_filter else KeepRecalledSelector(),
             initial_sql_generator=initial_sql_generator
             or (InitialSqlGenerator(llm) if llm is not None else None),
             schema_renderer=schema_renderer or GraphPhysicalSchemaRenderer(),
@@ -77,6 +79,7 @@ class RetrieveDbCapability:
                 "schema": calculate_schema_hash(self._schema),
                 "limits": recall.limits,
                 "settings": context_settings or {},
+                "relevance_filter": relevance_filter,
                 "context_expansion": "one_hop_relevance_preserving_v2",
                 "model": getattr(llm, "model_name", getattr(llm, "model", None)),
             }

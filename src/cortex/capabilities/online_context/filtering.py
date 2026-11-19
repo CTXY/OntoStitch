@@ -229,6 +229,9 @@ class ClarificationFilterAgent:
             return "no validated filter conclusion"
         if decision.outcome == "keep":
             return ""
+        expected = "explicit_intent" if decision.outcome == "question_resolved" else "database_equivalence"
+        if decision.basis is not None and decision.basis != expected:
+            return "basis contradicts the filter outcome"
         option_ids = {o.option_id for o in point.options}
         if decision.outcome == "question_resolved":
             quote = decision.question_evidence.strip()

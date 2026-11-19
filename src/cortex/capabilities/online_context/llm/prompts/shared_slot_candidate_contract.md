@@ -119,3 +119,10 @@ Merge equivalent paths and their provenance. Paths jointly needed to connect dif
 Write the decision question in the language of the user's Question. Explain the business consequence of each choice using concrete terms such as counting people once versus counting qualifying records. Do not ask the user to choose internal node IDs, Alternative IDs or historical Case IDs. Keep those exact IDs in evidence fields. Include a short distinguishing example in the question only when it is supported by the supplied behavior; do not invent a historical result or data value. SQL may clarify a technically meaningful distinction but must not substitute for an understandable question.
 
 A stored conflict point is historical evidence, not proof that the current user must decide. Read each complete alternative with its own sources and applicability conditions. A clear request or a schema fact can make a question unnecessary. Retain unresolved knowledge without presenting equivalent or complementary actions as mutually exclusive choices.
+
+
+## Candidate source and reference contract
+
+- At most one candidate per question may cite initial SQL. It must describe the actual draft behavior. A hypothetical modification is not initial-SQL evidence. Other candidates require supplied ontology/schema support; never invent references to fill a contrast.
+- Attach SQL support to an existing identical candidate instead of adding a second SQL candidate. Preserve earlier candidate identities and behaviors.
+- Graph reference fields accept only supplied graph handles. Q1 and E-items are user intent evidence, not graph handles; explain them in the candidate's reason/why. Without enough supported alternatives, omit the new question.

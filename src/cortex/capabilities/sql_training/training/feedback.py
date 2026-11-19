@@ -26,28 +26,31 @@ from cortex.capabilities.sql_training.llm.parsing import ReasoningParser, respon
 from cortex.capabilities.sql_training.llm.prompts import load_prompt, prompt_fingerprint
 from cortex.capabilities.sql_training.training.assessment_models import (
     AssessmentFeedback,
-    application_options,
+    feedback_locations,
 )
 from cortex.schema import SchemaDefinition
 
 
-def assessment_response_schema():
+def assessment_response_schema(payload=None):
     """The Agent judges checks; code owns their redundant aggregate label."""
     schema = AssessmentFeedback.model_json_schema()
+    schema["properties"].pop("retrieval_results")
+    schema.get("$defs", {}).pop("RetrievalResult", None)
     unit = schema["$defs"]["UnitResult"]
     unit["properties"].pop("quality")
     unit["required"] = [key for key in unit["required"] if key != "quality"]
     if "quality_checks" not in unit["required"]:
         unit["required"].append("quality_checks")
+    if payload is not None:
+        locations = sorted(feedback_locations(payload))
+        for name in ("QualityFeedback", "SqlErrorFeedback", "TargetFeedback", "RegressionFeedback"):
+            schema["$defs"][name]["properties"]["location"]["enum"] = locations
     return schema
 
 
 def assessment_messages(payload):
-    system = load_prompt("learning_assessment") + "\n\nResponse schema:\n" + json.dumps(assessment_response_schema())
-    view = {**payload, "units": [
-        {**unit, "application_options": application_options(unit, payload["attempts"])}
-        for unit in payload["units"]
-    ]}
+    system = load_prompt("learning_assessment") + "\n\nResponse schema:\n" + json.dumps(assessment_response_schema(payload))
+    view = payload
     return [SystemMessage(content=system), HumanMessage(content=json.dumps(view, ensure_ascii=False, default=str, separators=(",", ":")))]
 
 
@@ -105,6 +108,8 @@ def assess_payload(model, *, payload, groups, context_limit, trace_capture=None)
             raw = ReasoningParser().parse(response).strip()
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            if "retrieval_results" in json.loads(raw):
+                raise ValueError("retrieval_results are code-owned injection facts; omit this field from assessor output")
             result = AssessmentFeedback.model_validate_json(raw)
             result.validate_evidence(payload)
             result.accepted_members(groups)
@@ -115,7 +120,7 @@ def assess_payload(model, *, payload, groups, context_limit, trace_capture=None)
             messages.append(AIMessage(content=response))
             messages.append(
                 HumanMessage(
-                    content=f"Correct all reported contract violations in your previous assessment:\n{exc}\nPreserve its substantive judgments, defects and feedback. Correct an incompatible application label against that unit's supplied requirement and SQL/context evidence; do not blindly preserve an invalid label or change it to applied merely to pass validation. Add required feedback for unsuccessful states; do not erase a defect to satisfy the schema. Use exact supplied node or relation IDs for location, with field details in gap. Return the complete schema JSON."
+                    content=f"Correct all reported contract violations in your previous assessment:\n{exc}\nPreserve its substantive judgments, defects and feedback. Do not invent SQL defects or erase substantive defects to satisfy the schema. For related SQL errors cite the actual attempt IDs and a verbatim SQL excerpt. Unused knowledge and lack of direct selection are not SQL errors. Fix only the reported contract violations; target feedback uses kind=target and graph locations, never target IDs as locations. Use exact supplied node or relation IDs for location, with field details in gap. Return the complete schema JSON."
                 )
             )
     raise AssertionError("unreachable")
@@ -128,4 +133,4 @@ def assessment_policy_id() -> str:
         policy.update(name.encode())
         policy.update(Path(__file__).with_name(name).read_bytes())
     policy.update(json.dumps(operation_registry(), sort_keys=True).encode())
-    return "sql-and-assessment-v6:" + prompt_fingerprint("learning_assessment") + ":" + schema_id + ":" + policy.hexdigest()
+    return "quality-injection-related-sql-v7:" + prompt_fingerprint("learning_assessment") + ":" + schema_id + ":" + policy.hexdigest()

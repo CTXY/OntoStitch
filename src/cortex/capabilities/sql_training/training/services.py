@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 from typing import Any
 from uuid import uuid4
 
@@ -139,6 +140,10 @@ class CaseServices:
             ),
         }
         self.context_id = fingerprint(self.context_contract)
+        if transport_plan := os.environ.get('CORTEX_SQL_TRAINING_TRANSPORT_RESUME_PLAN'):
+            from cortex.capabilities.sql_training.training.transport_resume import resume_transport_context
+            self.context_contract, self.context_id = resume_transport_context(
+                self.context_contract, case_root=evidence.root.parent, plan_path=transport_plan)
         self._index = evidence.read_index()
         self._restore_completed_validations()
 
@@ -187,6 +192,7 @@ class CaseServices:
         max_attempts = self.config.validation.max_retry_count + 1
         if entry and (
             self.replay(entry["evidence_ref"]).status.value != "unavailable"
+            or self.replay(entry["evidence_ref"]).terminal_evaluation.get("candidate_failure", {}).get("retryable") is False
             or retries >= max_attempts
         ):
             return entry["evidence_ref"]
@@ -255,7 +261,7 @@ class CaseServices:
             retries += 1
             self._index[key] = {"evidence_ref": evidence_id, "attempts": retries}
             self.evidence.write_index(self._index)
-            if replay.status.value != "unavailable":
+            if replay.status.value != "unavailable" or replay.terminal_evaluation.get("candidate_failure", {}).get("retryable") is False:
                 break
         return evidence_id
 

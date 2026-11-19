@@ -19,10 +19,50 @@ from cortex.capabilities.sql_training.validation.models import (
     GenerationResult,
 )
 from cortex.infrastructure.database import DatabaseConnector
+from cortex.infrastructure.llm.stream_audit import UpstreamResponseIncomplete
 
 
 class OntologyGenerationError(RuntimeError):
     """An in-process ontology SQL generation attempt could not complete."""
+
+
+class OntologyGenerationUnavailable(OntologyGenerationError):
+    """A model request did not produce a candidate; preserve safe typed metadata."""
+
+    def __init__(self, error: Exception):
+        details = _model_request_failure(error) or {"error_type": type(error).__name__, "http_status": None, "retryable": False}
+        self.error_type = details["error_type"]
+        self.http_status = details["http_status"]
+        self.retryable = details["retryable"]
+        super().__init__(f"SQL generation infrastructure unavailable: {self.error_type}")
+
+
+def _model_request_failure(error):
+    seen = set()
+    failure = None
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        status = getattr(error, "status_code", None)
+        if status is None:
+            status = getattr(getattr(error, "response", None), "status_code", None)
+        if isinstance(status, int) and status >= 400:
+            return {"error_type": type(error).__name__, "http_status": status,
+                    "retryable": status in {408, 409, 425, 429} or status >= 500}
+        names = {kind.__name__ for kind in type(error).__mro__}
+        if isinstance(error, (ConnectionError, TimeoutError)) or names & {
+            "APIConnectionError", "OpenAIConnectionError", "APITimeoutError",
+            "TransportError", "NetworkError", "ProtocolError", "ReadError",
+            "ReadTimeout", "WriteError", "WriteTimeout", "ConnectError",
+            "ConnectTimeout", "PoolTimeout", "APIResponseValidationError",
+            "LLMInvocationError",
+        }:
+            failure = {"error_type": type(error).__name__, "http_status": None, "retryable": True}
+        error = error.__cause__ or error.__context__
+    return failure
+
+
+def _model_request_unavailable(error):
+    return _model_request_failure(error) is not None
 
 
 class InProcessOntologySqlGenerator:
@@ -66,6 +106,15 @@ class InProcessOntologySqlGenerator:
                         error=error,
                     )
                 )
+            except Exception as exc:
+                # No model response exists: this cannot be a semantic SQL failure.
+                # Known transport failures are retryable; unknown invocation
+                # failures remain unavailable and stop for investigation.
+                raise OntologyGenerationUnavailable(exc) from exc
+            try:
+                metadata = getattr(response, "response_metadata", {}) or {}
+                if "finish_reason" in metadata and metadata["finish_reason"] is None:
+                    raise UpstreamResponseIncomplete("Model response has no terminal finish reason")
                 raw_output = _content(response)
                 attempt_record["generation_output"] = raw_output
                 query = _clean_sql(raw_output)
@@ -77,6 +126,8 @@ class InProcessOntologySqlGenerator:
                     )
                 _ensure_read_only(query)
             except Exception as exc:
+                if _model_request_unavailable(exc):
+                    raise OntologyGenerationUnavailable(exc) from exc
                 error = f"SQL generation failed: {exc}"
                 attempt_record["error"] = error
                 wrong_query = query or None

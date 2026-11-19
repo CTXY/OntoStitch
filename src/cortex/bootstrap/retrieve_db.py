@@ -36,12 +36,14 @@ def build_retrieve_db_service(
     embeddings: Embeddings | None | object = _UNSET,
     document_vector_cache: DocumentVectorCache | None = None,
     embedding_identity: EmbeddingSpaceIdentity | None = None,
+    relevance_filter: bool = True,
 ) -> RetrieveDbService:
     resolved = config or load_config(config_path)
     settings = resolved.services.retrieve_db
     retrieval_limits = settings
     implementation = engine or RetrieveDbCapability(
         llm=llm or create_chat_model(resolved.llm, profile="retrieve_db"),
+        relevance_filter=relevance_filter,
         embeddings=create_embedding_model(resolved.llm, model=resolved.embedding_model)
         if embeddings is _UNSET
         else embeddings,

@@ -61,9 +61,10 @@ def review_packets(context, candidate, task, *, origins, before, max_characters=
         yield packet(pending)
 
 
-def assess_nodes(agent, context, candidate, task, *, origins, before, earlier_findings=()):
+def assess_nodes(agent, context, candidate, task, *, origins, before, earlier_findings=(), max_characters=110000):
     from cortex.capabilities.graph_merge.llm.incremental import NodeReview
-    packets = list(review_packets(context, candidate, task, origins=origins, before=before))
+    packets = list(review_packets(context, candidate, task, origins=origins, before=before,
+                                 max_characters=max_characters))
     reviews = []
     for index, payload in enumerate(packets):
         payload["task_id"] = f"{task.id}-slice-{index}"

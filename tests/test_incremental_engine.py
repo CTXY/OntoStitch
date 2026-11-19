@@ -80,8 +80,9 @@ def test_interrupted_assessment_resumes_validated_writer_result_without_repeatin
         first.merge(state(), source, load_root_schema(), run_id="resume")
     saved = WorkspaceStore(path).load("resume")
     assert saved["pending_review"]["task_id"] == "content-0"
+    assert saved["identity_read_ids"]
     model = IdentityOnlyAgent()
-    resumed = IncrementalGraphIntegrationEngine(model)
+    resumed = IncrementalGraphIntegrationEngine(model, node_context_max_characters=200000)
     resumed.workspace_path, resumed.resume_snapshot = path, saved
     result = resumed.merge(state(), source, load_root_schema(), run_id="resume")
     assert model.phases == ["node_assess", "reconcile"]

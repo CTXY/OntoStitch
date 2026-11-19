@@ -59,6 +59,16 @@ class RelevanceSelector(Protocol):
     ) -> tuple[RelevanceDecision, ...]: ...
 
 
+class KeepRecalledSelector:
+    """No model judgment: every recalled representation reaches graph assembly."""
+
+    async def select(self, *, question, initial_sql, representations):
+        return tuple(RelevanceDecision(document_id=item.document.document_id,
+                                       status="relevant",
+                                       reason="Relevance filtering disabled; retain recalled representation.")
+                     for item in representations)
+
+
 class LlmRelevanceSelector:
     def __init__(self, llm: BaseChatModel) -> None:
         self._llm = llm

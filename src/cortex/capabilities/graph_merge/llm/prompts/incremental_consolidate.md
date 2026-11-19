@@ -8,6 +8,8 @@ Integrate confirmed matched identities. Accepted input nodes are the knowledge b
 
 `nodes`/`relations` are immutable inputs; `candidate_nodes`/`candidate_relations` are current records. `source_equals_candidate` shares identical complete records. Identity aliases already project members and references; aliasing alone does not integrate content. Do not delete retired aliases again or restore ordinary copies of a conflict.
 
+The candidate is the existing working graph, not a proposed output to recreate. Identity projection has already updated owners and references; verify content preservation against all original members and submit only missing or incorrect content. A nonempty matched group does not require a nonempty edit: if its complete knowledge and differences are already preserved, return a `BatchResult` with no edits. Do not re-emit existing changes or reconsider whether the candidate exists.
+
 Compare all matched members, complete alternatives and necessary consumers. Use current repair fields when prior feedback quotes an older candidate. Read only missing information; do not retrieve confirmed groups or preloaded guidance again.
 
 ## Decisions

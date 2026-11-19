@@ -225,5 +225,7 @@ def relation_signature(context, current, task):
     ids = {n["id"] for n in packet["nodes"]}
     content = {k: packet[k] for k in ("edges", "contracts", "evidence", "signals")}
     content["nodes"] = [n.model_dump(mode="json") for n in current.graph.nodes if n.id in ids]
-    content["implementation"] = implementation_version()
+    # An explicitly audited infrastructure-only rollout may retain the prior
+    # review policy. Actual loaded-code hashes are still recorded separately.
+    content["implementation"] = getattr(context, "review_policy_version", None) or implementation_version()
     return hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

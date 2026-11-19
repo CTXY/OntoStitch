@@ -228,6 +228,7 @@ class IncrementalGraphIntegrationEngine:
         runtime_signature="",
         sql_dialect=None,
         model_call_budget=80,
+        node_context_max_characters=110000,
     ):
         self.agent, self.evidence_resolver = agent, evidence_resolver
         self.max_rounds, self.top_k = max_rounds, top_k
@@ -237,6 +238,9 @@ class IncrementalGraphIntegrationEngine:
         )
         self.sql_dialect = sql_dialect
         self.model_call_budget = model_call_budget
+        if node_context_max_characters < 1:
+            raise ValueError("node_context_max_characters must be positive")
+        self.node_context_max_characters = node_context_max_characters
         self.history = []
         self.last_session = None
         self.relation_coverage = set()
@@ -286,6 +290,7 @@ class IncrementalGraphIntegrationEngine:
         self.open_tasks = []
         self.reviewed_sources = {}
         self.identity_decision = None
+        self.identity_read_ids = None
         self.content_plan = None
         self.relation_coverage = set()
         self.reconciliation_complete = False
@@ -316,6 +321,15 @@ class IncrementalGraphIntegrationEngine:
                 for k, refs in resume.get("reviewed_sources", {}).items()
             }
             self.identity_decision = resume.get("identity")
+            identity_reads = resume.get("identity_read_ids")
+            if identity_reads is None and self.identity_decision and getattr(self, "identity_trace_path", None):
+                from cortex.capabilities.graph_merge.integration.identity_reads import identity_reads_from_trace
+                identity_reads = identity_reads_from_trace(self.identity_trace_path, self.identity_decision)
+            if identity_reads is not None:
+                if not set(identity_reads) <= set(ctx.nodes):
+                    raise ValueError("Saved identity reads reference nodes outside the original input")
+                ctx.read_ids.update(identity_reads)
+                self.identity_read_ids = sorted(identity_reads)
             self.content_plan = resume.get("content_plan")
             self.relation_coverage = set(resume.get("relation_coverage", ()))
             self.reconciliation_complete = resume.get("reconciliation_complete", False)
@@ -339,6 +353,7 @@ class IncrementalGraphIntegrationEngine:
 
             decision = IdentityDecision.model_validate(seed["identity"])
             aliases = identity_map(ctx, decision)
+            self.identity_read_ids = sorted(ctx.read_ids & set(ctx.nodes))
             imported = GraphState.model_validate(seed["preview"])
             lineage.observe(
                 current,
@@ -417,6 +432,7 @@ class IncrementalGraphIntegrationEngine:
             self.identity_decision = decision.model_dump(mode="json")
             ctx.identity_decision = self.identity_decision
             aliases = identity_map(ctx, decision)
+            self.identity_read_ids = sorted(ctx.read_ids & set(ctx.nodes))
             self._persist(run_id)
             def input_size(groups):
                 import json
@@ -443,7 +459,7 @@ class IncrementalGraphIntegrationEngine:
                 # Legacy checkpoints keep their existing task numbering. New
                 # plans measure complete transport context and survive resumes.
                 self.content_plan = (matched_batches(groups, ctx.nodes) if started else
-                    matched_batches(groups, ctx.nodes, budget=110000, measure=input_size))
+                    matched_batches(groups, ctx.nodes, budget=self.node_context_max_characters, measure=input_size))
                 self._persist(run_id)
             for index, groups in enumerate(self.content_plan):
                 if any(h["task_id"] == f"content-{index}" for h in self.history):
@@ -720,7 +736,8 @@ class IncrementalGraphIntegrationEngine:
                     ctx.output_validator = None
                     review = assess_nodes(self.agent, ctx, candidate, reviewtask,
                         origins=batch.lineage_preview, before=before,
-                        earlier_findings=review_history[:-1])
+                        earlier_findings=review_history[:-1],
+                        max_characters=self.node_context_max_characters)
             if review is not None and review.verdict != "accept":
                 if review.verdict == "revisit_identity":
                     raise IntegrationIncomplete(
@@ -983,6 +1000,7 @@ class IncrementalGraphIntegrationEngine:
             "accepted_revision": self._revision,
             "input_fingerprint": input_fingerprint(self.ctx),
             "identity": self.identity_decision,
+            "identity_read_ids": getattr(self, "identity_read_ids", None),
             "content_plan": getattr(self, "content_plan", None),
             "relation_coverage": sorted(getattr(self, "relation_coverage", ())),
             "reconciliation_complete": getattr(self, "reconciliation_complete", False),

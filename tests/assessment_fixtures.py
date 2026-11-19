@@ -14,7 +14,6 @@ def assessment_data(groups, accept=None, targets=(), validation=None, quality_by
             "unit_id": member,
             "quality": status,
             "quality_checks": dict.fromkeys(required_quality_checks({"node_type": member.split(".")[0]}, relation=True if member.startswith("edge.") else None), status),
-            "application": "applied",
             "feedback": [] if status == "valid" else [{"kind": "quality", "location": member, "gap": "clarify the supported behavior", "required_change": "clarify the supported behavior", "preserve": "the source meaning"}],
         })
     return {"unit_results": rows, "target_results": [
@@ -24,9 +23,6 @@ def assessment_data(groups, accept=None, targets=(), validation=None, quality_by
 
 
 def response_for_payload(payload, **kwargs):
-    from cortex.capabilities.sql_training.training.assessment_models import (
-        context_included,
-    )
     data = assessment_data(payload["change_groups"], targets=payload["fixed_targets"], validation={"attempts":payload["attempts"]}, **kwargs)
     units = {u["unit_id"]:u for u in payload["units"]}
     for result in data["unit_results"]:
@@ -34,10 +30,4 @@ def response_for_payload(payload, **kwargs):
         result["quality_checks"] = {
             key: result["quality"] for key in unit.get("quality_requirements", [])
         }
-        facts = unit["context_facts"]
-        if unit["change_kind"] == "delete":
-            result["application"] = "not_applicable"
-        elif not facts or not all(context_included(f) for f in facts):
-            result["application"] = "not_attributed"
-            result["feedback"].append({"kind":"application","location":result["unit_id"],"gap":"context inclusion is not established for every attempt","required_change":"ensure the knowledge enters generation context","preserve":"the supported definition"})
     return data

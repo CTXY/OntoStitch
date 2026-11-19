@@ -20,38 +20,6 @@ from cortex.schema.relation_contracts import authoring_schema, effective_schema
 from cortex.schema.relationships import is_dependency_edge
 
 
-def application_requirement(candidate, *, relation=None, owner_type=None, accepted_before=None):
-    """Classify evidence needs from stored content, never Agent-written labels.
-
-    Business structure and Concept representation bindings need semantic support.
-    The Concept node still requires application of its request-relevant meaning;
-    calculation operands and executable behavior require SQL evidence.
-    Use the actual edge, including its managed anchor marker, rather than its
-    compact prompt view to distinguish a business fact from an anchor override.
-    """
-    if candidate is None:
-        return "none"
-    if relation is not None:
-        if owner_type == "concept" and relation.edge_type == "grounded_on":
-            return "semantic"
-        return "sql" if is_dependency_edge(relation) else "semantic"
-    kind = candidate.get("node_type")
-    if kind == "concept" and accepted_before is not None:
-        def executable_content(value):
-            from copy import deepcopy
-            value = deepcopy(value)
-            value.pop("sources", None)
-            value.get("properties", {}).pop("relation_metadata", None)
-            return value
-        if (candidate.get("properties", {}).get("relation_metadata")
-                != accepted_before.get("properties", {}).get("relation_metadata")
-                and executable_content(candidate) == executable_content(accepted_before)):
-            return "semantic"
-    if kind == "event":
-        return "semantic"
-    return "sql"
-
-
 def assessment_payload(*, record, schema, baseline, accepted, trial, groups, targets, validation, prior_evidence=None):
     writable_relations = authoring_schema(schema, trial.graph).edge_type_index()
     schema = effective_schema(schema, trial.graph)
@@ -142,7 +110,6 @@ def assessment_payload(*, record, schema, baseline, accepted, trial, groups, tar
     known_targets = {t["target_id"] for t in targets}
     attempts = sql_attempts(validation)
     trial_relations = {edge.id: edge for edge in trial.graph.edges}
-    owner_types = {node.id: node.node_type for node in trial.graph.nodes}
     units = []
     # Review executable semantics before lengthy relation inventories; preserve
     # the exact same units, evidence and acceptance-group membership.
@@ -185,15 +152,17 @@ def assessment_payload(*, record, schema, baseline, accepted, trial, groups, tar
                 candidate, relation=trial_relations.get(member)
             ),
             "change_kind": "delete" if candidate is None else "add" if before is None else "modify",
-            "application_requirement": application_requirement(
-                candidate, relation=trial_relations.get(member),
-                accepted_before=before,
-                owner_type=owner_types.get(trial_relations[member].from_node_id) if member in trial_relations else None,
-            ),
             "candidate": candidate,
             **({"accepted_before": before} if before is not None else {}),
             "target_ids": sorted({t for g in groups if member in g.member_ids for t in g.target_ids if t in known_targets}),
             "context_facts": group_context_facts(facts),
+            # Recalled/selected knowledge must not disappear before injection.
+            # Also require injection for knowledge assigned to a fixed repair target.
+            # Unrecalled supporting knowledge remains explicitly uncovered.
+            "retrieval_required": (
+                any(f.get("raw_retrieved") is True or f.get("selected") is True or f["included_via"] for f in facts)
+                or any(g.target_ids and member in g.member_ids for g in groups)
+            ),
         })
     physical = [a for a in current_nodes.values() if a["node_type"] in {"table", "column"}]
     # Provide metadata only for physical endpoints in scope, without duplicating identities.

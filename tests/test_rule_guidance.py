@@ -17,7 +17,7 @@ def test_filter_cannot_emit_implementation_or_irrelevance():
 
 
 def test_rules_assessed_even_without_clarifications():
-    rules = ({"rule_id": "missing_values", "condition": "ranking nullable measurements", "action": "exclude NULL from ranking"},
+    rules = ({"rule_id": "missing_values", "condition": "ranking nullable measurements", "action": "Exclude NULL from the ranked measurements."},
              {"rule_id": "contact_layout", "condition": "request includes contact and entity name", "action": "return contact and name"})
     assessments = [dict(rule_id="missing_values", include=True, reason="ranking nullable measurements requested", instruction="Exclude NULL from the ranked measurements."),
                    dict(rule_id="contact_layout", include=False, reason="entity name not requested", instruction="")]
@@ -59,3 +59,52 @@ def test_duplicate_rule_cannot_satisfy_coverage():
     model = FakeListChatModel(responses=[json.dumps({"guidance_by_slot": [], "rule_guidance": [item, item]})])
     with pytest.raises(ValueError, match="duplicate_rule_ids"):
         asyncio.run(GuidanceAgent(model).synthesize(question="task", dialect="sqlite", choice_points=(), answers=(), rule_candidates=({"rule_id": "r"},)))
+
+
+def test_rule_action_rewrite_is_repaired_without_losing_task_context():
+    from langchain_core.messages import AIMessage
+
+    action = "Return the requested attribute of the selected row."
+
+    class Chat:
+        def __init__(self):
+            self.requests = []
+
+        async def ainvoke(self, messages):
+            self.requests.append(messages)
+            instruction = "Return the stored balance." if len(self.requests) == 1 else action
+            return AIMessage(content=json.dumps({
+                "guidance_by_slot": [],
+                "rule_guidance": [{
+                    "rule_id": "extreme", "include": True,
+                    "reason": "The requested attribute is established.",
+                    "instruction": instruction,
+                }],
+            }))
+
+    model = Chat()
+    result = asyncio.run(GuidanceAgent(model).synthesize(
+        question="Return the requested attribute", dialect="sqlite",
+        choice_points=(), answers=(),
+        rule_candidates=({"rule_id": "extreme", "action": action},),
+    ))
+    assert result.rule_guidance[0].instruction == action
+    assert len(model.requests) == 2
+    assert model.requests[1][:2] == model.requests[0]
+    assert "rewritten_rule_ids=['extreme']" in model.requests[1][-1]["content"]
+
+
+def test_persistent_rule_action_rewrite_cannot_reach_sql_handoff():
+    response = {
+        "guidance_by_slot": [],
+        "rule_guidance": [{
+            "rule_id": "r", "include": True, "reason": "matches ranking",
+            "instruction": "Return an additional field.",
+        }],
+    }
+    model = FakeListChatModel(responses=[json.dumps(response)])
+    with pytest.raises(ValueError, match="original action unchanged"):
+        asyncio.run(GuidanceAgent(model).synthesize(
+            question="List identifiers", dialect="sqlite", choice_points=(), answers=(),
+            rule_candidates=({"rule_id": "r", "action": "Return identifiers."},),
+        ))

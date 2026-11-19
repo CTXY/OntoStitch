@@ -64,6 +64,16 @@ def key_slot_arguments(args):
     return ['--key-slots', *map(str, slots)] if slots is not None else []
 
 
+def case_worker_arguments(args):
+    workers = getattr(args, 'case_workers', None)
+    return ['--case-workers', str(workers)] if workers is not None else []
+
+
+def transport_resume_arguments(args):
+    plan = getattr(args, 'transport_resume_plan', None)
+    return ['--transport-resume-plan', str(plan)] if plan is not None else []
+
+
 def prepared_catalog_arguments(args):
     root = getattr(args, 'prepared_catalog', None)
     return ['--prepared-catalog', str(root)] if root else []
@@ -135,6 +145,16 @@ def configuration(args, workspace):
             'max_retries': getattr(args, 'sdk_retries', 1)}),
     })
     model = create_chat_model(cfg.llm, profile='sql_training')
+    model.metadata = {**(getattr(model, 'metadata', None) or {}), 'credential_slot': args.slot}
+    if lease_dir := os.environ.get('CORTEX_LLM_REQUEST_LEASE_DIR'):
+        from cortex.infrastructure.llm.request_limit import limit_client_requests
+        credential_options = {}
+        if os.environ.get('CORTEX_LLM_REQUEST_LIMIT_SCOPE') == 'credential':
+            identity = hashlib.sha256((str(cfg.llm.base_url) + '\0' + cfg.llm.api_key.get_secret_value()).encode()).hexdigest()
+            lease_dir = Path(lease_dir) / identity
+            credential_options = {'credential': cfg.llm.api_key.get_secret_value(), 'base_url': cfg.llm.base_url}
+        limit_client_requests(model.root_client._client, lease_dir,
+                              int(os.environ.get('CORTEX_LLM_MAX_INFLIGHT_REQUESTS', '3')), **credential_options)
     model.streaming = model.stream_usage = getattr(args, 'streaming', False)
     if getattr(args, 'merge_transport', False):
         timeout_type = type(model.root_client._client.timeout)
@@ -158,6 +178,7 @@ def observe(model, folder):
         req.extensions['audit_id'] = ident
         body = json.loads(req.content)
         write(wire / f'{ident:06}_request.json', {'host': urlparse(str(req.url)).hostname,
+              'credential_slot': (getattr(model, 'metadata', None) or {}).get('credential_slot'),
               'time': time.time(), 'body': body, 'request_bytes': len(req.content),
               'timeout': req.extensions.get('timeout'),
               'sdk_retry': req.headers.get('x-stainless-retry-count')})
@@ -421,11 +442,14 @@ def merge_worker(args):
 
         while True:
             agent = IncrementalIntegrationAgent(model, max_calls=None,
-                trace_sink=FileSystemGraphMergeTraceSink(out / 'agents.jsonl'))
+                trace_sink=FileSystemGraphMergeTraceSink(out / 'agents.jsonl'),
+                request_max_characters=_cfg.services.graph_merge.request_max_characters)
             agent.recover_transport = recover_transport
             engine = IncrementalGraphIntegrationEngine(agent, evidence_resolver=resolver,
-                max_rounds=5, model_call_budget=None, sql_dialect='sqlite')
+                max_rounds=5, model_call_budget=None, sql_dialect='sqlite',
+                node_context_max_characters=_cfg.services.graph_merge.node_context_max_characters)
             engine.workspace_path = out / 'workspace.sqlite'
+            engine.identity_trace_path = out / 'agents.jsonl'
             if engine.workspace_path.exists():
                 engine.resume_snapshot = WorkspaceStore(engine.workspace_path).load(f'train-merge-{ident}')
             write(args.output / 'merge_status.json', {'status': 'running', 'question_id': ident,
@@ -549,6 +573,8 @@ def watch(args):
                     '--keys', str(args.keys), '--model', args.model, '--slot', str(slot),
                     '--merge-batch-size', str(args.merge_batch_size),
                     *key_slot_arguments(args),
+                    *case_worker_arguments(args),
+                    *transport_resume_arguments(args),
                     *prepared_catalog_arguments(args),
                     *merge_mode_arguments(args),
                     *(['--streaming'] if args.streaming else [])],
@@ -558,7 +584,12 @@ def watch(args):
 
 
 def supervise(args):
-    slots = selected_key_slots(args)
+    credential_slots = selected_key_slots(args)
+    worker_count = getattr(args, 'case_workers', None)
+    slots = tuple(range(worker_count)) if worker_count is not None else credential_slots
+
+    def credential_slot(worker_slot):
+        return credential_slots[worker_slot % len(credential_slots)] if worker_count is not None else worker_slot
     if getattr(args, 'prepared_catalog', None):
         write(args.output / 'progress.json', {'phase': 'catalog_preflight', 'updated': time.time()})
         try:
@@ -591,9 +622,10 @@ def supervise(args):
             log = (args.output / 'cases' / ident / 'worker.log').open('a')
             logfiles.append(log)
             command = [sys.executable, str(Path(__file__).resolve()), '--mode', 'case', '--case', ident,
-                '--slot', str(slot), '--output', str(args.output), '--config', str(args.config),
+                '--slot', str(credential_slot(slot)), '--output', str(args.output), '--config', str(args.config),
                 '--keys', str(args.keys), '--model', args.model,
                 *prepared_catalog_arguments(args),
+                *transport_resume_arguments(args),
                 *(['--streaming'] if getattr(args, 'streaming', False) else [])]
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy())
             active[slot] = (ident, process)
@@ -626,9 +658,9 @@ def supervise(args):
     if any(row['status'] == 'needs_attention' for row in states.values()):
         write(args.output / 'progress.json', {'phase': 'needs_attention', 'cases': states, 'updated': time.time()})
         return
-    args.slot = getattr(args, 'slot', slots[0])
-    if args.slot not in slots:
-        args.slot = slots[0]
+    args.slot = getattr(args, 'slot', credential_slots[0])
+    if args.slot not in credential_slots:
+        args.slot = credential_slots[0]
     write(args.output / 'progress.json', {'phase': 'merge', 'updated': time.time()})
     try:
         merge_worker(args)
@@ -649,6 +681,10 @@ def main():
     parser.add_argument('--slot', type=int, default=0)
     parser.add_argument('--key-slots', type=int, nargs='+', default=None,
         help='Restrict extraction concurrency and merge failover to these credential slot indices')
+    parser.add_argument('--case-workers', type=int, default=None,
+        help='Independent case processes; optionally share configured credentials round-robin')
+    parser.add_argument('--transport-resume-plan', type=Path, default=None,
+        help='Explicit allowed former endpoints; all other context fields must match the original checkpoint')
     parser.add_argument('--case')
     parser.add_argument('--prepared-catalog', type=Path, default=None,
         help='Reuse a validated database-level physical catalog; supervise defaults to OUTPUT/physical_catalog')
@@ -660,7 +696,11 @@ def main():
     args = parser.parse_args()
     if args.merge_batch_size < 0:
         parser.error('--merge-batch-size must be nonnegative')
+    if args.case_workers is not None and args.case_workers < 1:
+        parser.error('--case-workers must be positive')
     args.output, args.config, args.keys = args.output.resolve(), args.config.resolve(), args.keys.resolve()
+    if args.transport_resume_plan is not None:
+        os.environ['CORTEX_SQL_TRAINING_TRANSPORT_RESUME_PLAN'] = str(args.transport_resume_plan.resolve())
     if args.mode == 'supervise' and args.prepared_catalog is None:
         args.prepared_catalog = args.output / 'physical_catalog'
     slots = selected_key_slots(args)

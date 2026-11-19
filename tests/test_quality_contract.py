@@ -14,7 +14,7 @@ def test_rule_check_failure_blocks_an_applied_unit(case_graph, check):
     payload, groups = grouped_payload(case_graph)
     data = response_for_payload(payload)
     row = data["unit_results"][0]
-    assert row["application"] == "applied"
+    assert "application" not in row
     row["quality_checks"][check] = "invalid"
     with pytest.raises(ValueError, match="overall quality"):
         AssessmentFeedback.model_validate(data).validate_evidence(payload)
@@ -187,7 +187,7 @@ def test_metric_minimality_blocks_acceptance_despite_successful_sql(case_graph, 
     assert payload["quality_rubric"]["metric_minimality"]
     data = response_for_payload(payload)
     row = data["unit_results"][0]
-    assert row["application"] == "applied"
+    assert "application" not in row
     row["quality_checks"]["metric_minimality"] = minimality
     # SQL success and an overall-valid label cannot override this separate check.
     with pytest.raises(ValueError, match="overall quality"):

@@ -127,30 +127,28 @@ def test_assessment_format_correction_preserves_previous_defect(case_graph):
 
 
 @pytest.mark.parametrize("selected,raw",[(False,True),(False,False),(None,None)])
-def test_correct_quality_does_not_manufacture_application(case_graph,selected,raw):
+def test_correct_quality_does_not_manufacture_injection(case_graph, selected, raw):
     s=session_for(case_graph);before=s.graph.accepted;write(s)
     groups=[ChangeGroup(group_id="g",member_ids=[make_rule().id])]
     attempt={"attempt":1,"sql":"SELECT COUNT(*) FROM orders"}
-    if selected is not None:attempt["selected_ids"]=[]
-    if raw is not None:attempt["raw_retrieved_ids"]=[make_rule().id] if raw else []
-    p=payload_for(s,before,groups,validation={"attempts":[attempt]})
-    r=AssessmentFeedback.model_validate(response_for_payload(p));r.validate_evidence(p)
-    assert r.unit_results[0].quality=="valid"
-    assert r.accepted_members(groups)==[]
-    r.unit_results[0].application="applied"
-    with pytest.raises(ValueError,match="attribution"):
-        r.validate_evidence(p)
+    if selected is not None: attempt["selected_ids"]=[]
+    if raw is not None: attempt["raw_retrieved_ids"]=[make_rule().id] if raw else []
+    payload=payload_for(s,before,groups,validation={"attempts":[attempt]})
+    payload["units"][0]["retrieval_required"] = True
+    result=AssessmentFeedback.model_validate(response_for_payload(payload));result.validate_evidence(payload)
+    assert result.unit_results[0].quality == "valid"
+    assert result.retrieval_results[0].status == "unknown"
+    assert result.accepted_members(groups) == []
 
 
-def test_aggregate_application_cannot_hide_one_missing_context(case_graph):
+def test_injection_cannot_hide_one_missing_attempt(case_graph):
     s=session_for(case_graph);before=s.graph.accepted;write(s)
     groups=[ChangeGroup(group_id="g",member_ids=[make_rule().id])]
-    p=payload_for(s,before,groups,validation={"attempts":[{"attempt":1,"selected_ids":[make_rule().id]},{"attempt":2,"selected_ids":[]}]})
-    r=AssessmentFeedback.model_validate(response_for_payload(p));r.validate_evidence(p)
-    assert r.accepted_members(groups)==[]
-    r.unit_results[0].application = "applied"
-    with pytest.raises(ValueError,match="every attempt"):
-        r.validate_evidence(p)
+    payload=payload_for(s,before,groups,validation={"attempts":[{"attempt":1,"selected_ids":[make_rule().id],"context_ids":[make_rule().id]},{"attempt":2,"selected_ids":[],"context_ids":[]}]})
+    result=AssessmentFeedback.model_validate(response_for_payload(payload));result.validate_evidence(payload)
+    assert result.retrieval_results[0].injected_attempt_ids == [1]
+    assert result.retrieval_results[0].missing_attempt_ids == [2]
+    assert result.accepted_members(groups) == []
 
 
 def test_dependency_inclusion_is_derived_without_independent_selection(case_graph):
@@ -190,7 +188,7 @@ def test_target_resolution_and_regression_are_separate_from_quality(case_graph):
     r=AssessmentFeedback.model_validate(data);r.validate_evidence(p)
     assert r.unit_results[0].quality=="valid" and r.accepted_members(groups)==[]
     data=response_for_payload(p);data["regressions"]=[{"prior_evidence_ref":"prior-1","attributable_unit_ids":[],"attribution":"inconclusive","feedback":[{"kind":"regression","location":make_rule().id,"gap":"count omitted","required_change":"restore count","preserve":"the prior counting behavior"}]}]
-    r=AssessmentFeedback.model_validate(data);r.validate_evidence(p);assert r.accepted_members(groups)==[]
+    r=AssessmentFeedback.model_validate(data);r.validate_evidence(p);assert r.accepted_members(groups)==[make_rule().id]
     r.regressions[0].prior_evidence_ref="invented"
     with pytest.raises(ValueError,match="unknown prior"):
         r.validate_evidence(p)
@@ -208,15 +206,16 @@ def test_distinct_round_baseline_is_not_replaced_by_latest_accepted(case_graph):
     assert p["units"][0]["candidate"]["properties"]["action"]=="tentative"
 
 
-def test_partial_application_does_not_turn_correct_content_into_a_defect(case_graph):
+def test_related_sql_error_does_not_rewrite_ontology_quality(case_graph):
     s=session_for(case_graph);before=s.graph.accepted;write(s)
-    groups=[ChangeGroup(group_id="g",member_ids=[make_rule().id])];p=payload_for(s,before,groups)
-    data=response_for_payload(p)
-    data["unit_results"][0]["application"]="partially_applied"
-    data["unit_results"][0]["feedback"]=[{"kind":"application","location":make_rule().id,"gap":"the owned action was only partly implemented","required_change":"Correct the reported semantic gap", "preserve":"the correct action definition"}]
-    r=AssessmentFeedback.model_validate(data);r.validate_evidence(p)
-    assert r.unit_results[0].quality=="valid"
-    assert not r.acceptable(groups)
+    groups=[ChangeGroup(group_id="g",member_ids=[make_rule().id])];payload=payload_for(s,before,groups)
+    data=response_for_payload(payload)
+    data["unit_results"][0]["feedback"]=[{"kind":"sql_error","location":make_rule().id,
+        "attempt_ids":[1],"sql_excerpt":"COUNT(*)", "gap":"The requested filtered population was not constrained.",
+        "required_change":"Clarify the supported population condition.","preserve":"The correct count operation."}]
+    result=AssessmentFeedback.model_validate(data);result.validate_evidence(payload)
+    assert result.unit_results[0].quality == "valid"
+    assert not result.acceptable(groups)
 
 
 def test_actual_context_presence_does_not_manufacture_dependency_provenance(case_graph):
@@ -264,7 +263,8 @@ def test_graph_dependency_does_not_prove_it_was_passed_to_generation(case_graph)
     fact=p["units"][0]["context_facts"][0]
     assert fact["present_in_context"] is False and fact["included_via"]==[]
     r=AssessmentFeedback.model_validate(response_for_payload(p));r.validate_evidence(p)
-    assert not r.accepted_members(groups)
+    assert r.retrieval_results[0].status == "not_injected"
+    assert r.retrieval_results[0].injected_attempt_ids == []
 
 
 def test_prior_validation_is_reused_without_extra_queries_or_bulk_context(case_graph):
@@ -285,34 +285,25 @@ def test_prior_validation_is_reused_without_extra_queries_or_bulk_context(case_g
         assert not {"raw_retrieved_ids","selected_ids","context_ids","context_edge_ids"} & attempt.keys()
 
 
-def test_multiple_attempt_problems_share_one_summary_and_separate_feedback(case_graph):
-    s = session_for(case_graph)
-    before = s.graph.accepted
-    write(s)
-    groups = [ChangeGroup(group_id="g", member_ids=[make_rule().id])]
-    p = payload_for(s, before, groups, validation={"attempts": [
-        {"attempt": n, "selected_ids": [make_rule().id]} for n in (1, 2, 3)
-    ]})
-    data = response_for_payload(p)
-    unit = data["unit_results"][0]
-    unit["application"] = "partially_applied"
-    unit["feedback"] = [
-        {"kind": "application", "location": make_rule().id,
-         "gap": "Attempt 2 omits the population filter", "required_change": "Clarify the population scope",
-         "preserve": "The correct count operation"},
-        {"kind": "application", "location": make_rule().id,
-         "gap": "Attempt 3 changes the aggregation", "required_change": "Clarify the required aggregation",
-         "preserve": "The correct population scope"},
-    ]
-    result = AssessmentFeedback.model_validate(data)
-    result.validate_evidence(p)
+def test_related_sql_errors_cite_each_affected_attempt(case_graph):
+    s=session_for(case_graph);before=s.graph.accepted;write(s)
+    groups=[ChangeGroup(group_id="g",member_ids=[make_rule().id])]
+    payload=payload_for(s,before,groups,validation={"attempts":[
+        {"attempt":1,"sql":"SELECT COUNT(*) FROM orders","selected_ids":[make_rule().id]},
+        {"attempt":2,"sql":"SELECT COUNT(*) FROM orders","selected_ids":[make_rule().id]},
+        {"attempt":3,"sql":"SELECT SUM(amount) FROM orders","selected_ids":[make_rule().id]}]})
+    data=response_for_payload(payload)
+    data["unit_results"][0]["feedback"]=[
+        {"kind":"sql_error","location":make_rule().id,"attempt_ids":[2],"sql_excerpt":"COUNT(*)",
+         "gap":"The population filter is missing.","required_change":"Clarify the population.","preserve":"The count operation."},
+        {"kind":"sql_error","location":make_rule().id,"attempt_ids":[3],"sql_excerpt":"SUM(amount)",
+         "gap":"The measure changed to an amount sum.","required_change":"Restore the count behavior.","preserve":"The population."}]
+    result=AssessmentFeedback.model_validate(data);result.validate_evidence(payload)
     assert result.accepted_members(groups) == []
     assert len(result.unit_results[0].feedback) == 2
-    encoded = result.model_dump_json()
-    assert all(key not in encoded for key in ("application_by_attempt", '"evidence"', '"exceptions"', '"defects"'))
-    unit["feedback"] = []
-    with pytest.raises(ValueError, match="unsuccessful application"):
-        AssessmentFeedback.model_validate(data).validate_evidence(p)
+    data["unit_results"][0]["feedback"][1]["attempt_ids"]=[2]
+    with pytest.raises(ValueError, match="sql_excerpt"):
+        AssessmentFeedback.model_validate(data).validate_evidence(payload)
 
 
 def test_legacy_per_attempt_response_is_rejected():

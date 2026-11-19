@@ -302,6 +302,7 @@ class CaseRuntime:
                 "policy": assessment_policy_id(),
                 "sql_stable_correct": self.correct(s),
                 "assessment_acceptable": feedback.acceptable(s.groups),
+                "retrieval_results": [r.model_dump(mode="json") for r in feedback.retrieval_results],
                 "accepted_member_ids": members if approved else [],
                 "accepted_revision_after": after,
             },

@@ -55,9 +55,12 @@ class NodeReview(Model):
 
 
 class IncrementalIntegrationAgent:
-    def __init__(self, llm, *, max_calls=12, trace_sink=None):
+    def __init__(self, llm, *, max_calls=12, trace_sink=None, request_max_characters=210000):
         self.llm, self.max_calls, self.trace_sink = llm, max_calls, trace_sink
         self.call_budget = None
+        if request_max_characters < 1:
+            raise ValueError("request_max_characters must be positive")
+        self.request_max_characters = request_max_characters
 
     def invoke(self, phase, context, payload):
         if phase in {"reconcile", "graph_assess"}:
@@ -346,7 +349,7 @@ class IncrementalIntegrationAgent:
 
                     if phase in {"node_assess", "consolidate"}:
                         from cortex.capabilities.graph_merge.llm.input_budget import check_request
-                        check_request(messages, allowed)
+                        check_request(messages, allowed, max_characters=self.request_max_characters)
                     response = invoke_with_recovery(
                         self, allowed, messages, config={"callbacks": [trace]},
                         tool_choice="auto" if plain_fallback else "required",

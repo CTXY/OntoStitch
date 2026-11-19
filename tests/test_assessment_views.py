@@ -50,16 +50,13 @@ def test_grouped_facts_reject_missing_duplicate_unknown_or_empty_attempts(case_g
         result.validate_evidence(payload)
 
 
-def test_context_absence_in_one_group_cannot_pass_as_applied(case_graph):
-    payload, _ = grouped_payload(case_graph)
-    first = payload["units"][0]["context_facts"][0]
-    first["attempt_ids"] = [1, 2]
-    absent = {**deepcopy(first), "attempt_ids": [3], "present_in_context": False}
-    payload["units"][0]["context_facts"].append(absent)
-    data = response_for_payload(payload)
-    data["unit_results"][0]["application"] = "applied"
-    with pytest.raises(ValueError, match="inclusion in every attempt"):
-        AssessmentFeedback.model_validate(data).validate_evidence(payload)
+def test_grouped_injection_reports_missing_attempt_without_a_model_verdict(case_graph):
+    payload, groups = grouped_payload(case_graph)
+    first=payload["units"][0]["context_facts"][0];first["attempt_ids"]=[1,2]
+    payload["units"][0]["context_facts"].append({**deepcopy(first),"attempt_ids":[3],"present_in_context":False})
+    result=AssessmentFeedback.model_validate(response_for_payload(payload));result.validate_evidence(payload)
+    assert result.retrieval_results[0].missing_attempt_ids == [3]
+    assert not result.acceptable(groups)
 
 
 def test_result_views_omit_success_samples_and_keep_failure_evidence():
@@ -227,7 +224,7 @@ def test_shared_new_contract_cannot_be_accepted_through_only_one_passing_legacy_
     )
     data = response_for_payload(payload)
     for row in data["unit_results"]:
-        row.update(application="not_applicable", feedback=[])
+        row.update(feedback=[])
     failed = next(row for row in data["unit_results"] if row["unit_id"] == "edge.second")
     failed["quality_checks"]["predicate_precision"] = "invalid"
     failed["quality"] = "invalid"

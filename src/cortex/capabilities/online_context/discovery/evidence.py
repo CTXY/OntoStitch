@@ -14,6 +14,8 @@ from cortex.schema.bindings import target_views
 def _validate_slots(
     slots: tuple[ChoicePoint, ...], state: GraphState, initial_sql: str | None
 ) -> None:
+    from .contracts import validate_initial_sql_sources
+    validate_initial_sql_sources(slots)
     graph_ids = _graph_ids(state)
     slot_ids = [item.choice_point_id for item in slots]
     if len(slot_ids) != len(set(slot_ids)):

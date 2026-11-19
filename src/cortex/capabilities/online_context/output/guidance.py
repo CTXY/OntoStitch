@@ -97,6 +97,9 @@ class GuidanceAgent:
             "rule_candidates": rule_candidates,
         }
         expected_rule_ids = {item["rule_id"] for item in rule_candidates}
+        rule_actions = {
+            item["rule_id"]: item.get("action") for item in rule_candidates
+        }
         if len(expected_rule_ids) != len(rule_candidates):
             raise ValueError("rule_candidates must have unique rule_id values")
         expected_slot_ids = tuple(point.choice_point_id for point in choice_points)
@@ -111,6 +114,16 @@ class GuidanceAgent:
             empty = [item.rule_id for item in result.rule_guidance if item.include and not item.instruction.strip()]
             if empty:
                 raise ValueError(f"applicable Rules require instructions: {empty}")
+            rewritten = [
+                item.rule_id
+                for item in result.rule_guidance
+                if item.include and item.instruction != rule_actions[item.rule_id]
+            ]
+            if rewritten:
+                raise ValueError(
+                    "included Rule instructions must copy the original action unchanged; "
+                    f"rewritten_rule_ids={rewritten}"
+                )
             actual_slots = tuple(item.choice_point_id for item in result.guidance_by_slot)
             if actual_slots != expected_slot_ids:
                 raise ValueError(f"guidance must cover every Slot exactly once and in order; expected={expected_slot_ids}; actual={actual_slots}")

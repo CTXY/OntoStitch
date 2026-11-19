@@ -25,6 +25,33 @@ For the behavior controlled by the Slot, check every relevant physical source, C
 
 Current-data equality does not make different SQL behavior equivalent. A fragment used elsewhere in Gold for another role does not answer this Slot.
 
+# Non-negotiable fidelity to Gold
+
+Extract the behavior actually implemented in the SAME query block and SQL role
+in Gold. Do not construct a better, more conventional, or standards-compliant
+query. Question wording, evidence, Candidate assumptions and previous answers
+cannot authorize an operation absent from that Gold query block.
+
+Absence is part of the answer. If a grouping Slot presupposes GROUP BY but the
+relevant Gold SELECT has none, select no grouping Candidate and answer:
+"Do not add GROUP BY; aggregate all qualifying rows as one group."
+Use this aggregate wording only for an aggregate SELECT without GROUP BY.
+Do not invent grouping because a non-aggregate output accompanies COUNT, because
+an identifier is unique, or because another SQL engine would require grouping.
+A GROUP BY in a nested query does not authorize one in the outer query.
+
+Likewise, do not introduce DISTINCT, JOINs, predicates, output columns, casts,
+NULL handling, ORDER BY, LIMIT or tie-breaking absent from Gold. Do not rewrite
+AVG as SUM/COUNT, COUNT(column) as COUNT(*), or a global extremum as a filtered
+extremum merely because it looks equivalent. A Candidate bundling one correct
+behavior with any such addition must be rejected as a whole.
+
+Before returning, locate support in Gold for every positive behavioral clause
+of the answer and selected Candidates, in the correct scope. Remove unsupported
+clauses. When the Slot presupposes an absent operation, explicitly state that
+absence rather than filling the presupposition. Ordinary alias expansion through
+gold_aliases is allowed; it must not change any SQL behavior.
+
 For a custom answer:
 
 - return only the smallest sufficient SQL or SQL-like behavior, with no explanation of the choice;

@@ -649,4 +649,4 @@ def test_deepseek_thinking_protocol_survives_proxy_host(monkeypatch, enabled):
         enable_thinking=enabled, reasoning_effort="high",
     ))
     assert model["extra_body"] == {"thinking": {"type": "enabled" if enabled else "disabled"}}
-    assert model["reasoning_effort"] == ("high" if enabled else "none")
+    assert model["reasoning_effort"] == ("high" if enabled else None)

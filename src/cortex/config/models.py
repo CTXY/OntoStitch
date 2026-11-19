@@ -242,6 +242,7 @@ class DimensionValueExpansionConfig(_ConfigModel):
 
 
 class SqlTrainingConfig(_ConfigModel):
+    retrieval_relevance_filter: bool = Field(default=False, description="Apply the optional model relevance filter after recall during extraction SQL validation. Disabled to inject every recalled representation.")
     workspace: Path = Path("workspace/sql_training")
     dimension_values_path: Path | None = None
     dimension_value_expansion: DimensionValueExpansionConfig = Field(
@@ -293,6 +294,8 @@ class GraphMergeConfig(_ConfigModel):
     consolidation_max_rounds: int = Field(default=3, ge=1)
     consolidation_max_calls: int = Field(default=18, ge=1)
     merge_model_call_budget: int = Field(default=80, ge=1)
+    node_context_max_characters: int = Field(default=110_000, ge=1)
+    request_max_characters: int = Field(default=210_000, ge=1)
     candidate_top_k: int = Field(default=5, ge=1)
     max_evidence_items: int = Field(default=24, ge=1)
     max_evidence_characters: int = Field(default=48_000, ge=1)

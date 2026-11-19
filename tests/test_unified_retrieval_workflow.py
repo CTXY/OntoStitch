@@ -297,3 +297,29 @@ def test_same_run_has_only_one_active_writer(tmp_path, source):
         assert (await first).status == "completed"
 
     asyncio.run(run())
+
+
+def test_training_can_inject_recall_without_relevance_model(tmp_path, source):
+    class MustNotRun:
+        async def select(self, **kwargs):
+            raise AssertionError('Relevance model must be bypassed')
+
+    capability = RetrieveDbCapability(relevance_selector=MustNotRun(),
+        relevance_filter=False, typed_recall=Recall(), checkpoint_root=tmp_path)
+    retrieval = RetrieveDbService(capability, schema=load_root_schema())
+    result = asyncio.run(retrieval.run(question='amount', graph_state=source, run_id='no-filter'))
+    assert set(result.raw_retrieved_node_ids) <= {n.id for n in result.subgraph.nodes}
+    assert 'concept.amount' in result.selected_node_ids
+    assert all(s.status == 'selected' for s in result.selections)
+    assert result.retrieved_graph_state.node_conflicts == source.node_conflicts
+
+
+def test_filter_mode_is_part_of_retrieval_checkpoint_identity(tmp_path, source):
+    enabled = RetrieveDbCapability(relevance_selector=Selector(), typed_recall=Recall(), checkpoint_root=tmp_path)
+    disabled = RetrieveDbCapability(relevance_filter=False, typed_recall=Recall(), checkpoint_root=tmp_path)
+    assert enabled.context_fingerprint != disabled.context_fingerprint
+    asyncio.run(enabled.retrieve(question='amount', graph_state=source, graph_fingerprint='fixture',
+                                 dialect='sqlite', initial_sql=None, run_id='same'))
+    with pytest.raises(ValueError, match='configuration changed'):
+        asyncio.run(disabled.retrieve(question='amount', graph_state=source, graph_fingerprint='fixture',
+                                      dialect='sqlite', initial_sql=None, run_id='same'))

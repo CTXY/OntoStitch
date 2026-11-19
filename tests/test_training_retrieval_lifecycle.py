@@ -126,7 +126,8 @@ def test_shared_injected_model_does_not_use_native_async_client_across_cases(
 
     model = SharedModel([AIMessage(content="first"), AIMessage(content="second")])
 
-    def build_retrieval(*, config, llm):
+    def build_retrieval(*, config, llm, relevance_filter):
+        assert relevance_filter is False
         class Service:
             async def run(self, *, question, **kwargs):
                 await llm.ainvoke(question)

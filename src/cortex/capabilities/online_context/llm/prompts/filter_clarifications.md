@@ -26,6 +26,30 @@ Natural-language requirements can be explicit without SQL. "Morning means before
 customer who paid the most" does NOT explicitly settle ties. "How many users"
 alone is not an explicit DISTINCT instruction when entity/join grain is unclear.
 Conflicting question and evidence do not establish an explicit resolution.
+Read the complete question and ALL evidence together before applying this test.
+An explicit-looking fragment does not override a contradictory fragment. Check
+the actual candidate behavior, including its SQL fragment and operator; a vague
+paraphrase such as "compare the year" does not resolve `=` versus `>`.
+
+Keep decisions about different dimensions separate:
+- A term-to-field mapping can settle the referenced/output field without settling
+  GROUP BY, the unit of aggregation, DISTINCT, JOIN multiplicity or population.
+  For example, "item refers to item_description" does not by itself choose
+  GROUP BY item_description over GROUP BY item_id. Do not add "each", "per" or
+  "by category" to the request to manufacture an explicit grouping requirement.
+- A requested average does not by itself establish that AVG(value) and
+  SUM(value)/COUNT(id) differ or are equivalent. A NULL value is ignored by AVG
+  but can still contribute to COUNT(id). Use a supported property proof for
+  equivalence; do not reject an alternative merely because its SQL spelling
+  differs from a formula in evidence.
+- A historical metric/rule definition cannot turn an ambiguous phrase into
+  explicit user intent. If the request contains both "total" and "average",
+  do not let a retrieved SUM metric erase the requested average.
+
+If multiple implementations satisfy the cited fragment, the explicit-constraint
+test fails. Keep the question unless ALL alternatives independently pass the
+database-equivalence test. Absence of an instruction to use an alternative is
+not evidence that the alternative violates the request.
 Check supplied database-value evidence before removing a question. When an explicit
 literal conflicts with the recorded domain (including spelling, casing, units or
 encoding), keep the question: a quote does not resolve that discrepancy. If needed,
@@ -37,6 +61,24 @@ Record only excluded option IDs and their violations; do not emit a selected opt
 A business term alone does not select a physical table, field or record grain.
 Do not equate a term with a schema label/code, or expand its requested output
 components by convention, without an evidenced mapping. Otherwise keep the choice.
+
+For a physical-binding decision, apply these checks in order:
+1. Identify which source tables and columns the options disagree about.
+2. When options name columns from different tables, require question/evidence
+   to explicitly identify both table and column (`table.column`, or a column named
+   within its stated table). Otherwise the explicit-constraint test fails, even
+   if a bare field name's spelling matches exactly one option. A business entity
+   name does not identify a physical source table. Do not infer the source table
+   from an option or graph definition.
+3. Even an explicit column settles only that binding; it does not also determine
+   the JOIN, DISTINCT policy, population or output layout.
+4. If any disputed part remains, the explicit-constraint test fails. Keep the
+   question unless the database-equivalence test independently succeeds.
+
+For example, "record code refers to referenceCode" does not choose between
+`records.code` and `record_links.referenceCode`. "Use referenceCode from
+record_links" explicitly identifies that binding. A cross-table binding removal
+must explain where question/evidence specifies both the table and column.
 
 # Base-column property test
 
@@ -117,3 +159,16 @@ budget is exhausted, return final decisions; retain anything unverified.
 
 Return exactly one JSON object inside <result>...</result> matching:
 {template_output}
+
+
+## Removal basis
+
+Every non-keep decision supplies a `basis` agreeing with its outcome. Keep the
+explanation in `reason` AND populate the proof fields required above;
+`reason` alone is not a removal proof.
+
+- `explicit_intent`: Q1 or supplied E-items determine this exact disputed dimension. A standard JOIN, preferred implementation or assumed stable property is not user intent.
+- `database_equivalence`: cite existing successful, complete probe IDs in reason and explain why their whole-database properties make ALL candidate behaviors equivalent, including NULLs, multiplicity and join coverage. Never assert invariance from common sense or equality only within the question's filters. If evidence is missing, request a probe or keep the question. A successful probe alone is not a proof; explain the implication.
+This legacy decision interface uses explicit_intent with question_resolved and database_equivalence with database_equivalent; duplicate removal is available only in the removal interface.
+
+Only filter questions. Do not select an implementation or produce MUST USE guidance. Unproven questions pass to the Simulator.
