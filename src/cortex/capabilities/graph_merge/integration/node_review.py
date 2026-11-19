@@ -66,9 +66,12 @@ def assess_nodes(agent, context, candidate, task, *, origins, before, earlier_fi
     packets = list(review_packets(context, candidate, task, origins=origins, before=before,
                                  max_characters=max_characters))
     reviews = []
+    context.task_partial_semantic_findings = ()
     for index, payload in enumerate(packets):
         payload["task_id"] = f"{task.id}-slice-{index}"
         payload["earlier_findings"] = list(earlier_findings)
+        if getattr(context, 'task_semantic_issue_basis', ()):
+            payload['semantic_issue_basis'] = list(context.task_semantic_issue_basis)
         if payload.get("feedback") == list(earlier_findings):
             payload.pop("feedback")
         payload["current_repair_fields"] = current_repair_fields(candidate, earlier_findings)
@@ -77,6 +80,8 @@ def assess_nodes(agent, context, candidate, task, *, origins, before, earlier_fi
         reviews.append(agent.invoke("node_assess", context, payload))
         if reviews[-1].verdict == "revisit_identity":
             return reviews[-1]
+    context.task_partial_semantic_findings = tuple(issue for review in reviews if review.verdict == 'revise'
+                                                 for issue in review.issues)
     return NodeReview(
         verdict=("accept" if all(r.verdict == "accept" for r in reviews)
                  else "needs_context" if any(r.verdict == 'needs_context' for r in reviews) else "revise"),

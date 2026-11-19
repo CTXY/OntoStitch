@@ -8,7 +8,8 @@ from cortex.capabilities.graph_merge.integration.batch import (
     EdgeMerge,
 )
 from cortex.capabilities.graph_merge.integration.context import PHYSICAL
-from cortex.capabilities.graph_merge.integration.models import Change, Element, Model, SourceDisposition
+from cortex.capabilities.graph_merge.integration.models import Change, Element, Model
+from cortex.capabilities.graph_merge.integration.source_units import SourceRoute
 from cortex.schema import NodeContent, ConflictPoint
 from cortex.schema.relation_metadata import validate_metadata_items
 
@@ -20,7 +21,7 @@ class RegionIncomplete(RuntimeError):
 class EvidenceAlternative(Model):
     alternative_id: str
     content: NodeContent
-    evidence_ids: tuple[str, ...] = Field(min_length=1)
+    evidence_ids: tuple[str, ...] = Field(default=(), description='Known evidence IDs for this result; existing input knowledge may instead retain attribution through source_routes, including source-less historical branches.')
 
 
 class EvidenceConflict(Model):
@@ -28,7 +29,7 @@ class EvidenceConflict(Model):
     alternatives: tuple[EvidenceAlternative, ...] = Field(min_length=2)
     conflict_points: tuple[ConflictPoint, ...] = Field(min_length=1)
     common_evidence_ids: tuple[str, ...] = ()
-    branch_dispositions: tuple[SourceDisposition, ...] = Field(default=(), description='For an existing owner, map every old branch and common/ordinary member scope to the new branches, common preservation, or an explained branch discard. Branch identity is source_node_id plus source_alternative_id.')
+    source_routes: tuple[SourceRoute, ...] = Field(default=(), description='For an existing owner, route each code-provided source unit exactly once. Read source units for coupled owners before proposing their rewrite. New owners have no original source units.')
 
 
 from cortex.capabilities.graph_merge.integration.evidence_refs import evidence_sources
@@ -111,8 +112,8 @@ class RelationPatch(Model):
 def submit_patch(context, patch):
     if patch.failure:
         raise RegionIncomplete(patch.failure)
-    if any(c.branch_dispositions for c in patch.conflicts):
-        raise ValueError('Compile branch dispositions through the MergePatch compiler')
+    if any(c.source_routes for c in patch.conflicts):
+        raise ValueError('Compile source routes through the MergePatch compiler')
     batch = context.active_batch
     current = batch.preview or batch.seed
     nodes = {n.id: n for n in current.graph.nodes}

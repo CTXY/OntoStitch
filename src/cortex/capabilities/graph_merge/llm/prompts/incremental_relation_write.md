@@ -22,7 +22,7 @@ Updates contain changed fields; omitted fields retain the fixed before value. St
 
 Create only necessary semantic nodes/edges with real endpoints, actual predicate meaning and evidence IDs. Existing edges use edge_updates; new edges use create_edges. `retirements` names actual before objects and semantic successors with an explanation. `edge_merges` requires the same assertion in compatible scope. Use complete conflict content and explicit source/branch association; never fabricate internal sources or overrides.
 
-For conflicts on an existing owner, branch_dispositions explicitly maps every original branch and common/ordinary scope to the new branches, common preservation, or an explained branch discard. A source branch is qualified by source_node_id and source_alternative_id. A new branch does not automatically inherit old unscoped edges or old common support. A newly created owner has no original branch dispositions.
+For an existing owner, copy exact source_unit_manifest IDs into source_routes, mapping every real old input unit to the complete result. Call read_source_units for a coupled owner absent from the initial manifest. Identity-group owners require integrate_groups; conflicts/resolutions may not replace or overlap that operation. A newly created owner has no historical source routes. New alternatives never automatically inherit old support or edges.
 
 The entire submission replaces this task's previous draft relative to its fixed before graph. Preserve valid intended operations in the new full draft; omitted operations are withdrawn. On rejection inspect the draft and concrete errors, then resubmit a corrected full draft. No edits from an invalid proposal have entered the accepted graph.
 

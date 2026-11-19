@@ -13,8 +13,8 @@ from types import SimpleNamespace
 
 from cortex.schema import GraphState
 
-TASK_STATE_VERSION = 2
-TOOL_CONTRACT_VERSION = "merge-patch-v2"
+TASK_STATE_VERSION = 3
+TOOL_CONTRACT_VERSION = "merge-patch-v3-source-units"
 REVIEW_POLICY_VERSION = "accepted-input-preservation-v2"
 
 
@@ -66,7 +66,8 @@ def build_contract_versions(schema, *, tool_schemas=None, review_policy=REVIEW_P
     root = files("cortex.capabilities.graph_merge.llm.prompts")
     names = ("integration_identity.md", "incremental_consolidate.md", "incremental_node_assess.md",
              "incremental_content_shared.md", "incremental_relation_shared.md",
-             "incremental_relation_write.md", "incremental_relation_assess.md", "incremental_protocol.md")
+             "incremental_relation_write.md", "incremental_relation_assess.md", "incremental_protocol.md",
+             "conflict_contract.md")
     prompts = {name: root.joinpath(name).read_text() for name in names}
     # On-demand guidance is model-visible policy too; its changes must not
     # silently reuse an earlier candidate-bound review.
@@ -94,6 +95,7 @@ def build_contract_versions(schema, *, tool_schemas=None, review_policy=REVIEW_P
                           if isinstance(node, ast.FunctionDef) and node.name == "submit_patch")
         tool_schemas["submit_patch"] = {"description": ast.get_docstring(final_tool),
                                          "parameters": MergePatch.model_json_schema()}
+        tool_schemas['source_unit_adapter'] = files('cortex.capabilities.graph_merge.integration').joinpath('source_units.py').read_text()
         tool_schemas['guidance_adapter'] = files('cortex.capabilities.graph_merge.llm').joinpath('task_tools.py').read_text()
     return ContractVersions(schema=canonical_hash({"ontology": schema.model_dump(mode="json"),
                                                   "graph_state": GraphState.model_json_schema()}),
@@ -132,6 +134,8 @@ class TaskState:
     last_valid_candidate: dict | None = None
     candidate_hash: str | None = None
     issues: tuple[dict, ...] = ()
+    semantic_issues: tuple[dict, ...] = ()
+    semantic_issue_basis: tuple[dict, ...] = ()
     review: dict | None = None
     required_context: tuple[dict, ...] = ()
     recovery: str | None = None
@@ -173,6 +177,9 @@ class TaskState:
             raise ValueError("An accepted review cannot retain issues")
         return replace(self, review={**review, "candidate_hash": candidate_hash},
                        issues=tuple(_detached(list(issues))),
+                       semantic_issues=(() if verdict == 'accept' else self.semantic_issues
+                                        if verdict == 'needs_context' else tuple(_detached(list(issues)))),
+                       semantic_issue_basis=(() if verdict == 'accept' else self.semantic_issue_basis),
                        stage=("ready_to_commit" if verdict == "accept" else
                               "assessing" if verdict == 'needs_context' else "revising"))
 
@@ -180,6 +187,8 @@ class TaskState:
         result = asdict(self)
         result["versions"] = self.versions.to_dict()
         result["issues"] = list(self.issues)
+        result['semantic_issues'] = list(self.semantic_issues)
+        result['semantic_issue_basis'] = list(self.semantic_issue_basis)
         result['required_context'] = list(self.required_context)
         return _detached(result)
 
@@ -190,6 +199,8 @@ class TaskState:
             raise CheckpointContractMismatch("Unsupported task-state payload version")
         value["versions"] = ContractVersions.from_dict(value["versions"])
         value["issues"] = tuple(value.get("issues", ()))
+        value['semantic_issues'] = tuple(value.get('semantic_issues', ()))
+        value['semantic_issue_basis'] = tuple(value.get('semantic_issue_basis', ()))
         value['required_context'] = tuple(value.get('required_context', ()))
         result = cls(**value)
         if not result.task_id or not result.phase:
@@ -216,7 +227,7 @@ class TaskState:
         if result.review is not None and result.review.get("candidate_hash") != result.candidate_hash:
             raise ValueError("Stored review addresses a different candidate")
         if result.stage in {"ready_to_commit", "committed"} and (
-            not result.candidate_hash or not result.review or result.review.get("verdict") != "accept" or result.issues
+            not result.candidate_hash or not result.review or result.review.get("verdict") != "accept" or result.issues or result.semantic_issues
         ):
             raise ValueError("A committed task requires an accepted current review")
         _detached(result.to_dict())

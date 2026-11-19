@@ -15,6 +15,33 @@ from cortex.capabilities.graph_merge.integration.task_state import TaskState, ca
 from cortex.schema import GraphState
 
 
+def review_basis(context, review, base, candidate):
+    """Pin prior Review premises without relabelling old candidate as current."""
+    from cortex.application.ontology_graph import GraphManager
+    from cortex.capabilities.graph_merge.integration.evidence_refs import compact_attribution
+    from cortex.capabilities.graph_merge.integration.review import graph_view
+    records = []
+    refs = dict.fromkeys(ref for issue in review.issues for ref in (*issue.refs, *issue.basis))
+    for ref in refs:
+        nodes, edges, graph = graph_view(context, ref.view, before=base, candidate=candidate)
+        if ref.kind == 'contract':
+            from cortex.schema.relation_contracts import effective_schema
+            obj = effective_schema(context.schema, graph).edge_type_index().get(ref.id)
+        else:
+            obj = (nodes if ref.kind == 'node' else edges).get(ref.id)
+        if obj is None:
+            continue  # A needs_context reference may not be available yet.
+        value = obj.model_dump(mode='json')
+        if ref.kind == 'node' and obj.alternatives:
+            value['alternatives'] = [{'alternative_id': a.alternative_id,
+                'content': GraphManager.resolve_alternative(obj, a).model_dump(mode='json'),
+                'sources': [s.model_dump(mode='json') for s in a.sources]} for a in obj.alternatives]
+        if ref.kind != 'contract':
+            value = compact_attribution([value], context)[0]
+        records.append({'view': ref.view, 'kind': ref.kind, 'id': ref.id, 'record': value})
+    return ({'candidate_hash': canonical_hash(candidate), 'records': records},) if records else ()
+
+
 def run_task(engine, task, run_id, *, aliases=None):
     ctx, base = engine.ctx, engine.current
     versions = getattr(engine, 'contract_versions', None) or build_contract_versions(ctx.schema)
@@ -34,6 +61,7 @@ def run_task(engine, task, run_id, *, aliases=None):
     if state.stage == 'blocked':
         raise IntegrationIncomplete('Blocked task requires explicit context repair; Writer was not restarted')
     ctx.task_before, ctx.active_task = base, task
+    ctx.task_identity_groups = identity_obligations(base, aliases)
     ctx.task_visible_ids = set()
     ctx.active_draft = state.draft
     ctx.task_draft_errors = state.issues
@@ -136,10 +164,21 @@ def run_task(engine, task, run_id, *, aliases=None):
         payload['task'] = {'id': task.id, 'phase': task.phase, 'base': 'before',
                            'draft_semantics': 'complete-replacement', 'stage': state.stage}
         payload['identity_plan'] = identity_obligations(base, aliases)
+        from cortex.capabilities.graph_merge.integration.source_units import source_unit_manifest
+        node_ids = {n.id for n in base.graph.nodes if n.node_type not in {'table', 'column', 'dimension_value'}}
+        payload['source_unit_manifest'] = source_unit_manifest(base, ctx.task_identity_groups,
+                                                              node_ids.intersection(task.targets))
         if state.draft is not None:
             payload['draft'] = state.draft
         if state.issues:
             payload['issues'] = list(state.issues)
+        if state.semantic_issues:
+            payload['semantic_issues'] = list(state.semantic_issues)
+            payload['semantic_issue_basis'] = list(state.semantic_issue_basis)
+            if payload.get('feedback') == list(state.semantic_issues):
+                payload.pop('feedback')
+        ctx.task_semantic_issues = state.semantic_issues
+        ctx.task_semantic_issue_basis = state.semantic_issue_basis
         ctx.task_visible_ids = {r['id'] for key in ('nodes', 'candidate_nodes', 'edges', 'candidate_relations')
                                 for r in payload.get(key, [])}
         needs_compile = state.draft is not None and state.stage in {'assessing', 'ready_to_commit'}
@@ -184,17 +223,31 @@ def run_task(engine, task, run_id, *, aliases=None):
                 review_task = LocalTask(task.id + '-review', review_phase, assessed_ids,
                                         groups=task.groups, checks=task.checks)
                 if review_phase == 'graph_assess':
+                    ctx.task_partial_semantic_findings = ()
                     from cortex.capabilities.graph_merge.integration.relation_context import relation_context
                     review_payload = relation_context(ctx, candidate, review_task, before=base, assessment=True)
                     if state.required_context:
                         review_payload['required_context'] = list(state.required_context)
+                    if state.semantic_issues:
+                        review_payload['semantic_issues'] = list(state.semantic_issues)
+                        review_payload['semantic_issue_basis'] = list(state.semantic_issue_basis)
                     review = engine.agent.invoke(review_phase, ctx, review_payload)
                 else:
                     from cortex.capabilities.graph_merge.integration.node_review import assess_nodes
                     review = assess_nodes(engine.agent, ctx, candidate, review_task,
                         origins=compiled.batch.lineage_preview, before=base,
+                        earlier_findings=state.semantic_issues,
                         max_characters=engine.node_context_max_characters)
                 review = validate_review(review, ctx, before=base, candidate=candidate)
+                if review.verdict in {'revise', 'revisit_identity'}:
+                    state = replace(state, semantic_issue_basis=review_basis(ctx, review, base, candidate))
+                elif review.verdict == 'needs_context' and getattr(ctx, 'task_partial_semantic_findings', ()):
+                    partial = ctx.task_partial_semantic_findings
+                    combined = {canonical_hash(row): row for row in (*state.semantic_issues,
+                                *(issue.model_dump(mode='json') for issue in partial))}
+                    basis = review_basis(ctx, Review(verdict='revise', issues=partial), base, candidate)
+                    state = replace(state, semantic_issues=tuple(combined.values()),
+                                    semantic_issue_basis=(*state.semantic_issue_basis, *basis))
                 state = state.with_review(review, candidate_hash=state.candidate_hash)
                 persist()
                 if review.verdict != 'needs_context':
@@ -218,7 +271,8 @@ def run_task(engine, task, run_id, *, aliases=None):
                             persist()
                             raise IntegrationIncomplete('Required assessment context is unavailable in the selected snapshot')
                         supplied.append({'request': ref.model_dump(mode='json'), 'result': answer})
-                state = replace(state, required_context=tuple(supplied))
+                combined = {canonical_hash(row): row for row in (*state.required_context, *supplied)}
+                state = replace(state, required_context=tuple(combined.values()))
                 persist()
 
         else:

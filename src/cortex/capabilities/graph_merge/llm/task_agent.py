@@ -3,7 +3,6 @@ import json
 from importlib.resources import files
 from itertools import count
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from pydantic import ValidationError
 
@@ -15,7 +14,7 @@ from cortex.capabilities.graph_merge.integration.proposal_scope import scope_err
 from cortex.capabilities.graph_merge.integration.review import Review, validate_review
 from cortex.capabilities.graph_merge.integration.tools import build_tools
 from cortex.capabilities.graph_merge.llm.input_budget import check_request
-from cortex.capabilities.graph_merge.llm.packets import action_message
+from cortex.capabilities.graph_merge.llm.packets import TaskDialogue, compact_node_packet
 from cortex.capabilities.graph_merge.llm.task_tools import build_read_tools
 from cortex.capabilities.graph_merge.llm.trace import EpisodeTrace
 from cortex.capabilities.graph_merge.llm.transport import invoke_with_recovery
@@ -27,11 +26,17 @@ def failure_feedback(error):
         if hasattr(error, attribute):
             result[attribute] = [v.model_dump(mode='json') if hasattr(v, 'model_dump') else v
                                  for v in getattr(error, attribute)]
+    if getattr(error, 'details', None) is not None:
+        result['details'] = error.details
     return result
 
 
+class TaskNoProgress(RuntimeError):
+    retryable = False
+
+
 class IncrementalIntegrationAgent:
-    contract_version = 'merge-task-v2'
+    contract_version = 'merge-task-v3'
 
     def __init__(self, llm, *, max_calls=12, trace_sink=None, request_max_characters=210000):
         if request_max_characters < 1:
@@ -52,8 +57,10 @@ class IncrementalIntegrationAgent:
         if not identity:
             shared = 'incremental_content_shared.md' if phase in {'consolidate', 'node_assess'} else 'incremental_relation_shared.md'
             system = root.joinpath(shared).read_text() + '\n\n' + system
+            system += '\n\n' + root.joinpath('conflict_contract.md').read_text()
         system += '\n\n' + root.joinpath('incremental_protocol.md').read_text()
-        messages = [SystemMessage(system), HumanMessage(json.dumps(payload, ensure_ascii=False, separators=(',', ':')))]
+        payload = compact_node_packet(payload)
+        dialogue = TaskDialogue(system, payload)
         before = getattr(context, 'task_before', None)
         if identity:
             raw = {t.name: t for t in build_tools(context)}
@@ -62,6 +69,7 @@ class IncrementalIntegrationAgent:
         else:
             lookup = build_read_tools(context, payload, before=before,
                 draft_provider=lambda: getattr(context, 'active_draft', None))
+        dialogue.read_names = set(lookup)
         completed = None
 
         def validate(value):
@@ -101,36 +109,38 @@ class IncrementalIntegrationAgent:
             call_sink = FileSystemGraphMergeTraceSink(self.trace_sink.path.with_name('model_calls.jsonl'))
         trace = EpisodeTrace(call_sink, phase, budget=self.call_budget)
         fallback = False
-        fallback_announced = False
+        rejected_outputs = {}
         try:
             for step in (count() if self.max_calls is None else range(self.max_calls)):
                 final = self.max_calls is not None and step == self.max_calls - 1
                 available = list(lookup.values()) if fallback else [*lookup.values(), final_tool]
                 if final:
                     available = [] if fallback else [final_tool]
+                messages = dialogue.messages()
                 check_request(messages, available, max_characters=self.request_max_characters)
                 response = invoke_with_recovery(self, available, messages,
                     config={'callbacks': [trace]}, tool_choice='auto' if fallback else 'required')
-                messages.append(action_message(response))
+                results = []
                 if response.invalid_tool_calls:
                     for call in response.invalid_tool_calls:
-                        messages.append(ToolMessage('Malformed tool JSON; no proposal was applied.', tool_call_id=call['id']))
+                        results.append((call['id'], 'Malformed tool JSON; no proposal was applied.'))
                     fallback = True
                 calls = response.tool_calls
                 if not calls and not response.invalid_tool_calls:
+                    raw = None
                     try:
+                        raw = json.loads(response.content)
                         if writer:
-                            raw = json.loads(response.content)
                             context.active_draft = raw
                             if getattr(context, 'record_task_draft', None):
                                 context.record_task_draft(raw)
-                        validate(output.model_validate_json(response.content))
+                        validate(output.model_validate(raw))
                         return completed
                     except (ValueError, TypeError, KeyError) as error:
                         feedback = failure_feedback(error)
-                        if writer and getattr(context, 'record_task_error', None):
+                        if writer and isinstance(raw, dict) and getattr(context, 'record_task_error', None):
                             context.record_task_error(error)
-                        messages.append(HumanMessage(json.dumps(feedback, ensure_ascii=False, default=str)))
+                        dialogue.plain_failure(response, feedback, draft=raw if isinstance(raw, dict) else None)
                         if isinstance(error, (ValidationError, json.JSONDecodeError)):
                             fallback = True
                 for call in calls:
@@ -152,7 +162,7 @@ class IncrementalIntegrationAgent:
                             raise ValueError('Unknown or unavailable tool')
                     except (ValueError, TypeError, KeyError) as error:
                         result = failure_feedback(error)
-                        if writer and getattr(context, 'record_task_error', None):
+                        if writer and call['name'] == result_name and getattr(context, 'record_task_error', None):
                             context.record_task_error(error)
                         packet = result.get('required_context') or {}
                         context.task_visible_ids = getattr(context, 'task_visible_ids', set()) | {
@@ -163,13 +173,26 @@ class IncrementalIntegrationAgent:
                     if self.trace_sink:
                         self.trace_sink.record({'event_type': 'tool_result', 'component': f'integration_{phase}',
                                                 'name': call['name'], 'arguments': call['args'], 'result': result})
-                    messages.append(ToolMessage(json.dumps(result, ensure_ascii=False, default=str), tool_call_id=call['id']))
+                    results.append((call['id'], result))
+                dialogue.exchange(response, results, result_name=result_name)
                 if completed is not None:
                     return completed
-                if fallback and not fallback_announced:
-                    messages.append(HumanMessage('Return the final result as plain JSON matching this schema: '
-                                                 + json.dumps(output.model_json_schema(), ensure_ascii=False)))
-                    fallback_announced = True
+                # Exact no-progress is distinct from format repair: repeated
+                # unchanged rejected output cannot consume an unlimited loop.
+                rejected = [(call['args'], result) for call in calls if call['name'] == result_name
+                            for call_id, result in results if call_id == call['id']
+                            and isinstance(result, dict) and result.get('status') == 'rejected_unapplied']
+                if not calls and not response.invalid_tool_calls:
+                    rejected.append((raw if raw is not None else response.content, feedback))
+                rejected.extend(((call['name'], call.get('args')), 'Malformed tool JSON; no proposal was applied.')
+                                for call in response.invalid_tool_calls)
+                for draft, error in rejected:
+                    signature = json.dumps([draft, error], sort_keys=True, ensure_ascii=False, default=str)
+                    rejected_outputs[signature] = rejected_outputs.get(signature, 0) + 1
+                    if rejected_outputs[signature] >= 2:
+                        raise TaskNoProgress('The identical draft and validation error repeated; checkpoint retained')
+                if fallback:
+                    dialogue.use_fallback(output.model_json_schema())
             raise RuntimeError(f'{phase} exhausted the configured local call budget; graph unchanged')
         finally:
             if self.trace_sink:

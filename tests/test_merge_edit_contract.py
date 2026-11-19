@@ -57,8 +57,8 @@ def test_same_rejected_candidate_is_not_assessed_again(tmp_path):
                     'required_outcome':'Preserve the original supported relation meaning.'}])
             self.writes+=1
             if self.writes > 1:
-                assert payload["feedback"][0]["problem"] == "The edge description remains incorrect."
-                assert "refs" in payload["feedback"][0]
+                assert payload["semantic_issues"][0]["problem"] == "The edge description remains incorrect."
+                assert "refs" in payload["semantic_issues"][0]
             e=next(e for e in ctx.candidate.graph.edges if e.id==ctx.input_edge_map['keep']).model_dump(mode='json');e['properties']['description']='Pending, not yet accepted.'
             result=BatchResult.model_validate({'edits':[{'operation':'update_edge','edge':e}]})
             ctx.output_validator(result);return result

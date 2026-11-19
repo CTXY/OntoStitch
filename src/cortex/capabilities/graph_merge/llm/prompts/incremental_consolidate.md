@@ -18,10 +18,10 @@ Focus members and proposed structural fields are complete; neighbours are summar
 
 ## Result
 
-Submit one `submit_patch` with the advertised MergePatch fields directly, without a `patch` envelope. `integrate_groups` supplies each planned owner/member set and its complete normal content or complete alternatives. Preserve old branch identities using explicit branch dispositions; map their full knowledge to retained branches or to common preservation only when all resulting branches preserve it.
+Submit one `submit_patch` with the advertised MergePatch fields directly, without a `patch` envelope. `integrate_groups` supplies each planned owner/member set and its complete normal content or complete alternatives. Use the exact controller-provided source_unit_manifest and source_routes to declare every input unit's knowledge destination.
 
 For conflicts, `common_evidence_ids` identifies sources whose original knowledge survives in every full alternative. It does not claim those sources prove each alternative's stronger assertions. Branch evidence remains branch-specific. Use displayed evidence IDs; exact SourceReference objects and cumulative lineage are code-owned.
 
-When the result is a conflict, each ordinary member also needs a disposition: omit source_alternative_id and name its target_alternative_ids, or set retained_in_common when every resulting branch preserves its knowledge. Existing common support likewise needs an explicit common-scope disposition. These scopes govern inherited outgoing edges; do not extend an old branch's facts to newly introduced alternatives. Old branch identities are qualified by source_node_id and source_alternative_id, even when two owners use the same branch label.
+Use one source route per manifest unit. A normal result uses result destinations; a conflict uses named alternatives or common preservation. A storage owner has no extra normal/common unit unless the manifest lists it. Read source units for a coupled owner instead of guessing internal scopes. Planned identity owners cannot use conflicts or resolutions as a substitute for integrate_groups.
 
 Include only necessary coupled node/edge updates, creations, retirements and relation contracts. A retirement declares the actual semantic successors; it is not permission to drop knowledge. An empty patch is valid only when no identity/content/source obligation remains. Successful compilation forms a candidate for independent Assessment; it does not commit the graph.

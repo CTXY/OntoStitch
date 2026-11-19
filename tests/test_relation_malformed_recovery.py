@@ -73,11 +73,11 @@ def test_mixed_malformed_and_final_patch_does_not_apply_final_patch():
 def test_repeated_malformed_outputs_do_not_repeat_full_schema_feedback():
     ctx, base, a, b, _ = setup()
     model = RecordingChat([AIMessage(content='', invalid_tool_calls=[invalid('one')]),
-        AIMessage(content='', invalid_tool_calls=[invalid('two')]),
+        AIMessage(content='', invalid_tool_calls=[{**invalid('two'), 'args': '{\"explanation\":\"unfinished'}]),
         AIMessage(content='{"explanation":"No change required."}')])
     IncrementalIntegrationAgent(model, max_calls=None).invoke('reconcile', ctx, packet(ctx, base, a, b))
     assert len(notices(model.requests[-1])) == 1
-    assert {m.tool_call_id for m in model.requests[-1] if isinstance(m, ToolMessage)} == {'one', 'two'}
+    assert {m.tool_call_id for m in model.requests[-1] if isinstance(m, ToolMessage)} == {'two'}
 
 
 def test_assessment_malformed_only_recovers_to_review_not_patch():
@@ -117,8 +117,9 @@ def test_runtime_retains_invalid_raw_draft_for_inspection_and_full_replacement()
     IncrementalIntegrationAgent(model, max_calls=None).invoke('reconcile', ctx, packet(ctx, base, a, b))
     feedback = json.loads(next(m.content for m in model.requests[1] if isinstance(m, ToolMessage)))
     assert feedback['status'] == 'rejected_unapplied' and 'edge_update' in str(feedback)
-    draft = json.loads(next(m.content for m in model.requests[2] if isinstance(m, ToolMessage) and m.tool_call_id == 'read'))
-    assert draft['draft'] == bad
+    retained = [c['args'] for m in model.requests[2] if isinstance(m, AIMessage) for c in m.tool_calls if c['name'] == 'submit_patch']
+    assert retained == [bad]
+    assert not any(isinstance(m, ToolMessage) and m.tool_call_id == 'read' for m in model.requests[2])
     assert next(x for x in ctx.active_batch.preview.graph.edges if x.id == e).properties['description'] == 'Clarified business feature.'
     assert ctx.active_batch.preview.graph.nodes == base.graph.nodes
 
@@ -169,7 +170,7 @@ def test_repeated_invalid_result_respects_configured_budget_without_committing()
     raw = {'unknown': [], 'explanation': 'Invalid field.'}
     model = RecordingChat([AIMessage(content='', tool_calls=[{'name': 'submit_patch', 'id': 'first', 'args': raw}]),
                            AIMessage(content=json.dumps(raw))])
-    with pytest.raises(RuntimeError, match='configured local call budget'):
+    with pytest.raises(RuntimeError, match='identical draft and validation error repeated'):
         IncrementalIntegrationAgent(model, max_calls=2).invoke('reconcile', ctx, packet(ctx, base, a, b))
     assert ctx.active_batch.preview is None and ctx.candidate == base
     assert len(model.requests) == 2

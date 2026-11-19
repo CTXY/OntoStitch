@@ -11,9 +11,15 @@ from cortex.capabilities.graph_merge.integration.context import IntegrationConte
 from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
 from cortex.capabilities.graph_merge.integration.models import IntegrationProposal
 from cortex.capabilities.graph_merge.integration.patch import MergePatch, compile_patch
+from cortex.capabilities.graph_merge.integration.legacy_patch_adapter import convert_legacy_patch
+
 from cortex.capabilities.graph_merge.integration.provenance import validate_rewrite_sources
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import ConflictChoice, ConflictPoint, GraphNode, GraphSpace, GraphState, NodeContent, SourceReference, load_root_schema
+
+
+def parse_legacy(raw, base):
+    return MergePatch.model_validate(convert_legacy_patch(raw, base))
 
 
 def content(node, **properties):
@@ -37,7 +43,7 @@ def prepare(base):
 
 
 def compile_group(ctx, base, group, aliases):
-    patch = MergePatch.model_validate({"integrate_groups": [group], "explanation": "Integrate this confirmed identity atomically."})
+    patch = parse_legacy({"integrate_groups": [group], "explanation": "Integrate this confirmed identity atomically."}, base)
     payload = {"candidate_nodes": [n.model_dump(mode="json") for n in base.graph.nodes],
                "candidate_relations": [e.model_dump(mode="json") for e in base.graph.edges]}
     compiled = compile_patch(ctx, base, patch, targets=set(aliases), aliases=aliases, payload=payload)
@@ -123,7 +129,7 @@ def test_two_owners_same_branch_names_require_owner_qualified_dispositions():
     assert edges["eb"].properties["alternative_ids"] == ["B_one"]
     broken = deepcopy(group)
     broken["branch_dispositions"][2]["source_node_id"] = "A"
-    with pytest.raises(ValueError, match="original branch|disposition"):
+    with pytest.raises(ValueError, match="source_routes_mismatch"):
         compile_group(ctx, base, broken, {"A": "A", "B": "A"})
 
 
@@ -232,7 +238,7 @@ def test_complete_draft_replacement_retires_prior_created_objects_and_scope():
     ctx, evidence = prepare(base)
     extra = {"id": "new", "node_type": "concept", "name": "Additional meaning", "description": "A local abstraction.",
              "properties": {"targets": [["a"]]}, "evidence_ids": [next(iter(evidence.values()))]}
-    first = compile_patch(ctx, base, MergePatch.model_validate({"create_nodes": [extra], "explanation": "Create a local node."}), targets={"A"})
+    first = compile_patch(ctx, base, parse_legacy({"create_nodes": [extra], "explanation": "Create a local node."}, base), targets={"A"})
     assert any(n.id == "new" for n in first.state.graph.nodes)
     second = compile_patch(ctx, base, MergePatch(explanation="Withdraw the complete earlier proposal."), targets={"A"})
     assert second.state == base
@@ -245,7 +251,7 @@ def test_same_owner_conflict_rewrite_maps_branches_and_inherited_edges():
     base = state([*catalog(), owner], [edge('first', 'A', 'a').model_copy(update={
         'properties': {'description': 'Only first interpretation', 'alternative_ids': ['one']}})])
     ctx, evidence = prepare(base)
-    patch = MergePatch.model_validate({'conflicts': [{'node_id': 'A',
+    patch = parse_legacy({'conflicts': [{'node_id': 'A',
         'alternatives': [{'alternative_id': key, 'content': GraphManager.resolve_alternative(owner, alt).model_dump(mode='json'),
                           'evidence_ids': [evidence[s] for s in alt.sources]}
                          for key, alt in zip(['renamed_one', 'renamed_two'], owner.alternatives, strict=True)],
@@ -253,7 +259,7 @@ def test_same_owner_conflict_rewrite_maps_branches_and_inherited_edges():
         'branch_dispositions': [{'source_node_id': 'A', 'source_alternative_id': alt.alternative_id,
             'target_alternative_ids': [key], 'explanation': 'Preserve this complete branch under its new ID.'}
             for key, alt in zip(['renamed_one', 'renamed_two'], owner.alternatives, strict=True)]}],
-        'explanation': 'Rewrite one existing owner without an Identity group.'})
+        'explanation': 'Rewrite one existing owner without an Identity group.'}, base)
     payload = {'candidate_nodes': [n.model_dump(mode='json') for n in base.graph.nodes]}
     result = compile_patch(ctx, base, patch, targets={'A'}, payload=payload)
     lineage = LineageIndex(ctx)
@@ -281,12 +287,12 @@ def test_same_owner_new_branch_does_not_inherit_old_common_or_unscoped_edge():
             'target_alternative_ids': [a.alternative_id], 'explanation': 'Retain the old meaning.'} for a in owner.alternatives]
             + [{'source_node_id': 'A', 'target_alternative_ids': ['one', 'two'],
                 'explanation': 'The previous common assertion has not been established for the new branch.'}]}
-    patch = MergePatch.model_validate({'conflicts': [conflict], 'explanation': 'Add an explicitly scoped new alternative.'})
+    patch = parse_legacy({'conflicts': [conflict], 'explanation': 'Add an explicitly scoped new alternative.'}, base)
     result = compile_patch(ctx, base, patch, targets={'A'}, payload={'candidate_nodes': [n.model_dump(mode='json') for n in base.graph.nodes]})
     current = next(n for n in result.state.graph.nodes if n.id == 'A')
     assert not current.common_sources
     assert common not in next(a for a in current.alternatives if a.alternative_id == 'new').sources
     assert next(e for e in result.state.graph.edges if e.id == 'old').properties['alternative_ids'] == ['one', 'two']
     conflict.pop('branch_dispositions')
-    with pytest.raises(ValueError, match='disposition'):
-        compile_patch(ctx, base, MergePatch.model_validate({'conflicts': [conflict], 'explanation': 'Missing explicit old scopes.'}), targets={'A'})
+    with pytest.raises(ValueError, match='source_routes_mismatch'):
+        compile_patch(ctx, base, parse_legacy({'conflicts': [conflict], 'explanation': 'Missing explicit old scopes.'}, base), targets={'A'})

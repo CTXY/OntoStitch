@@ -46,7 +46,7 @@ def test_light_payload_and_runtime_use_real_partial_tool_without_metadata():
     result = IncrementalIntegrationAgent(model).invoke("reconcile", ctx, payload)
     assert len(model.requests) == 1
     tools = {getattr(t, "name", None) for t in model.tools}
-    assert tools == {"inspect_graph", "lookup_catalog", "read_evidence", "read_guidance", "inspect_draft", "submit_patch"}
+    assert tools == {"inspect_graph", "lookup_catalog", "read_evidence", "read_guidance", "read_source_units", "inspect_draft", "submit_patch"}
     assert result.edge_updates
     current = ctx.active_batch.preview
     assert current.graph.nodes == ctx.active_batch.seed.graph.nodes
@@ -223,8 +223,9 @@ def test_absent_optional_group_and_branch_fields_have_clear_empty_values():
             {"name": "inspect_graph", "id": "branches", "args": {"mode": "items", "ids": [e], "fields": ["properties.alternative_ids"]}}]),
         AIMessage(content='{"explanation":"No change."}')])
     IncrementalIntegrationAgent(model).invoke("reconcile", ctx, payload)
-    assert json.loads(model.requests[1][-2].content)["items"][0]["properties"]["relation_metadata"] is None
-    assert json.loads(model.requests[1][-1].content)["items"][0]["properties"]["alternative_ids"] is None
+    replies = {m.tool_call_id: json.loads(m.content) for m in model.requests[1] if m.type == "tool"}
+    assert replies["groups"]["items"][0]["properties"]["relation_metadata"] is None
+    assert replies["branches"]["items"][0]["properties"]["alternative_ids"] is None
 
 
 def test_read_batch_keeps_valid_results_when_one_id_or_field_is_invalid():

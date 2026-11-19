@@ -5,7 +5,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from test_graph_integration import catalog, concept, edge, state
-from test_merge_identity_integration_v2 import content, points, prepare
+from test_merge_identity_integration_v2 import content, points, prepare, parse_legacy
 
 from cortex.capabilities.graph_merge.integration.batch import ActiveBatch
 from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
@@ -47,14 +47,14 @@ def test_real_task_review_includes_unchanged_consumer_of_new_conflict(tmp_path):
             return Review(verdict="accept")
 
     engine, evidence = engine_for(base, Agent(), tmp_path / "scope.sqlite")
-    patch = MergePatch.model_validate({"integrate_groups": [{"owner_id": "A", "member_ids": ["A", "B"],
+    patch = parse_legacy({"integrate_groups": [{"owner_id": "A", "member_ids": ["A", "B"],
         "alternatives": [{"alternative_id": key, "content": content(n, definition=key),
                            "evidence_ids": [evidence[n.sources[0]]]} for key, n in [("left", a), ("right", b)]],
         "conflict_points": points(["left", "right"]),
         "branch_dispositions": [{"source_node_id": n.id, "source_alternative_id": None,
             "target_alternative_ids": [key], "explanation": "Preserve this input meaning."}
             for key, n in [("left", a), ("right", b)]], "explanation": "Retain complete competing meanings."}],
-        "explanation": "Integrate the confirmed group."})
+        "explanation": "Integrate the confirmed group."}, base)
     task = LocalTask("content", "consolidate", {"A", "B"}, groups=[{"members": ["A", "B"],
         "meaning": "One accepted attribute", "reason": "Confirmed business identity."}])
     engine._run_task(task, "scope", aliases={"A": "A", "B": "A"})
@@ -68,10 +68,10 @@ def test_direct_compile_rejection_restores_candidate_batch_and_identity_members(
     context, _ = prepare(base)
     context.candidate = base
     context.active_batch = previous = ActiveBatch(context, base, targets={"A", "B"})
-    patch = MergePatch.model_validate({"integrate_groups": [{"owner_id": "A", "member_ids": ["A", "B"],
+    patch = parse_legacy({"integrate_groups": [{"owner_id": "A", "member_ids": ["A", "B"],
         "content": content(a), "explanation": "Confirmed same identity."}],
         "node_updates": [{"id": "a", "name": "Illegal physical rewrite", "explanation": "Invalid edit."}],
-        "explanation": "The invalid local edit must undo the whole compilation."})
+        "explanation": "The invalid local edit must undo the whole compilation."}, base)
     with pytest.raises(ValueError, match="Physical catalogue"):
         compile_patch(context, base, patch, targets={"A", "B"}, aliases={"A": "A", "B": "A"})
     assert context.candidate is base
@@ -172,9 +172,9 @@ def test_same_source_coverage_cannot_bypass_independent_knowledge_loss_review(tm
     class Agent:
         def invoke(self, phase, context, payload):
             if phase == "consolidate":
-                return MergePatch.model_validate({"integrate_groups": [{"owner_id": "A", "member_ids": ["A", "B"],
+                return parse_legacy({"integrate_groups": [{"owner_id": "A", "member_ids": ["A", "B"],
                     "content": content(a), "explanation": "This intentionally incomplete integration has the same source set."}],
-                    "explanation": "Exercise knowledge preservation independently of provenance coverage."})
+                    "explanation": "Exercise knowledge preservation independently of provenance coverage."}, base)
             assert phase == "node_assess"
             checked.append(payload)
             original = next(n for n in payload["nodes"] if n["id"] == "B")

@@ -141,8 +141,10 @@ def test_duplicate_read_does_not_disable_a_different_required_read():
     IncrementalIntegrationAgent(chat).invoke('reconcile', ctx, payload)
     replies = [json.loads(m.content) for m in chat.requests[-1] if isinstance(m, ToolMessage)]
     assert replies[0]['items'][0]['properties']['targets']
-    assert replies[1]['items'][0]['properties']['targets'] == replies[0]['items'][0]['properties']['targets']
-    assert replies[2]['items'][0]['name']
+    assert len(replies) == 2  # Exact repeat is replaced by its latest complete read.
+    assert replies[1]['items'][0]['name']
+    previous = next(json.loads(m.content) for m in chat.requests[1] if isinstance(m, ToolMessage))
+    assert replies[0]['items'] == previous['items']
     assert len(chat.requests) == 4  # No additional submit/finish request.
 
 

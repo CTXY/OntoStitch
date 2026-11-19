@@ -101,7 +101,9 @@ def test_relation_reads_return_complete_values_on_explicit_reread():
     IncrementalIntegrationAgent(model, max_calls=None).invoke('graph_assess', ctx, {'nodes': [], 'edges': [], 'evidence': []})
     replies = [json.loads(m.content) for m in model.requests[-1] if isinstance(m, ToolMessage)]
     assert replies[0]['items'][0]['properties']['targets']
-    assert replies[1]['items'] == replies[0]['items']
+    previous = next(json.loads(m.content) for m in model.requests[-2] if isinstance(m, ToolMessage))
+    assert len(replies) == 1 and replies[0]['items'] == previous['items']
+    assert next(m.tool_call_id for m in model.requests[-1] if isinstance(m, ToolMessage)) == 'again'
     from cortex.capabilities.graph_merge.integration.review import Review
     assert Review in model.tools
     assert any(getattr(t, "name", None) == "inspect_graph" for t in model.tools)

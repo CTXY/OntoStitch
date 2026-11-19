@@ -87,7 +87,7 @@ def test_selected_credentials_receive_independent_request_limits(tmp_path, monke
 def test_uncapped_merge_can_correct_format_beyond_twelve_calls():
     context = IntegrationContext(state(), state([*catalog(), concept('A', 'a')]), load_root_schema())
     # Malformed output is never accepted; the thirteenth valid result can finish.
-    model = ScriptModel([*[AIMessage(content='not JSON') for _ in range(12)],
+    model = ScriptModel([*[AIMessage(content=f'not JSON attempt {i}') for i in range(12)],
                          AIMessage(content=json.dumps({'groups': [], 'distinctions': []}))])
     agent = IncrementalIntegrationAgent(model, max_calls=None)
     result = agent.invoke('identity', context, {'incoming_seeds': []})
