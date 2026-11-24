@@ -167,3 +167,30 @@ overlap; these counts are not a combined total).
 Three independent reviewers approved the stage after the coverage gaps were
 filled. The deterministic no-op merger fixture now preserves identical original
 descriptions and refuses nontrivial semantic merging instead of inventing prose.
+
+## Stage D1 — explicit accepted session and dependency boundaries
+
+`MergeSession` now owns accepted graph/lineage/history/revision, task progress,
+receipts, followups and merger progress. Snapshot/restore/save and accepted-state
+rollback have one owner. Engine configuration and Agent/budget remain outside the
+Session. Callers use `engine.session` explicitly; no attribute proxy preserves old
+engine fields. Input fingerprinting lives with the inputs instead of the engine.
+
+State/hash models no longer import role contracts. Protocol/source binding lives
+in `runtime/contracts.py`; common relation obligations, graph views, conflict
+operations and error feedback have low-dependency owners. Signal/obligation kinds
+are domain constants, not prompt-loader definitions. Extracted functions and
+schemas retain their previous bodies and model-visible snapshot is byte-identical.
+
+The broad repository check excluding the 22 documented out-of-scope baseline
+failures reported 2,074 passed, 5 failed, 3 skipped and one deselected self-JOIN
+case. All five failures were receipt-only test stubs still constructing old engine
+fields; their whole file was then corrected and passed 7/7. Focused session/core
+and affected recovery sets also passed. Independent review confirmed original
+rollback fields, AFTER receipt/history binding, followup ordering, new-run reset,
+shared budget and single-graph recovery. Production undefined-symbol lint and
+diff checks pass.
+
+Task execution still uses the existing shared context at this checkpoint. Task
+forks and removal of nested dictionary save/restore are the next D2 checkpoint,
+not claimed as completed here.

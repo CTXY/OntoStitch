@@ -18,11 +18,11 @@ ACCEPT = AIMessage(content=json.dumps({'explanation': 'The local result preserve
 def interrupted(tmp_path, replies, run='recovery'):
     chat = ScriptedModel([*replies, RuntimeError('process interrupted')])
     engine, task = fixture(tmp_path, chat)
-    before = engine.current
+    before = engine.session.current
     with pytest.raises(RuntimeError, match='process interrupted'):
         engine._run_task(task, run)
     saved = WorkspaceStore(engine.workspace_path).load(run)
-    assert engine.current == before and not engine.history
+    assert engine.session.current == before and not engine.session.history
     return saved
 
 
@@ -39,10 +39,10 @@ def test_corrupt_recovery_envelope_is_rejected_before_model_call(tmp_path, corru
     else: record[corruption] = 'tampered'
     chat = ScriptedModel([])
     engine, task = restart(tmp_path, saved, chat)
-    before = engine.current
+    before = engine.session.current
     with pytest.raises(ValueError, match='Incomplete or mismatched'):
         engine._run_task(task, 'recovery')
-    assert not chat.requests and engine.current == before and not engine.history
+    assert not chat.requests and engine.session.current == before and not engine.session.history
 
 
 @pytest.mark.parametrize('kind', ['schema', 'compiler'])
@@ -52,12 +52,12 @@ def test_content_failure_budget_survives_restart_and_terminal_retry_calls_no_mod
     chat = ScriptedModel([call('edit_draft', bad)])
     engine, task = restart(tmp_path, saved, chat)
     with pytest.raises(TaskNoProgress): engine._run_task(task, 'recovery')
-    assert len(chat.requests) == 1 and not engine.history
+    assert len(chat.requests) == 1 and not engine.session.history
     saved = WorkspaceStore(engine.workspace_path).load('recovery')
     empty = ScriptedModel([])
     engine, task = restart(tmp_path, saved, empty)
     with pytest.raises(TaskNoProgress): engine._run_task(task, 'recovery')
-    assert not empty.requests and not engine.history
+    assert not empty.requests and not engine.session.history
 
 
 def test_assessment_result_only_recovery_survives_process_restart(tmp_path):
@@ -68,7 +68,7 @@ def test_assessment_result_only_recovery_survives_process_restart(tmp_path):
     engine._run_task(task, 'recovery')
     assert len(chat.requests) == 1 and chat.requests[0][1] == []
     assert 'Required JSON schema' in chat.requests[0][0][-1].content
-    assert len(engine.history) == 1
+    assert len(engine.session.history) == 1
 
 
 def test_protocol_budget_survives_restart_and_exhaustion_is_terminal(tmp_path):
@@ -82,7 +82,7 @@ def test_protocol_budget_survives_restart_and_exhaustion_is_terminal(tmp_path):
     chat = ScriptedModel([])
     engine, task = restart(tmp_path, saved, chat)
     with pytest.raises(OutputProtocolRecoveryExhausted): engine._run_task(task, 'recovery')
-    assert not chat.requests and not engine.history
+    assert not chat.requests and not engine.session.history
 
 
 def test_new_visible_facts_allow_retry_without_erasing_old_failure_buckets():

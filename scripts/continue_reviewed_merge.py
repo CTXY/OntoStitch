@@ -23,7 +23,8 @@ from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.graph.batch import alias_view
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from graph_merge_archive import migrate_relation_notes
-from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository, SqlTrainingGraphMergeEvidenceResolver
@@ -356,7 +357,7 @@ def run(root):
             write_text(folder / 'graph.html', render_graph_html(current.graph, schema,
                        title=plan['database'] + f' · {len(merged) + len(case_ids)} accepted cases'))
             write(folder / 'completed.json', {'case_ids': case_ids, 'state_sha256': digest(folder / 'state.json'),
-                  'completed_at': time.time(), 'history_entries': len(engine.history)})
+                  'completed_at': time.time(), 'history_entries': len(engine.session.history)})
             merged.extend(case_ids)
             write(root / 'merged_checkpoint_state.json', current.model_dump(mode='json'))
             write_text(root / 'merged_preview.html', render_graph_html(current.graph, schema,

@@ -82,10 +82,10 @@ def test_real_node_agent_compiles_narrow_result_and_keeps_distinct_edges(tmp_pat
     engine, task = fixture(tmp_path, chat)
     engine._run_task(task, 'node', aliases={'A': 'A', 'B': 'A'})
     assert len(chat.requests) == 2
-    relations = [edge for edge in engine.current.graph.edges if edge.from_node_id == 'A']
+    relations = [edge for edge in engine.session.current.graph.edges if edge.from_node_id == 'A']
     assert len(relations) == 2
     assert {edge.to_node_id for edge in relations} == {'a', 'b'}
-    assert engine.history[0]['assessment'] == 'node_assess'
+    assert engine.session.history[0]['assessment'] == 'node_assess'
     assert {tool['function']['name'] for tool in chat.requests[0][1]} == {'read_evidence', 'submit_patch'}
     assert {tool['function']['name'] for tool in chat.requests[1][1]} == {'read_evidence', 'Review'}
 
@@ -108,45 +108,45 @@ def test_compiled_checkpoint_resumes_assessment_without_writer_replay(tmp_path):
     saved = WorkspaceStore(engine.workspace_path).load('node')
     assert saved['task_state']['stage'] == 'assessing'
     assert not saved['history']
-    engine.task_state = TaskState.from_dict(saved['task_state'])
+    engine.session.task_state = TaskState.from_dict(saved['task_state'])
     engine._run_task(task, 'node', aliases={'A': 'A', 'B': 'A'})
     assert len(chat.requests) == 3
     assert 'independent node Assessment' in chat.requests[-1][0][0].content
-    assert len(engine.history) == 1
+    assert len(engine.session.history) == 1
 
 
 def test_relation_sidecar_is_durable_and_noop_still_needs_graph_assessment(tmp_path):
     chat = NodeChat(followup=True)
     engine, task = fixture(tmp_path, chat)
     engine._run_task(task, 'node', aliases={'A': 'A', 'B': 'A'})
-    assert len(engine.relation_followups) == 1
+    assert len(engine.session.relation_followups) == 1
     saved = WorkspaceStore(engine.workspace_path).load('node')
-    assert saved['relation_followups'] == engine.relation_followups
+    assert saved['relation_followups'] == engine.session.relation_followups
     with pytest.raises(IntegrationIncomplete, match='unresolved'):
         engine._publish_checks()
     drain_relation_followups(engine, 'node')
-    assert not engine.relation_followups
+    assert not engine.session.relation_followups
     assert len(chat.requests) == 4, 'Empty local draft submission and independent assessment must both execute'
-    assert engine.history[-1]['phase'] == 'reconcile'
-    assert engine.history[-1]['assessment'] == 'graph_assess'
+    assert engine.session.history[-1]['phase'] == 'reconcile'
+    assert engine.session.history[-1]['assessment'] == 'graph_assess'
 
 
 def test_committed_followup_is_not_replayed_after_queue_removal_interruption(tmp_path):
     chat = NodeChat(followup=True)
     engine, task = fixture(tmp_path, chat)
     engine._run_task(task, 'node', aliases={'A': 'A', 'B': 'A'})
-    queue = deepcopy(engine.relation_followups)
+    queue = deepcopy(engine.session.relation_followups)
     drain_relation_followups(engine, 'node')
     requests = len(chat.requests)
-    engine.relation_followups = queue
+    engine.session.relation_followups = queue
     drain_relation_followups(engine, 'node')
-    assert len(chat.requests) == requests and not engine.relation_followups
+    assert len(chat.requests) == requests and not engine.session.relation_followups
 
 
 def test_followup_cannot_be_rebound_to_a_different_draft(tmp_path):
     engine, _ = fixture(tmp_path, NodeChat())
-    from cortex.capabilities.graph_merge.runtime.state import build_contract_versions
-    task = TaskState.capture(engine.current, task_id='t', phase='consolidate', versions=build_contract_versions(engine.ctx.schema))
+    from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+    task = TaskState.capture(engine.session.current, task_id='t', phase='consolidate', versions=build_contract_versions(engine.session.inputs.schema))
     task = task.with_draft({'explanation': 'current'})
     invalid = replace(task, coupled_relation={'draft_id': 'different-draft'})
     with pytest.raises(ValueError, match='different node draft'):
@@ -189,11 +189,11 @@ def test_runner_resumes_coupled_patch_before_any_node_writer_replay(tmp_path, mo
     pending = TaskState.from_dict(saved['task_state'])
     assert pending.stage == 'validating' and pending.last_valid_candidate is None
     assert pending.coupled_relation['patch'] and pending.coupled_relation['stage'] == 'assessing'
-    engine.task_state = pending
+    engine.session.task_state = pending
     engine._run_task(task, 'node', aliases={'A': 'A', 'B': 'A'})
     writers = [request for request, _ in chat.requests if 'node integration Writer' in request[0].content]
     assert len(writers) == 1
-    assert len(engine.history) == 1
+    assert len(engine.session.history) == 1
     assert sum('independent node Assessment' in request[0].content for request, _ in chat.requests) == 1
 
 
@@ -205,12 +205,12 @@ def test_coupled_checkpoint_corruption_stops_without_node_writer_retry(tmp_path,
         engine._run_task(task, 'node', aliases={'A': 'A', 'B': 'A'})
     saved = WorkspaceStore(engine.workspace_path).load('node')
     saved['task_state']['coupled_relation']['intermediate_hash'] = 'wrong'
-    engine.task_state = TaskState.from_dict(saved['task_state'])
+    engine.session.task_state = TaskState.from_dict(saved['task_state'])
     before_calls = len(chat.requests)
     with pytest.raises(IntegrationIncomplete, match='relation coordination'):
         engine._run_task(task, 'node', aliases={'A': 'A', 'B': 'A'})
     assert len(chat.requests) == before_calls
-    assert engine.task_state.coupled_relation['controller_error']
+    assert engine.session.task_state.coupled_relation['controller_error']
 
 
 def test_mandatory_noop_assessment_receives_current_owner_and_relations(tmp_path):
@@ -221,7 +221,7 @@ def test_mandatory_noop_assessment_receives_current_owner_and_relations(tmp_path
         'mode': 'required', 'node_ids': ['A'], 'edge_ids': ['e-A'],
         'required_outcome': 'Retain the current valid representation.',
     }])
-    packet = relation_context(engine.ctx, engine.current, task, before=engine.current, assessment=True)
+    packet = relation_context(engine.session.inputs, engine.session.current, task, before=engine.session.current, assessment=True)
     assert 'A' in {node['id'] for node in packet['nodes']}
     assert 'e-A' in {edge['id'] for edge in packet['edges']}
     assert 'B' not in {node['id'] for node in packet['nodes']}
@@ -236,7 +236,7 @@ def test_nested_real_controller_feedback_repairs_same_writer_without_node_replay
             local='node integration Writer' in messages[0].content or 'independent node Assessment' in messages[0].content
             if not local:
                 names={tool['function']['name'] for tool in self.tools}
-                rt=self.engine.ctx.reconciliation_runtime
+                rt=self.engine.session.inputs.reconciliation_runtime
                 if 'edit_draft' not in names and not self.reported:
                     self.reported=True;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                     return AIMessage(content=json.dumps({'explanation':'The retained relation description needs a precise business role.',
@@ -250,15 +250,15 @@ def test_nested_real_controller_feedback_repairs_same_writer_without_node_replay
                         'reason':'Clarify the retained original representation without changing its scope.'}]}}])
             return super().invoke(messages,config)
     chat=Feedback();engine,task=fixture(tmp_path,chat)
-    before=engine.current
+    before=engine.session.current
     engine._run_task(task,'nested-feedback',aliases={'A':'A','B':'A'})
-    assert len(engine.history)==1
+    assert len(engine.session.history)==1
     assert sum('node integration Writer' in request[0].content for request,_ in chat.requests)==1
-    assert next(e for e in engine.current.graph.edges if e.id=='e-A').properties['description'].startswith('The accepted object')
-    assert engine.ctx.task_before==before
-    assert engine.ctx.active_task is task
-    assert 'integrate_groups' in engine.ctx.active_draft
-    assert 'changes' not in engine.ctx.active_draft
+    assert next(e for e in engine.session.current.graph.edges if e.id=='e-A').properties['description'].startswith('The accepted object')
+    assert engine.session.inputs.task_before==before
+    assert engine.session.inputs.active_task is task
+    assert 'integrate_groups' in engine.session.inputs.active_draft
+    assert 'changes' not in engine.session.inputs.active_draft
 
 
 @pytest.mark.parametrize('window',['action_saved','compiled'])
@@ -269,7 +269,7 @@ def test_nested_complete_edit_intent_resumes_without_any_writer_replay(tmp_path,
     def persist(run_id):
         nonlocal stopped
         original(run_id)
-        coupled=engine.task_state.coupled_relation or {}
+        coupled=engine.session.task_state.coupled_relation or {}
         if (not stopped and coupled.get('complete_draft_action') and
                 (window=='action_saved' or coupled.get('stage')=='compiled_unsubmitted')):
             stopped=True;raise RuntimeError('Nested complete edit saved')
@@ -278,8 +278,8 @@ def test_nested_complete_edit_intent_resumes_without_any_writer_replay(tmp_path,
         engine._run_task(task,'node',aliases={'A':'A','B':'A'})
     saved=WorkspaceStore(engine.workspace_path).load('node')
     assert saved['task_state']['coupled_relation']['complete_draft_action']
-    engine.task_state=TaskState.from_dict(saved['task_state'])
+    engine.session.task_state=TaskState.from_dict(saved['task_state'])
     engine._run_task(task,'node',aliases={'A':'A','B':'A'})
     assert sum('node integration Writer' in messages[0].content for messages,_ in chat.requests)==1
     assert sum(any(t['function']['name']=='edit_draft' for t in tools) for _,tools in chat.requests)==1
-    assert len(engine.history)==1
+    assert len(engine.session.history)==1

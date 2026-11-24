@@ -9,7 +9,7 @@ from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
 
 def policy_hash(engine):
-    versions = engine.contract_versions
+    versions = engine.session.contract_versions
     return canonical_hash({'receipt_protocol': 1, 'contracts': versions.to_dict()})
 
 
@@ -87,14 +87,14 @@ def dependency_facts(context, current, queries):
 
 def premise_hash(engine, check, dependencies=()):
     from cortex.capabilities.graph_merge.reconciliation.premises import signal_premise
-    return canonical_hash({'check': signal_premise(engine.ctx, engine.current, check),
-        'supplementary': dependency_facts(engine.ctx, engine.current, dependencies)})
+    return canonical_hash({'check': signal_premise(engine.session.inputs, engine.session.current, check),
+        'supplementary': dependency_facts(engine.session.inputs, engine.session.current, dependencies)})
 
 
 def is_accepted(engine, check):
     from cortex.capabilities.graph_merge.reconciliation.ledger import latest_receipt, has_receipt
     policy = policy_hash(engine)
-    ledger = getattr(engine, 'signal_receipts', [])
+    ledger = getattr(engine.session, 'signal_receipts', [])
     record = latest_receipt(ledger, check, policy_hash=policy)
     if record is None:
         return False
@@ -111,7 +111,7 @@ def record_acceptance(engine, task, state, history_entry):
         record = make_receipt(check, premise_hash=premise_hash(engine, check, dependencies),
             policy_hash=policy, history_entry=history_entry, candidate_hash=history_entry['candidate_hash'],
             dependencies=dependencies)
-        engine.signal_receipts = [*getattr(engine, 'signal_receipts', []), record]
+        engine.session.signal_receipts = [*getattr(engine.session, 'signal_receipts', []), record]
 
 
 def stable_task_id(engine, checks):
@@ -119,7 +119,7 @@ def stable_task_id(engine, checks):
     from cortex.capabilities.graph_merge.reconciliation.premises import signal_key
     rows = []
     for c in checks:
-        previous = latest_receipt(getattr(engine, 'signal_receipts', []), c, policy_hash=policy_hash(engine))
+        previous = latest_receipt(getattr(engine.session, 'signal_receipts', []), c, policy_hash=policy_hash(engine))
         rows.append((signal_key(c), premise_hash(engine, c, previous['dependencies'] if previous else ())))
     rows.sort()
     return 'structure-' + canonical_hash({'checks': rows, 'policy': policy_hash(engine)})[:24]

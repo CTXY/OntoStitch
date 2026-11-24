@@ -3,7 +3,7 @@
 def compact_task_context(payload, context, candidate, ids, groups, *, for_review=True):
     payload["revision"] = getattr(context, "workspace_revision", 0)
     from cortex.application.ontology_graph import GraphManager
-    from cortex.capabilities.graph_merge.reconciliation.context import semantic_summary
+    from cortex.capabilities.graph_merge.graph.views import semantic_summary
     current_nodes = {node.id: node for node in candidate.graph.nodes}
     payload["review_scope" if for_review else "revision_scope"] = "Only reviewed IDs receive verdicts. Other content is dependency context; omitted fields are readable, not absent. All slices use the same immutable candidate; code requires every slice."
     # Full focus/source members and formula operands stay intact. A group
@@ -49,7 +49,7 @@ def compact_task_context(payload, context, candidate, ids, groups, *, for_review
             if not row.get(key):
                 row.pop(key, None)
         row.pop("merge_status", None)
-    from cortex.capabilities.graph_merge.reconciliation.context import physical_view
+    from cortex.capabilities.graph_merge.graph.views import physical_view
     nodes = {node.id: node for node in candidate.graph.nodes}
     payload["physical_facts"] = [physical_view(nodes[row["id"]], nodes, candidate.graph.edges)
                                   if row["id"] in nodes else row for row in payload.get("physical_facts", [])]

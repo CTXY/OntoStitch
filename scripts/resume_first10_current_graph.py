@@ -30,7 +30,8 @@ from cortex.capabilities.graph_merge.reconciliation.context import relation_sign
 from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
 from cortex.capabilities.graph_merge.reconciliation.single_graph import reconcile_current_graph
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
-from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.graph_merge.evidence import EvidenceItem

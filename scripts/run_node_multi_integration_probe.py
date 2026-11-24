@@ -70,10 +70,10 @@ def run(root,case,slot):
         return model(selected)
     agent.recover_transport=recover
     eng=IncrementalGraphIntegrationEngine(agent,max_rounds=4,model_call_budget=16)
-    eng.ctx,eng.current,eng.lineage=ctx,base,LineageIndex(ctx)
-    eng.history=[];eng.reviewed_sources={};eng._revision=0;eng._storage_revision=None
-    eng.identity_decision={};eng.open_tasks=[];eng.pending_relation_work=eng.pending_review=None
-    eng.relation_followups=[];eng.workspace_path=folder/'workspace.sqlite'
+    eng.session.inputs,eng.session.current,eng.session.lineage=ctx,base,LineageIndex(ctx)
+    eng.session.history=[];eng.session.reviewed_sources={};eng.session.revision=0;eng.session.storage_revision=None
+    eng.session.identity_decision={};eng.session.open_tasks=[];eng.session.pending_relation_work=eng.session.pending_review=None
+    eng.session.relation_followups=[];eng.workspace_path=folder/'workspace.sqlite'
     owner=min(members);aliases={key:owner for key in members}
     task=LocalTask(case,'consolidate',{owner},groups=[group])
     ctx.task_before=base;ctx.task_identity_groups=[{'owner_id':owner,'member_ids':sorted(members)}]
@@ -100,13 +100,13 @@ def run(root,case,slot):
             accepted_tasks=len(final['history']),checkpoint_stage=final['task_state']['stage'])
         # Verify exact node provenance unions for every subgroup, independently
         # of the model's judgment. Relationship mapping/provenance is tested too.
-        after={n.id:n for n in eng.current.graph.nodes};mapping={k:k for k in members}
+        after={n.id:n for n in eng.session.current.graph.nodes};mapping={k:k for k in members}
         for row in draft.get('integrate_groups',[]):
             for k in row['member_ids']:mapping[k]=row['owner_id']
             expected_sources={s for k in row['member_ids'] for s in nodes[k].sources}
             assert expected_sources<=set(after[row['owner_id']].sources)
         oldedges={edge.id:edge for edge in base.graph.edges if edge.from_node_id in members or edge.to_node_id in members}
-        actualedges={edge.id:edge for edge in eng.current.graph.edges}
+        actualedges={edge.id:edge for edge in eng.session.current.graph.edges}
         dispositions=[]
         for ident,edge in oldedges.items():
             current=actualedges.get(ident)
@@ -131,7 +131,7 @@ def run(root,case,slot):
         result.update(status='failed',errors=transport_error_details(error,[k.api_key.get_secret_value() for k in keys]))
     result.update(seconds=round(time.monotonic()-start,2),model_calls=agent.call_budget['used'],anonymous_key_slots=call_slots,
                   source_checkpoint_unchanged=source_hash==sha256(CHECKPOINT.read_bytes()).hexdigest())
-    write(folder/'after.json',eng.current.model_dump(mode='json'));write(folder/'result.json',result)
+    write(folder/'after.json',eng.session.current.model_dump(mode='json'));write(folder/'result.json',result)
     print(json.dumps({k:result.get(k) for k in ('case','status','seconds','model_calls','source_checkpoint_unchanged')}),flush=True)
     return result
 

@@ -136,12 +136,12 @@ def test_task_runner_recovery_callbacks_preserve_errors_after_interrupt_and_rest
             return Review(verdict='accept')
 
     restarted, _ = engine_for(base, Resume(), path)
-    restarted.task_state = TaskState.from_dict(saved['task_state'])
-    restarted.contract_versions = restarted.task_state.versions
-    restarted._storage_revision = saved['revision']
+    restarted.session.task_state = TaskState.from_dict(saved['task_state'])
+    restarted.session.contract_versions = restarted.session.task_state.versions
+    restarted.session.storage_revision = saved['revision']
     restarted._run_task(task, 'resume')
     assert checked == ['reconcile']
-    assert restarted.current == base and len(restarted.history) == 1
+    assert restarted.session.current == base and len(restarted.session.history) == 1
 
 
 def test_ready_legacy_candidate_is_recompiled_before_review_reuse(tmp_path, monkeypatch):
@@ -159,7 +159,7 @@ def test_ready_legacy_candidate_is_recompiled_before_review_reuse(tmp_path, monk
     real_persist = engine._persist
 
     def interrupt_commit(run_id):
-        if engine.task_state.stage == 'committed':
+        if engine.session.task_state.stage == 'committed':
             raise RuntimeError('Interrupted before accepted commit')
         return real_persist(run_id)
 
@@ -170,8 +170,8 @@ def test_ready_legacy_candidate_is_recompiled_before_review_reuse(tmp_path, monk
     saved = WorkspaceStore(path).load('legacy')
     raw = deepcopy(saved['task_state'])
     raw.pop('candidate_draft_id')
-    engine.task_state = TaskState.from_dict(raw)
-    assert engine.task_state.candidate_draft_id is None
+    engine.session.task_state = TaskState.from_dict(raw)
+    assert engine.session.task_state.candidate_draft_id is None
     engine._persist = real_persist
     compiled = []
     original_compile = task_runner.compile_patch
@@ -183,7 +183,7 @@ def test_ready_legacy_candidate_is_recompiled_before_review_reuse(tmp_path, monk
     monkeypatch.setattr(task_runner, 'compile_patch', compile_once)
     engine._run_task(task, 'legacy')
     assert compiled == [True]
-    assert len(engine.history) == 1
+    assert len(engine.session.history) == 1
     stored = WorkspaceStore(path).load('legacy')['task_state']
     assert stored['candidate_draft_id'] == stored['draft_id']
 
@@ -198,11 +198,9 @@ def test_legacy_ready_review_cannot_commit_a_candidate_that_does_not_recompile(t
             raise AssertionError('Legacy ready candidate must recompile before any model call')
 
     engine, _ = engine_for(base, NoModel(), tmp_path / 'wrong-candidate.sqlite')
-    from cortex.capabilities.graph_merge.runtime.state import (
-        build_contract_versions,
-    )
+    from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
 
-    versions = build_contract_versions(engine.ctx.schema)
+    versions = build_contract_versions(engine.session.inputs.schema)
     # A legacy record's hashes can all be internally consistent while its
     # saved graph is not the output of its saved draft. Recompilation is proof.
     wrong = base.model_copy(update={'graph': base.graph.model_copy(update={'nodes': tuple(
@@ -213,11 +211,11 @@ def test_legacy_ready_review_cannot_commit_a_candidate_that_does_not_recompile(t
     task = task.with_review({'verdict': 'accept', 'issues': []}, candidate_hash=canonical_hash(wrong))
     raw = task.to_dict()
     raw.pop('candidate_draft_id')
-    engine.task_state = TaskState.from_dict(raw)
-    engine.contract_versions = versions
+    engine.session.task_state = TaskState.from_dict(raw)
+    engine.session.contract_versions = versions
     with pytest.raises(ValueError, match='no longer compiles'):
         engine._run_task(LocalTask('local', 'reconcile', {'A'}), 'wrong')
-    assert engine.current == base and not engine.history
+    assert engine.session.current == base and not engine.session.history
 
 
 def test_assessment_repetition_gate_survives_restart_but_new_presented_facts_reset_it(tmp_path):
@@ -247,14 +245,14 @@ def test_assessment_repetition_gate_survives_restart_but_new_presented_facts_res
         if path.exists():
             saved = WorkspaceStore(path).load('assessment')
             if saved:
-                engine.task_state = TaskState.from_dict(saved['task_state'])
+                engine.session.task_state = TaskState.from_dict(saved['task_state'])
                 if fact != 'same fact':
-                    engine.task_state = replace(engine.task_state, required_context=({
+                    engine.session.task_state = replace(engine.session.task_state, required_context=({
                         'request': {'view': 'input', 'id': 'new-evidence'},
                         'result': {'facts': {'actual_fact': fact}},
-                        'requested_for_candidate_hash': engine.task_state.candidate_hash},))
-                engine.contract_versions = engine.task_state.versions
-                engine._storage_revision = saved['revision']
+                        'requested_for_candidate_hash': engine.session.task_state.candidate_hash},))
+                engine.session.contract_versions = engine.session.task_state.versions
+                engine.session.storage_revision = saved['revision']
         try:
             engine._run_task(task, 'assessment')
         except IntegrationIncomplete as error:
@@ -364,8 +362,8 @@ def test_node_assessment_context_retry_supplies_version_bound_facts_to_all_slice
     engine.max_rounds = 0
     engine._run_task(LocalTask('local', 'consolidate', {'A'}), 'context-retry')
     assert [phase for phase, _ in calls] == ['consolidate', *['node_assess'] * 4]
-    final_packets = engine.ctx.task_assessment_premises
-    assert len(final_packets) == 2 and len(engine.history) == 1
+    final_packets = engine.session.inputs.task_assessment_premises
+    assert len(final_packets) == 2 and len(engine.session.history) == 1
     for actual in final_packets:
         packet = actual['payload']
         required = packet['required_context']
@@ -409,9 +407,9 @@ def test_node_assessment_gate_uses_facts_from_every_slice_after_restart(tmp_path
         engine.max_rounds = 0
         saved = WorkspaceStore(path).load('nodes') if path.exists() else None
         if saved:
-            engine.task_state = TaskState.from_dict(saved['task_state'])
-            engine.contract_versions = engine.task_state.versions
-            engine._storage_revision = saved['revision']
+            engine.session.task_state = TaskState.from_dict(saved['task_state'])
+            engine.session.contract_versions = engine.session.task_state.versions
+            engine.session.storage_revision = saved['revision']
         with pytest.raises(IntegrationIncomplete) as error:
             engine._run_task(task, 'nodes')
         return str(error.value), WorkspaceStore(path).load('nodes')
@@ -436,21 +434,19 @@ def test_saved_candidate_recovers_legacy_scope_without_rerunning_writer(tmp_path
     from cortex.capabilities.graph_merge.graph.scope import (
         ScopeContextRequired,
     )
-    from cortex.capabilities.graph_merge.runtime.state import (
-        build_contract_versions,
-        canonical_hash,
-    )
+    from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+    from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
     base = state([*catalog(), concept('A', 'a'), concept('B', 'b')])
     class NoWriter:
         def invoke(self, *args):
             raise AssertionError('An already compiled draft must not rerun its Writer')
     engine, _ = engine_for(base, NoWriter(), tmp_path / 'legacy-scope.sqlite')
-    versions = build_contract_versions(engine.ctx.schema)
+    versions = build_contract_versions(engine.session.inputs.schema)
     pending = TaskState.capture(base, task_id='local', phase='reconcile', versions=versions)
     pending = pending.with_draft({'explanation': 'No edits needed'}).with_candidate(base)
     pending = replace(pending, candidate_draft_id=None)
-    engine.task_state, engine.contract_versions = pending, versions
+    engine.session.task_state, engine.session.contract_versions = pending, versions
     compile_original = task_runner.compile_patch
     observed = []
     def compile_with_legacy_visibility(context, *args, **kwargs):
@@ -462,7 +458,7 @@ def test_saved_candidate_recovers_legacy_scope_without_rerunning_writer(tmp_path
     monkeypatch.setattr(task_runner, 'compile_patch', compile_with_legacy_visibility)
     engine._run_task(LocalTask('local', 'reconcile', {'A'}), 'legacy-scope')
     assert len(observed) == 2 and 'B' not in observed[0] and 'B' in observed[1]
-    assert canonical_hash(engine.current) == pending.candidate_hash
+    assert canonical_hash(engine.session.current) == pending.candidate_hash
     saved = WorkspaceStore(engine.workspace_path).load('legacy-scope')['task_state']
     assert saved['required_context'][0]['result']['items'][0]['id'] == 'B'
     assert saved['candidate_draft_id'] == pending.draft_id

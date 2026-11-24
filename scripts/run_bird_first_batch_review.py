@@ -20,7 +20,8 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository, SqlTrainingGraphMergeEvidenceResolver
@@ -153,7 +154,7 @@ def run_worker(root,db):
         write(folder/'merged_state.json',result.state.model_dump(mode='json'))
         (folder/'merged_graph.html').write_text(render_graph_html(result.state.graph,schema,title=db+' · first 10 cases · awaiting review'))
         write(folder/'status.json',{'status':'awaiting_user_review','case_ids':entry['case_ids'],
-            'model_calls':(agent.call_budget or {}).get('used'),'history':engine.history,
+            'model_calls':(agent.call_budget or {}).get('used'),'history':engine.session.history,
             'nodes':len(result.state.graph.nodes),'edges':len(result.state.graph.edges),
             'node_types':dict(Counter(n.node_type for n in result.state.graph.nodes)),
             'conflict_nodes':len(result.state.conflict_nodes),'progress_at':time.time(),

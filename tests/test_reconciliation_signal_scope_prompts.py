@@ -2,10 +2,8 @@
 from test_reconciliation_context import runtime
 
 from cortex.capabilities.graph_merge.reconciliation.presentation import fixed_prompt
-from cortex.capabilities.graph_merge.reconciliation.policy import (
-    SIGNALS,
-    reconciliation_system,
-)
+from cortex.capabilities.graph_merge.reconciliation.contract import SIGNALS
+from cortex.capabilities.graph_merge.reconciliation.policy import reconciliation_system
 
 
 def test_explicit_relation_set_completeness_and_read_only_boundary():

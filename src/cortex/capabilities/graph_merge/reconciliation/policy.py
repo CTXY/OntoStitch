@@ -1,11 +1,8 @@
 """Role-specific reconciliation policy, with a stable shared prefix."""
 import re
 from importlib.resources import files
+from cortex.capabilities.graph_merge.reconciliation.contract import SIGNALS
 
-SIGNALS = ('abstract_predicate', 'binding_contest', 'parallel_assertions', 'triangle',
-           'same_role_neighbors', 'related_decisions', 'source_selection_variants',
-           'value_concepts')
-OBLIGATIONS = ('metric_direct_inputs', 'target_alternative_scope', 'node_relation_followup')
 ROLE_FILES = {
     'writer': ('common.en.md', 'writer.en.md', 'writer-contract.en.md'),
     'assessment': ('common.en.md', 'assessment.en.md', 'assessment-contract.en.md'),

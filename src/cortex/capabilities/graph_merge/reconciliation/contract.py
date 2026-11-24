@@ -19,6 +19,12 @@ Text = Annotated[str, Field(min_length=1, pattern=r'\S')]
 NodeType = Literal['concept', 'metric', 'event', 'generation_rule']
 
 
+SIGNALS = ('abstract_predicate', 'binding_contest', 'parallel_assertions', 'triangle',
+           'same_role_neighbors', 'related_decisions', 'source_selection_variants',
+           'value_concepts')
+OBLIGATIONS = ('metric_direct_inputs', 'target_alternative_scope', 'node_relation_followup')
+
+
 class Model(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
 

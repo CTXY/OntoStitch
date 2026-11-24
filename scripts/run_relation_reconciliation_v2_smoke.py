@@ -330,11 +330,11 @@ def run_reconciliation(args, fixture, budget):
     if args.live:
         bind_recovery(args, agent, folder)
     engine = IncrementalGraphIntegrationEngine(agent, max_rounds=3)
-    engine.ctx, engine.current, engine.lineage = context, fixture.before, LineageIndex(context)
-    engine.history, engine.reviewed_sources, engine._revision = [], {}, 0
-    engine.identity_decision, engine.open_tasks = {}, []
-    engine.workspace_path, engine._storage_revision = folder / 'workspace.sqlite', None
-    engine.pending_relation_work = engine.pending_review = None
+    engine.session.inputs, engine.session.current, engine.session.lineage = context, fixture.before, LineageIndex(context)
+    engine.session.history, engine.session.reviewed_sources, engine.session.revision = [], {}, 0
+    engine.session.identity_decision, engine.session.open_tasks = {}, []
+    engine.workspace_path, engine.session.storage_revision = folder / 'workspace.sqlite', None
+    engine.session.pending_relation_work = engine.session.pending_review = None
     task = LocalTask('v2-smoke:' + fixture.name, 'reconcile', fixture.targets, checks=[fixture.signal])
     result = {'name': fixture.name, 'mode': 'live' if args.live else 'deterministic', 'status': 'running',
               'provenance': fixture.provenance}
@@ -346,7 +346,8 @@ def run_reconciliation(args, fixture, budget):
     resume_case=getattr(args,'resume_case',None)
     if resume_case is not None:
         import sqlite3
-        from cortex.capabilities.graph_merge.runtime.state import TaskState, build_contract_versions
+        from cortex.capabilities.graph_merge.runtime.state import TaskState
+        from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
         source=Path(resume_case)/'workspace.sqlite'
         with sqlite3.connect(source.resolve().as_uri()+'?mode=ro',uri=True) as origin, sqlite3.connect(engine.workspace_path) as destination:
             origin.backup(destination)
@@ -357,11 +358,11 @@ def run_reconciliation(args, fixture, budget):
         accepted=GraphState.model_validate(recovered['current'])
         if canonical_hash(accepted)!=canonical_hash(fixture.before):
             raise ValueError('This bounded probe resumes only its unchanged accepted baseline')
-        engine.task_state=restored
-        engine.contract_versions=restored.versions
-        engine._storage_revision=recovered['revision']
-        engine._revision=recovered['accepted_revision']
-        engine.history=list(recovered['history'])
+        engine.session.task_state=restored
+        engine.session.contract_versions=restored.versions
+        engine.session.storage_revision=recovered['revision']
+        engine.session.revision=recovered['accepted_revision']
+        engine.session.history=list(recovered['history'])
         result['resume_from']={'case_directory':str(Path(resume_case).resolve()),
             'stage':restored.stage,'draft':recovered['task_state'].get('draft'),
             'candidate_hash':restored.candidate_hash,'original_checkpoint_preserved':True}
@@ -369,46 +370,46 @@ def run_reconciliation(args, fixture, budget):
     try:
         engine._run_task(task, task.id)
         if args.live and fixture.name == 'value_concepts':
-            GraphManager(context.schema).validate_state(engine.current)
+            GraphManager(context.schema).validate_state(engine.session.current)
             before_ids = {node.id for node in fixture.before.graph.nodes}
-            new = [node for node in engine.current.graph.nodes if node.id not in before_ids]
+            new = [node for node in engine.session.current.graph.nodes if node.id not in before_ids]
             dimension = [node for node in new if node.node_type == 'concept'
                 and ['column.molecule.label'] in node.properties.get('targets', [])]
             if len(dimension) != 1:
                 raise AssertionError('The missing semantic label dimension was not created exactly once')
             if not any(edge.from_node_id == dimension[0].id and edge.to_node_id == 'column.molecule.label'
-                       and edge.edge_type == 'grounded_on' for edge in engine.current.graph.edges):
+                       and edge.edge_type == 'grounded_on' for edge in engine.session.current.graph.edges):
                 raise AssertionError('The new dimension has no physical representation')
             oracle = {'strict_graph_validation': True, 'dimension_created': True}
         else:
-            oracle = live_invariant_oracle(engine.current, fixture) if args.live else semantic_oracle(engine.current, fixture)
-        if not engine.history or engine.history[-1]['assessment'] != 'graph_assess':
+            oracle = live_invariant_oracle(engine.session.current, fixture) if args.live else semantic_oracle(engine.session.current, fixture)
+        if not engine.session.history or engine.session.history[-1]['assessment'] != 'graph_assess':
             raise AssertionError('Missing actual independent Assessment commit')
         saved = WorkspaceStore(engine.workspace_path).load(task.id)
         write(folder / 'task_state.json', saved['task_state'])
         result.update(status='passed', oracle=oracle, independent_assessment=True,
             assessment_output_protocol='structured_json',
-            checkpoint_stage='committed', history=engine.history)
+            checkpoint_stage='committed', history=engine.session.history)
     except Exception as error:
         result.update(status='unfinished', errors=transport_error_details(error, args.secrets if args.live else ()))
         if (folder/'controlled_stop.json').exists():
             result.update(status='controlled_stop',not_a_provider_failure=True)
-        if getattr(engine, 'task_state', None):
-            result['checkpoint_stage'] = engine.task_state.stage
-            write(folder / 'task_state.json', engine.task_state.to_dict())
-        elif engine.history:
+        if getattr(engine.session, 'task_state', None):
+            result['checkpoint_stage'] = engine.session.task_state.stage
+            write(folder / 'task_state.json', engine.session.task_state.to_dict())
+        elif engine.session.history:
             # A post-commit probe oracle can reject something Assessment missed.
             # Preserve that accepted test-workspace state; never label it passed.
             saved = WorkspaceStore(engine.workspace_path).load(task.id)
             write(folder / 'task_state.json', saved['task_state'])
             result.update(checkpoint_stage='committed_but_probe_failed',
-                runtime_committed=True, history=engine.history)
+                runtime_committed=True, history=engine.session.history)
     result.update(elapsed_seconds=round(time.monotonic() - started, 3),
         source_files_unchanged=all(digest(path) == value for path, value in fixture.provenance['source_sha256'].items()),
         trace=trace_summary(folder))
     if not args.live:
         result['offline_model_calls'] = dict(model.counts)
-    write(folder / 'after.json', engine.current.model_dump(mode='json'))
+    write(folder / 'after.json', engine.session.current.model_dump(mode='json'))
     write(folder / 'result.json', result)
     return result
 

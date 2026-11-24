@@ -42,7 +42,7 @@ class CanonicalChat:
     def invoke(self, messages, config=None):
         self.requests.append((deepcopy(messages), deepcopy(self.tools)))
         assert len(messages)==3
-        rt=self.engine.ctx.reconciliation_runtime
+        rt=self.engine.session.inputs.reconciliation_runtime
         if self.writer:
             if self.edit_edge and not rt.draft.changes: return call('edit_draft', edit())
             return call('edit_draft', {})
@@ -64,10 +64,10 @@ def fixture(tmp_path, chat):
 
 
 def test_empty_draft_needs_no_keep_decision_but_independent_assessment(tmp_path):
-    chat=CanonicalChat();engine,task=fixture(tmp_path,chat);before=engine.current
+    chat=CanonicalChat();engine,task=fixture(tmp_path,chat);before=engine.session.current
     engine._run_task(task,'noop')
-    assert engine.current==before and len(chat.requests)==2
-    assert engine.history[-1]['assessment']=='graph_assess'
+    assert engine.session.current==before and len(chat.requests)==2
+    assert engine.session.history[-1]['assessment']=='graph_assess'
     names=[{tool['function']['name'] for tool in tools} for _,tools in chat.requests]
     assert names==[{'read_evidence','read_predicates','edit_draft'},{'read_evidence'}]
     assert '# Assessment task for this round' in chat.requests[-1][0][1].content
@@ -77,7 +77,7 @@ def test_assessment_feedback_returns_to_same_writer_and_is_rechecked(tmp_path):
     class FeedbackChat(CanonicalChat):
         reviews=0
         def invoke(self,messages,config=None):
-            rt=self.engine.ctx.reconciliation_runtime
+            rt=self.engine.session.inputs.reconciliation_runtime
             if not self.writer and self.reviews==0:
                 self.reviews+=1; self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 return AIMessage(content=json.dumps({'explanation':'The preserved relationship needs a clearer definition.',
@@ -90,8 +90,8 @@ def test_assessment_feedback_returns_to_same_writer_and_is_rechecked(tmp_path):
             return super().invoke(messages,config)
     chat=FeedbackChat();engine,task=fixture(tmp_path,chat)
     engine._run_task(task,'feedback-loop')
-    assert len(engine.history)==1 and len(chat.requests)==4
-    assert next(e for e in engine.current.graph.edges if e.id=='e').properties['description'].startswith('A precise')
+    assert len(engine.session.history)==1 and len(chat.requests)==4
+    assert next(e for e in engine.session.current.graph.edges if e.id=='e').properties['description'].startswith('A precise')
 
 
 def test_malformed_assessment_is_repaired_by_assessment_only(tmp_path):
@@ -101,10 +101,10 @@ def test_malformed_assessment_is_repaired_by_assessment_only(tmp_path):
             if not self.writer and not self.sent:
                 self.sent=True;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 return AIMessage(content='{"explanation":"ok","feedback":[],"verdict":"accept"}')
-            if not self.writer: assert self.engine.ctx.reconciliation_runtime.feedback['assessment_output_error']
+            if not self.writer: assert self.engine.session.inputs.reconciliation_runtime.feedback['assessment_output_error']
             return super().invoke(messages,config)
     chat=Bad();engine,task=fixture(tmp_path,chat);engine._run_task(task,'format')
-    assert len(chat.requests)==3 and len(engine.history)==1
+    assert len(chat.requests)==3 and len(engine.session.history)==1
 
 
 def test_mixed_actions_do_not_apply_any_edit(tmp_path):
@@ -115,7 +115,7 @@ def test_mixed_actions_do_not_apply_any_edit(tmp_path):
                 self.sent=True;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 return AIMessage(content='',tool_calls=[{'name':'edit_draft','id':'a','args':edit()},
                     {'name':'edit_draft','id':'b','args':{}}])
-            if self.writer: assert self.engine.ctx.reconciliation_runtime.draft.version==0
+            if self.writer: assert self.engine.session.inputs.reconciliation_runtime.draft.version==0
             return super().invoke(messages,config)
     chat=Mixed();engine,task=fixture(tmp_path,chat);engine._run_task(task,'mixed')
     assert len(chat.requests)==3
@@ -141,7 +141,7 @@ def test_compiler_failure_saved_then_fixed_and_error_cleared(tmp_path):
     class Repair(CanonicalChat):
         edits=0
         def invoke(self,messages,config=None):
-            rt=self.engine.ctx.reconciliation_runtime
+            rt=self.engine.session.inputs.reconciliation_runtime
             if self.writer and self.edits<2:
                 self.edits+=1;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 if self.edits==2:
@@ -156,7 +156,7 @@ def test_compiler_failure_saved_then_fixed_and_error_cleared(tmp_path):
             if self.writer: assert rt.feedback['mechanical'] is None and not rt.feedback['latest_receipt']['errors']
             return super().invoke(messages,config)
     chat=Repair();engine,task=fixture(tmp_path,chat);engine._run_task(task,'repair')
-    assert len(engine.history)==1 and len(chat.requests)==3
+    assert len(engine.session.history)==1 and len(chat.requests)==3
 
 
 @pytest.mark.parametrize('bad',[{'put_changes':[{'kind':'alternative_update','change_id':'bad','reason':'No branch writes',
@@ -169,13 +169,13 @@ def test_schema_error_does_not_save_draft_and_returns_complete_feedback(tmp_path
                 self.sent=True;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 return call('edit_draft',bad)
             if self.writer:
-                rt=self.engine.ctx.reconciliation_runtime
+                rt=self.engine.session.inputs.reconciliation_runtime
                 assert rt.draft.version==0 and not rt.draft.changes
                 assert rt.feedback['latest_receipt']['draft_saved'] is False
                 assert rt.feedback['latest_receipt']['errors']
             return super().invoke(messages,config)
     chat=Invalid();engine,task=fixture(tmp_path,chat);engine._run_task(task,'schema-atomic')
-    assert len(chat.requests)==3 and len(engine.history)==1
+    assert len(chat.requests)==3 and len(engine.session.history)==1
 
 
 def test_assessment_third_protocol_attempt_is_result_only_with_previous_output(tmp_path, unbound_chat_tools):
@@ -192,7 +192,7 @@ def test_assessment_third_protocol_attempt_is_result_only_with_previous_output(t
                 assert 'Required JSON schema' in messages[-1].content
             return super().invoke(messages,config)
     chat=Repair();engine,task=fixture(tmp_path,chat);engine._run_task(task,'bounded-result-repair')
-    assert chat.assessments==3 and len(engine.history)==1
+    assert chat.assessments==3 and len(engine.session.history)==1
 
 
 def test_assessment_after_redundant_read_gets_result_only_not_another_read(tmp_path, unbound_chat_tools):
@@ -208,7 +208,7 @@ def test_assessment_after_redundant_read_gets_result_only_not_another_read(tmp_p
                 assert 'Do not repeat completed reads' in messages[-1].content
             return super().invoke(messages,config)
     chat=ReadOnce();engine,task=fixture(tmp_path,chat);engine._run_task(task,'bounded-read-repair')
-    assert chat.assessments==2 and len(engine.history)==1
+    assert chat.assessments==2 and len(engine.session.history)==1
 
 
 @pytest.fixture

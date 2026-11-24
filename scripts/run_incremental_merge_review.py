@@ -9,7 +9,8 @@ from audit_incremental_merge import audit_result
 from dotenv import load_dotenv
 from summarize_graph_merge_calls import summarize
 
-from cortex.capabilities.graph_merge.runtime.state import canonical_hash, implementation_sources
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.runtime.contracts import implementation_sources
 from cortex.capabilities.graph_merge.engine import (
     IncrementalGraphIntegrationEngine,
 )

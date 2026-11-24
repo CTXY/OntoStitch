@@ -98,9 +98,9 @@ def local_engine(tmp_path, chat):
     base = state([*catalog(), concept('A', 'a'), concept('B', 'a'), concept('C', 'a')], [relation])
     engine, _ = engine_for(base, IncrementalIntegrationAgent(chat, max_calls=6), tmp_path / 'node.sqlite')
     engine.max_rounds = 3
-    engine.history = [{'task_id': f'content-{index}', 'phase': 'consolidate', 'assessment': 'node_assess'}
+    engine.session.history = [{'task_id': f'content-{index}', 'phase': 'consolidate', 'assessment': 'node_assess'}
                       for index in range(3)]
-    engine._revision = 3
+    engine.session.revision = 3
     task = LocalTask('content-3', 'consolidate', {'A'}, groups=[{
         'members': ['A', 'B', 'C'], 'meaning': 'A proposed local pairing identity',
         'reason': 'The three source descriptions were initially grouped together.'}])
@@ -109,13 +109,13 @@ def local_engine(tmp_path, chat):
 
 def restore_engine(tmp_path, chat, saved):
     engine, task, base = local_engine(tmp_path, chat)
-    engine.current = GraphState.model_validate(saved['current'])
-    engine.lineage = LineageIndex.restore(engine.ctx, saved['lineage'])
-    engine.history = deepcopy(saved['history'])
-    engine._revision = saved['accepted_revision']
-    engine._storage_revision = saved['revision']
-    engine.task_state = TaskState.from_dict(saved['task_state'])
-    engine.contract_versions = engine.task_state.versions
+    engine.session.current = GraphState.model_validate(saved['current'])
+    engine.session.lineage = LineageIndex.restore(engine.session.inputs, saved['lineage'])
+    engine.session.history = deepcopy(saved['history'])
+    engine.session.revision = saved['accepted_revision']
+    engine.session.storage_revision = saved['revision']
+    engine.session.task_state = TaskState.from_dict(saved['task_state'])
+    engine.session.contract_versions = engine.session.task_state.versions
     return engine, task, base
 
 
@@ -123,15 +123,15 @@ def restore_engine(tmp_path, chat, saved):
 def test_assessment_feedback_repairs_relation_or_preserves_excluded_node(tmp_path, path):
     chat = LocalRevisionChat(path)
     engine, task, base = local_engine(tmp_path, chat)
-    prefix = deepcopy(engine.history)
+    prefix = deepcopy(engine.session.history)
     engine._run_task(task, 'node-revision', aliases={'A': 'A', 'B': 'A', 'C': 'A'})
-    GraphManager(load_root_schema()).validate_state(engine.current)
+    GraphManager(load_root_schema()).validate_state(engine.session.current)
     assert chat.writer_calls == 2 and chat.assessment_calls == 2
-    assert engine.history[:3] == prefix and len(engine.history) == 4
-    indexed = {node.id: node for node in engine.current.graph.nodes}
+    assert engine.session.history[:3] == prefix and len(engine.session.history) == 4
+    indexed = {node.id: node for node in engine.session.current.graph.nodes}
     if path == 'separate':
         assert indexed['C'] == next(node for node in base.graph.nodes if node.id == 'C')
-        assert engine.lineage.node_map.get('C', 'C') == 'C'
+        assert engine.session.lineage.node_map.get('C', 'C') == 'C'
     else:
         assert 'C' not in indexed
         assert SourceReference(source_id='relation-evidence') in indexed['A'].sources
@@ -153,9 +153,9 @@ def test_invalid_preview_checkpoint_resumes_assessment_without_replaying_writer(
     restored, task, _ = restore_engine(tmp_path, chat, saved)
     restored._run_task(task, 'node-revision', aliases=aliases)
     assert chat.writer_calls == 2, 'Only the subsequent feedback-driven revision may invoke Writer again'
-    assert len(restored.history) == 4
-    assert restored.history[:3] == saved['history']
-    GraphManager(load_root_schema()).validate_state(restored.current)
+    assert len(restored.session.history) == 4
+    assert restored.session.history[:3] == saved['history']
+    GraphManager(load_root_schema()).validate_state(restored.session.current)
 
 
 def test_assessment_accept_cannot_commit_a_known_invalid_self_edge(tmp_path):
@@ -163,8 +163,8 @@ def test_assessment_accept_cannot_commit_a_known_invalid_self_edge(tmp_path):
     engine, task, _ = local_engine(tmp_path, chat)
     engine._run_task(task, 'node-revision', aliases={'A': 'A', 'B': 'A', 'C': 'A'})
     assert chat.writer_calls == 2, 'Controller must return structural feedback despite the first accept'
-    assert not any(e.id == 'is-a' for e in engine.current.graph.edges)
-    GraphManager(load_root_schema()).validate_state(engine.current)
+    assert not any(e.id == 'is-a' for e in engine.session.current.graph.edges)
+    GraphManager(load_root_schema()).validate_state(engine.session.current)
 
 
 def test_restored_ready_acceptance_cannot_bypass_current_structural_guard(tmp_path):
@@ -186,6 +186,6 @@ def test_restored_ready_acceptance_cannot_bypass_current_structural_guard(tmp_pa
     restored._run_task(task, 'node-revision', aliases=aliases)
     assert chat.writer_calls == 2, 'The saved accept must produce feedback, not an invalid commit'
     assert chat.assessment_calls == 2, 'Only the repaired result needs another Assessment'
-    assert len(restored.history) == 4 and restored.history[:3] == saved['history']
-    assert not any(e.id == 'is-a' for e in restored.current.graph.edges)
-    GraphManager(load_root_schema()).validate_state(restored.current)
+    assert len(restored.session.history) == 4 and restored.session.history[:3] == saved['history']
+    assert not any(e.id == 'is-a' for e in restored.session.current.graph.edges)
+    GraphManager(load_root_schema()).validate_state(restored.session.current)

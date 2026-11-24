@@ -163,7 +163,8 @@ def main():
         if diagnostic:parts.append('</details>')
     parts.append(box('回归与保留记录验证',validation,True))
     (root/'index.html').write_text(''.join(parts)+'</html>')
-    from cortex.capabilities.graph_merge.reconciliation.policy import reconciliation_system,SIGNALS
+    from cortex.capabilities.graph_merge.reconciliation.policy import reconciliation_system
+    from cortex.capabilities.graph_merge.reconciliation.contract import SIGNALS
     from cortex.capabilities.graph_merge.reconciliation.contract import TOOLS,AssessmentResult
     prompts=[head('完整中文 prompts 与公开 schema'),'<p><a href="index.html">返回真实测试报告</a></p><p>稳定共用前缀 + 角色契约 + 仅当前 Signal 的 guidance。实际每轮 system/user 内容以各测试的 HTTP 请求记录为准。</p>']
     from cortex.capabilities.graph_merge.reconciliation.presentation import user_assets

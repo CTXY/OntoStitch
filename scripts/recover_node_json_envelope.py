@@ -13,7 +13,8 @@ import os
 import sqlite3
 
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.runtime.state import TaskState,build_contract_versions,canonical_hash
+from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash
+from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
 from cortex.capabilities.graph_merge.llm.recovery import RecoveryTracker
 from cortex.capabilities.graph_merge.consolidation.contract import NodeWriterResult
 from cortex.capabilities.graph_merge.reconciliation.agent import _json_object

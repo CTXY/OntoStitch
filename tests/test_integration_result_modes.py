@@ -11,7 +11,7 @@ from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.consolidation.compiler import IdentityIntegration, MergePatch, compile_patch
 from cortex.capabilities.graph_merge.graph.source_units import PatchContractError, source_units
 from cortex.capabilities.graph_merge.consolidation.contract import NodeWriterResult
-from cortex.capabilities.graph_merge.llm.agent import failure_feedback
+from cortex.capabilities.graph_merge.runtime.errors import failure_feedback
 from cortex.schema import ConflictPoint, GraphState, load_root_schema
 
 

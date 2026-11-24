@@ -132,15 +132,15 @@ def test_joint_assessment_checkpoint_restores_without_replaying_writer(tmp_path)
     assert saved['current']==base.model_dump(mode='json') and saved['history']==[]
     assert saved['task_state']['stage']=='assessing'
     restored,task,_=engine(tmp_path,chat)
-    restored.current=GraphState.model_validate(saved['current']);restored.lineage=LineageIndex.restore(restored.ctx,saved['lineage'])
-    restored.task_state=TaskState.from_dict(saved['task_state']);restored.contract_versions=restored.task_state.versions
-    restored._storage_revision=saved['revision'];restored.history=deepcopy(saved['history']);restored._revision=saved['accepted_revision']
+    restored.session.current=GraphState.model_validate(saved['current']);restored.session.lineage=LineageIndex.restore(restored.session.inputs,saved['lineage'])
+    restored.session.task_state=TaskState.from_dict(saved['task_state']);restored.session.contract_versions=restored.session.task_state.versions
+    restored.session.storage_revision=saved['revision'];restored.session.history=deepcopy(saved['history']);restored.session.revision=saved['accepted_revision']
     restored._run_task(task,'multi',aliases=aliases)
     assert chat.writer_calls==1 and chat.assess_calls==2
-    assert len(restored.history)==1 and restored.history[0]['task_id']=='original-group'
+    assert len(restored.session.history)==1 and restored.session.history[0]['task_id']=='original-group'
     final=WorkspaceStore(restored.workspace_path).load('multi')
     assert final['task_state']['stage']=='committed'
-    assert {n.id for n in restored.current.graph.nodes if n.node_type=='concept'}=={'A','C'}
+    assert {n.id for n in restored.session.current.graph.nodes if n.node_type=='concept'}=={'A','C'}
 
 
 def test_partition_preserves_conflict_and_branch_specific_edges():
@@ -227,5 +227,5 @@ def test_native_invalid_json_recovers_from_one_exact_json_fence(tmp_path):
     chat=FencedChat();eng,task,_=engine(tmp_path,chat)
     eng._run_task(task,'fenced-node-recovery',aliases={k:'A' for k in 'ABCDE'})
     assert chat.writer_calls==2 and chat.assess_calls==1
-    assert len(eng.history)==1
-    assert {n.id for n in eng.current.graph.nodes if n.node_type=='concept'}=={'A','C'}
+    assert len(eng.session.history)==1
+    assert {n.id for n in eng.session.current.graph.nodes if n.node_type=='concept'}=={'A','C'}

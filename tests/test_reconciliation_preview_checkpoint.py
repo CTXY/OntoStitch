@@ -9,11 +9,11 @@ from test_reconciliation_agent_runtime import CanonicalChat, fixture, call, edit
 
 def restart(tmp_path, saved, chat):
     engine, task = fixture(tmp_path, chat)
-    engine.task_state = TaskState.from_dict(saved['task_state'])
-    engine.contract_versions = engine.task_state.versions
-    engine._storage_revision = saved['revision']
-    engine.history = deepcopy(saved['history'])
-    engine._revision = saved['accepted_revision']
+    engine.session.task_state = TaskState.from_dict(saved['task_state'])
+    engine.session.contract_versions = engine.session.task_state.versions
+    engine.session.storage_revision = saved['revision']
+    engine.session.history = deepcopy(saved['history'])
+    engine.session.revision = saved['accepted_revision']
     return engine, task
 
 
@@ -23,12 +23,12 @@ def test_authored_action_restart_does_not_repeat_writer(tmp_path,empty,window):
     chat=CanonicalChat(edit_edge=not empty)
     engine,task=fixture(tmp_path,chat)
     completed={'task_id':'previously-completed','revision':7,'assessment':'graph_assess'}
-    engine.history=[completed];engine._revision=7
+    engine.session.history=[completed];engine.session.revision=7
     original=engine._persist; stopped=False
     def persist(run_id):
         nonlocal stopped
         original(run_id)
-        state=engine.task_state
+        state=engine.session.task_state
         intent=state.agent_recovery.get('complete_draft_action')
         match=(window=='action_saved' and intent is not None or
             window=='compiled' and intent is not None and state.stage=='compiled_unsubmitted' or
@@ -41,14 +41,14 @@ def test_authored_action_restart_does_not_repeat_writer(tmp_path,empty,window):
         engine._run_task(task,'crash')
     saved=WorkspaceStore(engine.workspace_path).load('crash')
     assert saved['history']==[completed]
-    assert saved['current']==engine.current.model_dump(mode='json')
+    assert saved['current']==engine.session.current.model_dump(mode='json')
     resumed_chat=CanonicalChat(edit_edge=not empty)
     resumed,resumed_task=restart(tmp_path,saved,resumed_chat)
     resumed._run_task(resumed_task,'crash')
     assert len(resumed_chat.requests)==1
     assert all(t['function']['name']!='edit_draft' for t in resumed_chat.requests[0][1])
-    assert resumed.history[0]==completed and len(resumed.history)==2
-    assert resumed._revision==8
+    assert resumed.session.history[0]==completed and len(resumed.session.history)==2
+    assert resumed.session.revision==8
 
 
 def test_initial_empty_preview_still_requires_writer_judgment(tmp_path):
@@ -57,7 +57,7 @@ def test_initial_empty_preview_still_requires_writer_judgment(tmp_path):
     def persist(run_id):
         nonlocal stopped
         original(run_id)
-        if not stopped and engine.task_state.stage=='compiled_unsubmitted':
+        if not stopped and engine.session.task_state.stage=='compiled_unsubmitted':
             stopped=True
             raise RuntimeError('Baseline preview only')
     engine._persist=persist
@@ -83,7 +83,7 @@ def test_failed_compile_restart_keeps_draft_and_error_feedback(tmp_path):
     def persist(run_id):
         nonlocal stopped
         original(run_id)
-        if not stopped and engine.task_state.issues:
+        if not stopped and engine.session.task_state.issues:
             stopped=True;raise RuntimeError('Failed compile saved')
     engine._persist=persist
     with pytest.raises(RuntimeError,match='Failed compile saved'):
@@ -94,7 +94,7 @@ def test_failed_compile_restart_keeps_draft_and_error_feedback(tmp_path):
         def invoke(self,messages,config=None):
             if self.writer:
                 self.requests.append((deepcopy(messages),deepcopy(self.tools)))
-                rt=self.engine.ctx.reconciliation_runtime
+                rt=self.engine.session.inputs.reconciliation_runtime
                 assert rt.draft.version==1
                 assert 'missing-endpoint' in str(rt.feedback['latest_receipt']['errors'])
                 replacement=edit();replacement['put_changes'][0]['change_id']='corrected'
@@ -103,7 +103,7 @@ def test_failed_compile_restart_keeps_draft_and_error_feedback(tmp_path):
             return super().invoke(messages,config)
     repaired=Repair();resumed,resumed_task=restart(tmp_path,saved,repaired)
     resumed._run_task(resumed_task,'invalid')
-    assert len(repaired.requests)==2 and len(resumed.history)==1
+    assert len(repaired.requests)==2 and len(resumed.session.history)==1
 
 
 def test_exact_candidate_binding_is_required_before_assessment():

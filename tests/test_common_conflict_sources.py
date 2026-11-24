@@ -7,7 +7,7 @@ from test_graph_manager import apply
 from cortex.application.merge_graph import GraphMergeResult
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.graph.publication import Preview
-from cortex.capabilities.graph_merge.consolidation.conflicts import ConflictResolution, resolution_edits
+from cortex.capabilities.graph_merge.graph.conflicts import ConflictResolution, resolution_edits
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element, IntegrationProposal
 from cortex.capabilities.graph_merge.graph.provenance import SourceCoverageError, validate_rewrite_sources

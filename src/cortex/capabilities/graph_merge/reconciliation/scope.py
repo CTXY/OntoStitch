@@ -33,10 +33,7 @@ def signal_scope(context, current, checks):
     """Select exact signal premises and grants; union does not expand endpoints."""
     if isinstance(checks, dict):
         checks = [checks]
-    from cortex.capabilities.graph_merge.reconciliation.policy import (
-        OBLIGATIONS,
-        SIGNALS,
-    )
+    from cortex.capabilities.graph_merge.reconciliation.contract import OBLIGATIONS, SIGNALS
     nodes = {node.id: node for node in current.graph.nodes}
     edges = {edge.id: edge for edge in current.graph.edges}
     scope = SignalScope()

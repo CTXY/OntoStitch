@@ -365,3 +365,23 @@ class IntegrationContext:
             }
         )
         return result
+
+
+def input_fingerprint(context):
+    import hashlib
+    import json
+
+    data = [
+        context.existing.model_dump(mode="json"),
+        context.incoming.model_dump(mode="json"),
+        context.schema.model_dump(mode="json"),
+        sorted(
+            {
+                (e.id, json.dumps(e.content, ensure_ascii=False, sort_keys=True))
+                for e in context.evidence
+            }
+        ),
+    ]
+    return hashlib.sha256(
+        json.dumps(data, ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()

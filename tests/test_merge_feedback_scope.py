@@ -65,9 +65,9 @@ def test_review_named_node_gets_incident_edge_scope_without_opening_its_neighbou
 
     agent = Agent()
     engine = IncrementalGraphIntegrationEngine(agent)
-    engine.ctx, engine.current, engine.lineage = ctx, ctx.union_state(), LineageIndex(ctx)
-    engine._revision, engine.reviewed_sources, engine.history = 0, {}, []
+    engine.session.inputs, engine.session.current, engine.session.lineage = ctx, ctx.union_state(), LineageIndex(ctx)
+    engine.session.revision, engine.session.reviewed_sources, engine.session.history = 0, {}, []
     engine._run_task(LocalTask("scope", "consolidate", {a}), "unit")
     assert agent.writes == agent.reviews == 2
-    assert engine.history[0]["delta"]["edges"]["updated"] == [bc]
-    assert next(n for n in engine.current.graph.nodes if n.id == a).name == 'Representative A'
+    assert engine.session.history[0]["delta"]["edges"]["updated"] == [bc]
+    assert next(n for n in engine.session.current.graph.nodes if n.id == a).name == 'Representative A'

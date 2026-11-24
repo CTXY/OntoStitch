@@ -27,7 +27,8 @@ from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
-from cortex.capabilities.graph_merge.runtime.state import TaskState, build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash
+from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
 from cortex.capabilities.graph_merge.consolidation.presentation import NodeTaskDialogue, build_node_packet
 from cortex.capabilities.graph_merge.consolidation.contract import node_system
 from cortex.capabilities.graph_merge.evidence import EvidenceItem
@@ -360,29 +361,29 @@ def run_fixture(args, spec, prepared, model, shared_budget):
         trace_sink=FileSystemGraphMergeTraceSink(root / 'trace.jsonl'))
     agent.call_budget = shared_budget
     engine = IncrementalGraphIntegrationEngine(agent, max_rounds=args.max_rounds, model_call_budget=shared_budget['limit'])
-    engine.ctx, engine.current, engine.lineage = context, base, LineageIndex(context)
-    engine._revision, engine.reviewed_sources, engine.history = 0, {}, []
-    engine.workspace_path, engine._storage_revision = root / 'workspace.sqlite', None
-    engine.identity_decision, engine.open_tasks = {}, []
-    engine.pending_relation_work = engine.pending_review = None
+    engine.session.inputs, engine.session.current, engine.session.lineage = context, base, LineageIndex(context)
+    engine.session.revision, engine.session.reviewed_sources, engine.session.history = 0, {}, []
+    engine.workspace_path, engine.session.storage_revision = root / 'workspace.sqlite', None
+    engine.session.identity_decision, engine.session.open_tasks = {}, []
+    engine.session.pending_relation_work = engine.session.pending_review = None
     if manifest.get('resume_workspace'):
         saved = read_checkpoint(manifest['resume_workspace'], 'node-smoke:' + manifest['name'])
-        engine.current = GraphState.model_validate(saved['current'])
-        engine.lineage = LineageIndex.restore(context, saved['lineage'])
-        engine.task_state = TaskState.from_dict(saved['task_state'])
-        engine.contract_versions = engine.task_state.versions
-        if engine.contract_versions != build_contract_versions(context.schema):
+        engine.session.current = GraphState.model_validate(saved['current'])
+        engine.session.lineage = LineageIndex.restore(context, saved['lineage'])
+        engine.session.task_state = TaskState.from_dict(saved['task_state'])
+        engine.session.contract_versions = engine.session.task_state.versions
+        if engine.session.contract_versions != build_contract_versions(context.schema):
             raise ValueError('Prepared migration policy changed; choose a new output and migrate again')
-        engine.history = deepcopy(saved.get('history', []))
-        engine.open_tasks = deepcopy(saved.get('open_tasks', []))
-        engine._revision = saved.get('accepted_revision', 0)
-        engine._storage_revision = saved['revision']
-        engine.identity_decision = deepcopy(saved.get('identity', {}))
-        engine.reviewed_sources = {key: {SourceReference.model_validate(row) for row in rows}
+        engine.session.history = deepcopy(saved.get('history', []))
+        engine.session.open_tasks = deepcopy(saved.get('open_tasks', []))
+        engine.session.revision = saved.get('accepted_revision', 0)
+        engine.session.storage_revision = saved['revision']
+        engine.session.identity_decision = deepcopy(saved.get('identity', {}))
+        engine.session.reviewed_sources = {key: {SourceReference.model_validate(row) for row in rows}
             for key, rows in saved.get('reviewed_sources', {}).items()}
-        engine.pending_relation_work = deepcopy(saved.get('pending_relation_work'))
-        engine.pending_review = deepcopy(saved.get('pending_review'))
-        engine.relation_followups = deepcopy(saved.get('relation_followups', []))
+        engine.session.pending_relation_work = deepcopy(saved.get('pending_relation_work'))
+        engine.session.pending_review = deepcopy(saved.get('pending_review'))
+        engine.session.relation_followups = deepcopy(saved.get('relation_followups', []))
     members = manifest['member_ids']
     context.task_visible_ids = {node.id for node in base.graph.nodes} | {edge.id for edge in base.graph.edges}
     task = LocalTask('node-smoke:' + manifest['name'], 'consolidate', set(members),
@@ -393,11 +394,11 @@ def run_fixture(args, spec, prepared, model, shared_budget):
     write(root / 'fixture.json', manifest)
     try:
         engine._run_task(task, 'node-smoke:' + manifest['name'], aliases={member: members[0] for member in members})
-        GraphManager(context.schema).validate_state(engine.current)
+        GraphManager(context.schema).validate_state(engine.session.current)
         manifest['strict_candidate_validation_passed'] = True
         from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
         saved = WorkspaceStore(root / 'workspace.sqlite').load('node-smoke:' + manifest['name'])
-        completed = [entry for entry in engine.history if entry.get('task_id') == task.id and entry.get('assessment') == 'node_assess']
+        completed = [entry for entry in engine.session.history if entry.get('task_id') == task.id and entry.get('assessment') == 'node_assess']
         manifest['node_assessment_passed'] = bool(completed) and saved.get('task_state', {}).get('stage') == 'committed'
         manifest['committed_task_evidence'] = {'history': completed, 'checkpoint_stage': saved.get('task_state', {}).get('stage')}
         write(root / 'task_state.json', saved['task_state'])
@@ -414,14 +415,14 @@ def run_fixture(args, spec, prepared, model, shared_budget):
         for row in manifest['trace']['per_call'])
     manifest['relation_writer_calls_this_attempt'] = sum(row['phase'] == 'integration_reconcile'
         for row in manifest['trace']['per_call'])
-    manifest['history'] = engine.history
-    manifest['task_stage'] = getattr(getattr(engine, 'task_state', None), 'stage', None)
-    manifest['pending_relation_work'] = getattr(engine, 'pending_relation_work', None)
-    manifest['relation_followups'] = getattr(engine, 'relation_followups', [])
-    state = engine.current
+    manifest['history'] = engine.session.history
+    manifest['task_stage'] = getattr(getattr(engine.session, 'task_state', None), 'stage', None)
+    manifest['pending_relation_work'] = getattr(engine.session, 'pending_relation_work', None)
+    manifest['relation_followups'] = getattr(engine.session, 'relation_followups', [])
+    state = engine.session.current
     write(root / 'after.json', state.model_dump(mode='json'))
-    if getattr(engine, 'task_state', None) is not None:
-        write(root / 'task_state.json', engine.task_state.to_dict())
+    if getattr(engine.session, 'task_state', None) is not None:
+        write(root / 'task_state.json', engine.session.task_state.to_dict())
     original_edges = [edge for edge in base.graph.edges if edge.from_node_id in members]
     after_edges = {edge.id: edge for edge in state.graph.edges}
     compiled = getattr(context, 'last_compiled_patch', None)

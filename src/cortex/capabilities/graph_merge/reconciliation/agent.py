@@ -112,7 +112,7 @@ def invoke_reconciliation(agent, phase, context, payload):
         if store: store(runtime.recovery_key,record)
 
     def error_body(error):
-        from cortex.capabilities.graph_merge.llm.agent import failure_feedback
+        from cortex.capabilities.graph_merge.runtime.errors import failure_feedback
         return failure_feedback(error)
 
     def observe(stage, raw, body, premises):

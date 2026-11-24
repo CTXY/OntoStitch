@@ -49,7 +49,7 @@ def test_identity_content_assessment_and_structural_review_publish_once(tmp_path
     result = engine.merge(state(), original, load_root_schema(), run_id="serial")
     assert len([n for n in result.state.graph.nodes if n.node_type == "concept"]) == 1
     assert agent.phases == ["identity", "consolidate", "node_assess", "reconcile"]
-    assert len(engine.history) == 2
+    assert len(engine.session.history) == 2
     assert engine.last_session["revision"] == 2
 
 
@@ -153,19 +153,19 @@ def test_no_edit_decision_judgment_skips_independent_assessment():
             )
 
     engine = IncrementalGraphIntegrationEngine(Agent(), max_rounds=0)
-    engine.ctx = ctx
-    engine.current = ctx.union_state()
-    engine.lineage = LineageIndex(ctx)
-    engine._revision = 0
-    engine.reviewed_sources = {}
-    engine.history = []
-    before = engine.current
+    engine.session.inputs = ctx
+    engine.session.current = ctx.union_state()
+    engine.session.lineage = LineageIndex(ctx)
+    engine.session.revision = 0
+    engine.session.reviewed_sources = {}
+    engine.session.history = []
+    before = engine.session.current
     engine._run_task(
         LocalTask("decision", "reconcile", set(ids), checks=[signal]), "unit"
     )
     assert phases == ["reconcile"]
-    assert engine.current == before and len(engine.history) == 1
-    assert engine.history[0]["assessment"] == "skipped_no_change"
+    assert engine.session.current == before and len(engine.session.history) == 1
+    assert engine.session.history[0]["assessment"] == "skipped_no_change"
 
 
 def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
@@ -235,16 +235,16 @@ def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
             )
 
     engine = IncrementalGraphIntegrationEngine(Agent(), max_rounds=0)
-    engine.ctx = ctx
-    engine.current = ctx.union_state()
-    engine.lineage = LineageIndex(ctx)
-    engine._revision = 0
-    engine.reviewed_sources = {}
-    engine.history = []
-    old = engine.current
+    engine.session.inputs = ctx
+    engine.session.current = ctx.union_state()
+    engine.session.lineage = LineageIndex(ctx)
+    engine.session.revision = 0
+    engine.session.reviewed_sources = {}
+    engine.session.history = []
+    old = engine.session.current
     with pytest.raises(IntegrationIncomplete):
         engine._run_task(LocalTask("delete", "reconcile", {r, e}), "unit")
-    assert phases == ["reconcile", "graph_assess"] and engine.current == old
+    assert phases == ["reconcile", "graph_assess"] and engine.session.current == old
 
 
 def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path):
@@ -256,8 +256,8 @@ def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path
     first.workspace_path = tmp_path / "first.sqlite"
     first.merge(state(), source, schema, run_id="first")
     snapshot = WorkspaceStore(first.workspace_path).load("first")
-    target = next(n.id for n in first.current.graph.nodes if n.node_type == "concept")
-    untouched = first.current
+    target = next(n.id for n in first.session.current.graph.nodes if n.node_type == "concept")
+    untouched = first.session.current
     agent = IdentityOnlyAgent()
     second = IncrementalGraphIntegrationEngine(agent)
     second.resume_snapshot = snapshot
@@ -266,9 +266,9 @@ def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path
     result = second.merge(state(), source, schema, run_id="local")
     assert agent.phases == ["reconcile", "graph_assess"]
     assert "identity" not in agent.phases and "consolidate" not in agent.phases
-    assert second.current == untouched
+    assert second.session.current == untouched
     assert len(result.node_mappings) == len(source.graph.nodes)
-    assert second.history[-1]["task_id"] == "external-review"
+    assert second.session.history[-1]["task_id"] == "external-review"
 
     import pytest
 
@@ -285,7 +285,7 @@ def test_completed_content_feedback_uses_node_assessment_without_identity_rerun(
     first.workspace_path = tmp_path / "first.sqlite"
     first.merge(state(), source, load_root_schema(), run_id="first")
     snapshot = WorkspaceStore(first.workspace_path).load("first")
-    target = next(n.id for n in first.current.graph.nodes if n.node_type == "concept")
+    target = next(n.id for n in first.session.current.graph.nodes if n.node_type == "concept")
     agent = IdentityOnlyAgent()
     second = IncrementalGraphIntegrationEngine(agent)
     second.resume_snapshot = snapshot
@@ -294,7 +294,7 @@ def test_completed_content_feedback_uses_node_assessment_without_identity_rerun(
     second.feedback_phase = "consolidate"
     result = second.merge(state(), source, load_root_schema(), run_id="local-content")
     assert agent.phases == ["consolidate", "node_assess"]
-    assert second.current == first.current
+    assert second.session.current == first.session.current
     assert len(result.node_mappings) == len(source.graph.nodes)
 
     second.feedback_phase = "identity"
@@ -311,8 +311,8 @@ def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypat
     original = state([*catalog(), concept("A", "a"), concept("B", "b")])
     ctx = IntegrationContext(state(), original, load_root_schema())
     engine = IncrementalGraphIntegrationEngine(None)
-    engine.ctx, engine.current = ctx, ctx.union_state()
-    engine.lineage = LineageIndex(ctx)
+    engine.session.inputs, engine.session.current = ctx, ctx.union_state()
+    engine.session.lineage = LineageIndex(ctx)
     a, b = ctx.input_node_map["A"], ctx.input_node_map["B"]
     calls = []
     monkeypatch.setattr(

@@ -38,18 +38,18 @@ def test_writer_revision_retains_draft_and_finding_across_transport_loss(tmp_pat
     def engine(agent, saved=None):
         ctx = IntegrationContext(state(), original, load_root_schema())
         value = IncrementalGraphIntegrationEngine(agent)
-        value.ctx, value.current, value.lineage = ctx, ctx.union_state(), LineageIndex(ctx)
-        value._revision, value.history, value.reviewed_sources, value.identity_decision = 0, [], {}, {}
-        value.workspace_path, value._storage_revision = path, saved['revision'] if saved else None
-        value.pending_review = saved['pending_review'] if saved else None
+        value.session.inputs, value.session.current, value.session.lineage = ctx, ctx.union_state(), LineageIndex(ctx)
+        value.session.revision, value.session.history, value.session.reviewed_sources, value.session.identity_decision = 0, [], {}, {}
+        value.workspace_path, value.session.storage_revision = path, saved['revision'] if saved else None
+        value.session.pending_review = saved['pending_review'] if saved else None
         if saved:
-            value.task_state = TaskState.from_dict(saved['task_state'])
-            value.contract_versions = value.task_state.versions
-            value.open_tasks = saved['open_tasks']
+            value.session.task_state = TaskState.from_dict(saved['task_state'])
+            value.session.contract_versions = value.session.task_state.versions
+            value.session.open_tasks = saved['open_tasks']
         return value, LocalTask('content', 'consolidate', {ctx.input_node_map['A']})
 
     first, task = engine(First())
-    before = first.current
+    before = first.session.current
     with pytest.raises(RuntimeError, match='transport lost'):
         first._run_task(task, 'revision')
     saved = WorkspaceStore(path).load('revision')
@@ -78,5 +78,5 @@ def test_writer_revision_retains_draft_and_finding_across_transport_loss(tmp_pat
     resumed, task = engine(model, saved)
     resumed._run_task(task, 'revision')
     assert model.phases == ['consolidate', 'node_assess']
-    assert next(n for n in resumed.current.graph.nodes if n.node_type == 'concept').name == 'Supported corrected name'
-    assert resumed.pending_review is None and len(resumed.history) == 1
+    assert next(n for n in resumed.session.current.graph.nodes if n.node_type == 'concept').name == 'Supported corrected name'
+    assert resumed.session.pending_review is None and len(resumed.session.history) == 1

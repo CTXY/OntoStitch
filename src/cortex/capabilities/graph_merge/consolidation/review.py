@@ -6,6 +6,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 from cortex.capabilities.graph_merge.models import Model
+from cortex.capabilities.graph_merge.graph.views import graph_view
 from cortex.schema.relation_contracts import effective_schema
 
 
@@ -64,22 +65,6 @@ class Review(Model):
         return tuple(dict.fromkeys(ref for issue in self.issues for ref in issue.refs))
 
 
-def graph_view(context, view, *, before=None, candidate=None):
-    """Never substitute input data for a missing before/candidate snapshot."""
-    if view == "input":
-        return context.nodes, context.edges, context.union_state().graph
-    if view == "before":
-        state = before or getattr(context, "task_before", None)
-        if state is None and getattr(context, "active_batch", None) is not None:
-            state = context.active_batch.base
-    elif view == "candidate":
-        state = candidate or context.candidate
-    else:
-        raise ValueError("view must be input, before, or candidate")
-    if state is None:
-        raise ValueError(f"No {view} graph snapshot is available")
-    return ({node.id: node for node in state.graph.nodes},
-            {edge.id: edge for edge in state.graph.edges}, state.graph)
 
 
 class ReviewFactError(ValueError):

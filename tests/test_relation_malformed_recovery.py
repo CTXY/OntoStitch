@@ -18,7 +18,7 @@ def malformed(ident='broken'):
                                AIMessage(content='{"explanation": "Removed plain Patch fallback"}')])
 def test_malformed_action_repairs_to_current_edit_draft_without_saving_invalid_raw(tmp_path, bad):
     def valid(model, messages):
-        rt = model.engine.ctx.reconciliation_runtime
+        rt = model.engine.session.inputs.reconciliation_runtime
         assert rt.draft.version == 0 and not rt.draft.changes
         assert rt.feedback['protocol_error']
         assert len(messages) == 3
@@ -26,7 +26,7 @@ def test_malformed_action_repairs_to_current_edit_draft_without_saving_invalid_r
     chat = ScriptedModel([bad, valid, ACCEPT])
     engine, task = fixture(tmp_path, chat)
     engine._run_task(task, 'malformed')
-    assert len(chat.requests) == 3 and len(engine.history) == 1
+    assert len(chat.requests) == 3 and len(engine.session.history) == 1
 
 
 @pytest.mark.parametrize('kind', ['mixed_reads', 'unknown_tool', 'multiple_actions'])
@@ -41,14 +41,14 @@ def test_invalid_action_batch_is_atomic_before_any_read_or_draft_side_effect(tmp
     else:
         response = AIMessage(content='', tool_calls=[*valid.tool_calls, {**valid.tool_calls[0], 'id': 'another'}])
     def after(model, messages):
-        rt = model.engine.ctx.reconciliation_runtime
+        rt = model.engine.session.inputs.reconciliation_runtime
         assert not rt._journal and rt.draft.version == 0 and not rt.draft.changes
         assert rt.feedback['protocol_error']
         return call('edit_draft', {})
     chat = ScriptedModel([response, after, ACCEPT])
     engine, task = fixture(tmp_path, chat)
     engine._run_task(task, 'atomic-malformed')
-    assert len(engine.history) == 1
+    assert len(engine.session.history) == 1
 
 
 def test_malformed_round_budget_ignores_call_ids_and_invalid_placeholder_count(tmp_path):
@@ -57,6 +57,6 @@ def test_malformed_round_budget_ignores_call_ids_and_invalid_placeholder_count(t
         *malformed('two').invalid_tool_calls, *malformed('three').invalid_tool_calls])
     chat = ScriptedModel([first, second, malformed('four')])
     engine, task = fixture(tmp_path, chat)
-    before = engine.current
+    before = engine.session.current
     with pytest.raises(OutputProtocolRecoveryExhausted): engine._run_task(task, 'budget')
-    assert len(chat.requests) == 3 and engine.current == before and not engine.history
+    assert len(chat.requests) == 3 and engine.session.current == before and not engine.session.history

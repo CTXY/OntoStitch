@@ -94,7 +94,7 @@ def test_canonical_transport_recovery_preserves_reads_without_replaying_them(tmp
 
     first = ScriptedModel([])
     engine, task = fixture(tmp_path, first)
-    evidence_id = engine.ctx.evidence[0].id
+    evidence_id = engine.session.inputs.evidence[0].id
     first.replies = iter([call('read_evidence', {'ids': [evidence_id]}), ConnectionError('Logical request interrupted')])
     replacement = ScriptedModel([call('edit_draft', {}), ACCEPT])
     replacement.engine = engine
@@ -110,7 +110,7 @@ def test_canonical_transport_recovery_preserves_reads_without_replaying_them(tmp
     writer = next(row for row in saved['task_state']['agent_recovery'].values()
                   if row.get('scope', {}).get('phase') == 'reconcile')
     assert [row['name'] for row in writer['runtime']['journal']].count('read_evidence') == 1
-    assert len(engine.history) == 1
+    assert len(engine.session.history) == 1
 
 
 def test_current_node_assessment_cannot_restart_a_terminal_transport_failure():

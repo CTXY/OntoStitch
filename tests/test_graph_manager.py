@@ -1182,7 +1182,7 @@ def test_final_merge_validation_rejects_invalid_working_candidate(manager, monke
     operator.max_rounds = 0
 
     def inject_invalid_candidate(*args, **kwargs):
-        operator.current = corrupted
+        operator.session.current = corrupted
 
     # A completed earlier phase cannot authorize an invalid working snapshot.
     # Keep the final production validation gate in the actual merge flow.

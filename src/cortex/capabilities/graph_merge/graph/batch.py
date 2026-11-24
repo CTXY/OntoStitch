@@ -19,7 +19,7 @@ from cortex.schema import ConflictPoint, GraphEdge, GraphNode, GraphSpace, Graph
 from cortex.schema.models import EdgeType
 from cortex.schema.relation_contracts import merge_relation_contracts
 from cortex.schema.validation import validate_graph_state
-from cortex.capabilities.graph_merge.consolidation.conflicts import ConflictResolution, resolution_edits
+from cortex.capabilities.graph_merge.graph.conflicts import ConflictResolution, resolution_edits
 from cortex.capabilities.graph_merge.evidence import evidence_sources
 
 

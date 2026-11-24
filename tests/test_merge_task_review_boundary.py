@@ -47,7 +47,7 @@ def test_real_task_review_includes_unchanged_consumer_of_new_conflict(tmp_path):
     task = LocalTask("content", "consolidate", {"A", "B"}, groups=[{"members": ["A", "B"],
         "meaning": "One accepted attribute", "reason": "Confirmed business identity."}])
     engine._run_task(task, "scope", aliases={"A": "A", "B": "A"})
-    assert next(n for n in engine.current.graph.nodes if n.id == "metric") == consumer
+    assert next(n for n in engine.session.current.graph.nodes if n.id == "metric") == consumer
     assert "metric" in checked, "Unchanged dependent content must be assessed against its changed operand"
 
 
@@ -84,7 +84,7 @@ def test_invalid_atomic_edit_feedback_survives_restart_without_poisoning_draft(t
     recovery = next(row for key, row in saved["task_state"]["agent_recovery"].items() if key.startswith("simple:"))
     assert "unsupported" in str(recovery["runtime"]["feedback"]["latest_receipt"])
     assert recovery["runtime"]["draft"]["version"] == 0
-    assert engine.current == base and not engine.history
+    assert engine.session.current == base and not engine.session.history
 
     review={"explanation":"The unchanged local graph preserves the required representation and all original knowledge.","feedback":[]}
     import json
@@ -92,7 +92,7 @@ def test_invalid_atomic_edit_feedback_survives_restart_without_poisoning_draft(t
         AIMessage(content="",tool_calls=[{"name":"edit_draft","args":{},"id":"submit"}]),
         AIMessage(content=json.dumps(review))]))
     engine._run_task(task, "draft")
-    assert engine.current == base and len(engine.history) == 1
+    assert engine.session.current == base and len(engine.session.history) == 1
     saved = WorkspaceStore(engine.workspace_path).load("draft")
     assert not saved["task_state"]["draft"].get("changes")
     assert saved["task_state"]["stage"] == "committed"
@@ -110,11 +110,11 @@ def test_failed_commit_persistence_does_not_advance_accepted_memory_and_can_resu
                 if phase == "reconcile" else Review(verdict="accept"))
 
     engine, _ = engine_for(base, Agent(), tmp_path / "commit.sqlite")
-    lineage, reviewed = deepcopy(engine.lineage.snapshot()), deepcopy(engine.reviewed_sources)
+    lineage, reviewed = deepcopy(engine.session.lineage.snapshot()), deepcopy(engine.session.reviewed_sources)
     persist = engine._persist
 
     def fail_commit(run_id, *args, **kwargs):
-        if engine.task_state.stage == "committed":
+        if engine.session.task_state.stage == "committed":
             raise OSError("Commit persistence failed")
         return persist(run_id, *args, **kwargs)
 
@@ -122,11 +122,11 @@ def test_failed_commit_persistence_does_not_advance_accepted_memory_and_can_resu
     task = LocalTask("local", "reconcile", {"A"})
     with pytest.raises(OSError, match="Commit persistence"):
         engine._run_task(task, "commit")
-    assert engine.current == base
-    assert engine.lineage.snapshot() == lineage
-    assert engine._revision == 0 and not engine.history
-    assert engine.reviewed_sources == reviewed
-    assert engine.task_state.stage == "ready_to_commit"
+    assert engine.session.current == base
+    assert engine.session.lineage.snapshot() == lineage
+    assert engine.session.revision == 0 and not engine.session.history
+    assert engine.session.reviewed_sources == reviewed
+    assert engine.session.task_state.stage == "ready_to_commit"
     saved = WorkspaceStore(engine.workspace_path).load("commit")
     assert saved["current"] == base.model_dump(mode="json")
     assert saved["task_state"]["stage"] == "ready_to_commit"
@@ -135,8 +135,8 @@ def test_failed_commit_persistence_does_not_advance_accepted_memory_and_can_resu
     previous_calls = list(phases)
     engine._run_task(task, "commit")
     assert phases == previous_calls
-    assert engine.current != base and engine._revision == 1
-    assert len(engine.history) == 1
+    assert engine.session.current != base and engine.session.revision == 1
+    assert len(engine.session.history) == 1
 
 
 def test_same_source_coverage_cannot_bypass_independent_knowledge_loss_review(tmp_path):
@@ -170,7 +170,7 @@ def test_same_source_coverage_cannot_bypass_independent_knowledge_loss_review(tm
         "meaning": "One referent", "reason": "Confirmed identity, distinct complementary knowledge."}])
     with pytest.raises(IntegrationIncomplete, match="assessment"):
         engine._run_task(task, "same-source", aliases={"A": "A", "B": "A"})
-    assert checked and engine.current == base and not engine.history
+    assert checked and engine.session.current == base and not engine.session.history
     saved = WorkspaceStore(engine.workspace_path).load("same-source")
     assert saved["current"] == base.model_dump(mode="json")
     assert saved["task_state"]["stage"] == "revising"
@@ -199,7 +199,7 @@ def test_missing_assessment_context_retries_review_without_rewriting(tmp_path):
     engine.max_rounds = 0
     engine._run_task(LocalTask('context', 'reconcile', {'A'}), 'context')
     assert calls == ['reconcile', 'graph_assess', 'graph_assess']
-    assert len(engine.history) == 1
+    assert len(engine.session.history) == 1
 
 
 def test_unavailable_assessment_context_blocks_without_changing_accepted_graph(tmp_path):
@@ -219,7 +219,7 @@ def test_unavailable_assessment_context_blocks_without_changing_accepted_graph(t
     engine, _ = engine_for(base, Agent(), tmp_path / 'unavailable.sqlite')
     with pytest.raises(IntegrationIncomplete, match='unavailable'):
         engine._run_task(LocalTask('context', 'reconcile', {'A'}), 'unavailable')
-    assert engine.current == base and not engine.history
+    assert engine.session.current == base and not engine.session.history
     assert calls == ['reconcile', 'graph_assess']
     saved = WorkspaceStore(engine.workspace_path).load('unavailable')
     assert saved['task_state']['stage'] == 'blocked'

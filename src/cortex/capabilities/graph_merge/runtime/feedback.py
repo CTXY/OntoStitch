@@ -22,7 +22,7 @@ def current_repair_fields(candidate, findings, *, context=None, before=None):
         for ref in (ref for issue in issues if isinstance(issue, dict) for ref in issue.get("refs", [])):
             view = ref.get("view", "candidate")
             if context is not None:
-                from cortex.capabilities.graph_merge.consolidation.review import graph_view
+                from cortex.capabilities.graph_merge.graph.views import graph_view
                 try:
                     nodes, edges, _ = graph_view(context, view, before=before, candidate=candidate)
                 except ValueError:

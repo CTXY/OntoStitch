@@ -23,11 +23,8 @@ from cortex.capabilities.graph_merge.graph.provenance import (
 from cortex.capabilities.graph_merge.consolidation.review import Review, validate_review
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask, build_task_context
 from cortex.capabilities.graph_merge.graph.impact import affected_query_roots, semantic_review_targets
-from cortex.capabilities.graph_merge.runtime.state import (
-    TaskState,
-    build_contract_versions,
-    canonical_hash,
-)
+from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash
+from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
 from cortex.schema import GraphState
 
 
@@ -37,7 +34,7 @@ def review_basis(context, review, base, candidate):
     from cortex.capabilities.graph_merge.evidence import (
         compact_attribution,
     )
-    from cortex.capabilities.graph_merge.consolidation.review import graph_view
+    from cortex.capabilities.graph_merge.graph.views import graph_view
     records = []
     refs = dict.fromkeys(ref for issue in review.issues for ref in (*issue.refs, *issue.basis))
     for ref in refs:
@@ -67,7 +64,7 @@ def accepted_signal_checks(context, candidate, checks):
     """
     from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
     from cortex.capabilities.graph_merge.reconciliation.premises import normalize_signal
-    from cortex.capabilities.graph_merge.reconciliation.policy import SIGNALS
+    from cortex.capabilities.graph_merge.reconciliation.contract import SIGNALS
     if not any(check.get('kind') in SIGNALS for check in checks):
         return deepcopy(checks)
     detected = {row['id']: row for row in inspection_signals(
@@ -88,14 +85,14 @@ def accepted_signal_checks(context, candidate, checks):
 
 
 def run_task(engine, task, run_id, *, aliases=None):
-    ctx, base = engine.ctx, engine.current
+    ctx, base = engine.session.inputs, engine.session.current
     node_local = task.phase == 'consolidate' and getattr(engine.agent, 'node_local_contract', False)
     canonical_relation = task.phase == 'reconcile' and getattr(engine.agent, 'reconciliation_contract', False)
     from cortex.capabilities.graph_merge.reconciliation.contract import DraftDocument, AssessmentRecord
     review_model = AssessmentRecord if canonical_relation else Review
-    versions = getattr(engine, 'contract_versions', None) or build_contract_versions(ctx.schema)
-    engine.contract_versions = versions
-    saved = getattr(engine, 'task_state', None)
+    versions = getattr(engine.session, 'contract_versions', None) or build_contract_versions(ctx.schema)
+    engine.session.contract_versions = versions
+    saved = getattr(engine.session, 'task_state', None)
     if isinstance(saved, dict):
         saved = TaskState.from_dict(saved)
     if saved is not None and saved.task_id == task.id and saved.phase == task.phase:
@@ -106,7 +103,7 @@ def run_task(engine, task, run_id, *, aliases=None):
         raise ValueError('A different unfinished task must be resumed or explicitly migrated first')
     else:
         state = TaskState.capture(base, task_id=task.id, phase=task.phase, versions=versions)
-    engine.task_state = state
+    engine.session.task_state = state
     if state.stage == 'blocked':
         raise IntegrationIncomplete('Blocked task requires explicit context repair; Writer was not restarted')
     ctx.task_before, ctx.active_task = base, task
@@ -127,7 +124,7 @@ def run_task(engine, task, run_id, *, aliases=None):
         ctx.task_candidate_draft_id = state.candidate_draft_id
 
     sync_draft_context()
-    engine.open_tasks = [{'id': task.id, 'phase': task.phase, 'targets': sorted(task.targets),
+    engine.session.open_tasks = [{'id': task.id, 'phase': task.phase, 'targets': sorted(task.targets),
                           'groups': task.groups, 'checks': task.checks, 'feedback': task.feedback,
                           'aliases': aliases or {}}]
     compiled = None
@@ -152,8 +149,8 @@ def run_task(engine, task, run_id, *, aliases=None):
 
     def persist():
         sync_draft_context()
-        engine.task_state = state
-        engine.open_tasks = [{'id': task.id, 'phase': task.phase, 'targets': sorted(task.targets),
+        engine.session.task_state = state
+        engine.session.open_tasks = [{'id': task.id, 'phase': task.phase, 'targets': sorted(task.targets),
                               'groups': task.groups, 'checks': task.checks, 'feedback': task.feedback,
                               'aliases': aliases or {}}]
         engine._persist(run_id)
@@ -166,7 +163,7 @@ def run_task(engine, task, run_id, *, aliases=None):
 
     def record_error(error):
         nonlocal state
-        from cortex.capabilities.graph_merge.llm.agent import failure_feedback
+        from cortex.capabilities.graph_merge.runtime.errors import failure_feedback
         feedback = failure_feedback(error)
         feedback.setdefault('stage', getattr(ctx, 'task_failure_stage', 'patch_compile'))
         state = state.with_issues([feedback], stage='validating')
@@ -248,7 +245,7 @@ def run_task(engine, task, run_id, *, aliases=None):
             else:
                 raise TypeError('Writer must return a MergePatch')
             ctx.node_structural_diagnostics = tuple(getattr(result.batch, 'node_structural_diagnostics', ()))
-            staged = LineageIndex.restore(ctx, engine.lineage.snapshot())
+            staged = LineageIndex.restore(ctx, engine.session.lineage.snapshot())
             staged.observe(base, result.integrated, result.integration_changes,
                            node_aliases=result.node_aliases, edge_aliases=result.edge_aliases)
             staged.observe(result.integrated, result.state, result.changes,
@@ -270,7 +267,7 @@ def run_task(engine, task, run_id, *, aliases=None):
             ctx.candidate, ctx.active_batch = old_candidate, old_batch
             ctx.node_structural_diagnostics = old_diagnostics
             if coupled_attempt and isinstance(error, (ValueError, TypeError, KeyError)):
-                from cortex.capabilities.graph_merge.llm.agent import failure_feedback
+                from cortex.capabilities.graph_merge.runtime.errors import failure_feedback
                 state = replace(state, coupled_relation={**(state.coupled_relation or {}),
                     'draft_id': state.draft_id, 'controller_error': failure_feedback(error)})
                 persist()
@@ -363,7 +360,7 @@ def run_task(engine, task, run_id, *, aliases=None):
             from cortex.capabilities.graph_merge.consolidation.context import (
                 compact_task_context,
             )
-            payload = build_task_context(ctx, current, task, origins=engine.lineage, before=base)
+            payload = build_task_context(ctx, current, task, origins=engine.session.lineage, before=base)
             payload = compact_task_context(payload, ctx, current, task.targets, task.groups, for_review=False)
         payload['task'] = {'id': task.id, 'phase': task.phase, 'base': 'before',
                            'draft_semantics': 'canonical-versioned-edits' if canonical_relation else 'complete-replacement',
@@ -479,9 +476,7 @@ def run_task(engine, task, run_id, *, aliases=None):
             assessed_ids = set(task.targets) | set(impact['targets']) | set(changes['created']) | set(changes['updated']) | set(changes['deleted'])
             context_requests = set()
             while True:
-                from cortex.capabilities.graph_merge.engine import (
-                    input_fingerprint,
-                )
+                from cortex.capabilities.graph_merge.inputs import input_fingerprint
                 from cortex.capabilities.graph_merge.llm.packets import (
                     compact_node_packet,
                     premise_fingerprint,
@@ -663,19 +658,14 @@ def run_task(engine, task, run_id, *, aliases=None):
             # the real schema. This also protects restored accepted reviews.
             from cortex.schema.validation import validate_graph_state
             validate_graph_state(candidate, ctx.schema)
-        backup = {key: getattr(engine, key, None) for key in
-                  ('lineage', 'current', '_revision', '_storage_revision', 'open_tasks',
-                   'pending_relation_work', 'pending_review', 'relation_followups')}
-        backup['signal_receipts'] = deepcopy(getattr(engine, 'signal_receipts', []))
-        backup['history'] = list(engine.history)
-        backup['reviewed_sources'] = deepcopy(engine.reviewed_sources)
+        backup = engine.session.acceptance_snapshot()
         try:
-            engine.lineage = compiled.batch.lineage_preview
-            engine.current = candidate
+            engine.session.lineage = compiled.batch.lineage_preview
+            engine.session.current = candidate
             review_ids = set(semantic_review_targets(base, candidate, task.targets)['targets']) | set(task.targets)
             engine._mark_reviewed(review_ids)
-            engine._revision += 1
-            engine.history.append({'task_id': task.id, 'phase': task.phase, 'revision': engine._revision,
+            engine.session.revision += 1
+            engine.session.history.append({'task_id': task.id, 'phase': task.phase, 'revision': engine.session.revision,
                 'delta': delta(base, candidate), 'extensions': compiled.extensions,
                 'node_review_ids': sorted(review_ids), 'assessment': ('graph_assess' if task.phase == 'reconcile' else 'node_assess') if (canonical_relation or candidate != base or identity_obligations(base, aliases) or task.feedback) else 'skipped_no_change',
                 'changes': [c.model_dump(mode='json') for c in (*compiled.integration_changes, *compiled.changes)]})
@@ -684,19 +674,19 @@ def run_task(engine, task, run_id, *, aliases=None):
                 from cortex.capabilities.graph_merge.reconciliation.premises import normalize_signal
                 accepted_checks = accepted_signal_checks(ctx, candidate, task.checks)
                 accepted_task = replace(task, checks=accepted_checks)
-                engine.history[-1].update(candidate_hash=canonical_hash(candidate),
+                engine.session.history[-1].update(candidate_hash=canonical_hash(candidate),
                     reconciliation_receipt_policy_hash=policy_hash(engine),
                     reconciliation_check_hashes=[canonical_hash(normalize_signal(c)) for c in accepted_checks])
                 if accepted_checks != task.checks:
-                    engine.history[-1]['reconciliation_trigger_check_hashes'] = [
+                    engine.session.history[-1]['reconciliation_trigger_check_hashes'] = [
                         canonical_hash(normalize_signal(c)) for c in task.checks]
                 # Save accepted-after receipts in the SAME transaction as graph,
                 # lineage and history, including accepted empty drafts.
-                record_acceptance(engine, accepted_task, state, engine.history[-1])
-            engine.open_tasks = []
-            engine.pending_relation_work = engine.pending_review = None
+                record_acceptance(engine, accepted_task, state, engine.session.history[-1])
+            engine.session.open_tasks = []
+            engine.session.pending_relation_work = engine.session.pending_review = None
             if node_local and state.relation_followups:
-                queue = list(getattr(engine, 'relation_followups', ()))
+                queue = list(getattr(engine.session, 'relation_followups', ()))
                 for row in state.relation_followups:
                     item = {'task_id': task.id, 'draft_id': state.draft_id,
                         'candidate_hash': state.candidate_hash,
@@ -705,15 +695,14 @@ def run_task(engine, task, run_id, *, aliases=None):
                     item['id'] = canonical_hash(item)
                     if not any(old['id'] == item['id'] for old in queue):
                         queue.append(item)
-                engine.relation_followups = queue
-            engine.task_state = replace(state, stage='committed')
+                engine.session.relation_followups = queue
+            engine.session.task_state = replace(state, stage='committed')
             engine._persist(run_id)
         except BaseException:
-            for key, old in backup.items():
-                setattr(engine, key, old)
-            engine.task_state = state
+            engine.session.restore_acceptance(backup)
+            engine.session.task_state = state
             raise
-        engine.task_state = None
+        engine.session.task_state = None
         ctx.compile_task_patch = ctx.output_validator = None
         impacts = affected_query_roots(base, candidate)
         if task.phase == 'reconcile':

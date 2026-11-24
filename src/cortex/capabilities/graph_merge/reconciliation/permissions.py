@@ -13,7 +13,7 @@ from cortex.schema.references import property_reference_ids
 from cortex.schema.relation_contracts import authoring_schema, effective_edge_fields, effective_schema
 from cortex.capabilities.graph_merge.llm.prompt_language import english_contract
 from cortex.schema.relation_vocabulary import ABSTRACT_RELATIONS
-from cortex.capabilities.graph_merge.reconciliation.policy import SIGNALS, OBLIGATIONS
+from cortex.capabilities.graph_merge.reconciliation.contract import SIGNALS, OBLIGATIONS
 
 
 def _atomic_read(method):

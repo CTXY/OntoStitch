@@ -143,16 +143,16 @@ def test_assessment_sees_self_edge_and_cannot_accept_it_before_writer_repairs(tm
             engine._run_task(task, 'preview', aliases={'A': 'A', 'B': 'A'})
         # A malformed/stale saved acceptance must not skip the real schema
         # publication gate when it is restored without another model review.
-        engine.task_state = engine.task_state.with_review(Review(verdict='accept'),
-            candidate_hash=engine.task_state.candidate_hash)
+        engine.session.task_state = engine.session.task_state.with_review(Review(verdict='accept'),
+            candidate_hash=engine.session.task_state.candidate_hash)
         engine._persist('preview')
         saved = WorkspaceStore(engine.workspace_path).load('preview')
-        engine.task_state = TaskState.from_dict(saved['task_state'])
+        engine.session.task_state = TaskState.from_dict(saved['task_state'])
     engine._run_task(task, 'preview', aliases={'A': 'A', 'B': 'A'})
     assert agent.phases == ['consolidate', 'node_assess', 'consolidate', 'node_assess']
-    assert len(engine.history) == 1
+    assert len(engine.session.history) == 1
     if repair == 'keep_member_separate':
-        assert engine.current == base
+        assert engine.session.current == base
     else:
-        assert not any(edge.id == 'E' for edge in engine.current.graph.edges)
-        assert 'B' not in {node.id for node in engine.current.graph.nodes}
+        assert not any(edge.id == 'E' for edge in engine.session.current.graph.edges)
+        assert 'B' not in {node.id for node in engine.session.current.graph.nodes}

@@ -62,10 +62,10 @@ def test_final_publication_rejects_readable_abstract_predicates_without_mutating
     # additional concrete-role guard beyond ordinary graph/schema validity.
     GraphManager(schema).validate_state(current)
     engine = IncrementalGraphIntegrationEngine(None)
-    engine.ctx = SimpleNamespace(schema=schema)
-    engine.current = current
+    engine.session.inputs = SimpleNamespace(schema=schema)
+    engine.session.current = current
     before = current.model_dump(mode='json')
     with pytest.raises(ValueError, match=rf'{predicate} is an abstract relation base'):
         engine._publish_checks()
-    assert engine.current.model_dump(mode='json') == before
-    assert engine.history == [] and engine.last_session is None
+    assert engine.session.current.model_dump(mode='json') == before
+    assert engine.session.history == [] and engine.last_session is None

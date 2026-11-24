@@ -3,7 +3,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from graph_merge_runtime_fixtures import relation_compiler_context as setup
 from graph_merge_runtime_fixtures import setup_engine
-from cortex.capabilities.graph_merge.reconciliation.context import node_view
+from cortex.capabilities.graph_merge.graph.views import node_view
 from cortex.capabilities.graph_merge.graph.edits import RelationPatch, submit_patch, evidence_sources
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
@@ -35,7 +35,7 @@ def test_true_noop_skips_review(tmp_path):
         def invoke(self,phase,ctx,payload):
             assert phase=='reconcile'
             result=BatchResult();ctx.output_validator(result);return result
-    engine,task=setup_engine(Agent(),tmp_path/'noop.sqlite');engine._run_task(task,'noop');assert engine.history[-1]['assessment']=='skipped_no_change'
+    engine,task=setup_engine(Agent(),tmp_path/'noop.sqlite');engine._run_task(task,'noop');assert engine.session.history[-1]['assessment']=='skipped_no_change'
 
 
 def test_complete_conflict_resolves_evidence_to_exact_branch_sources():
@@ -95,13 +95,13 @@ def test_explicit_existing_branch_resolution_projects_edges_and_lineage(tmp_path
             result=BatchResult(resolutions=[{'node_id':'owner','keep_alternative_id':'one','discard_reasons':{'two':'The second interpretation is an explicitly identified source error in this controlled fixture.'}}])
             context.output_validator(result);return result
     engine=IncrementalGraphIntegrationEngine(Agent(),max_rounds=1,model_call_budget=None)
-    engine.ctx=ctx;engine.current=ctx.union_state();engine.lineage=LineageIndex(ctx);engine._revision=0;engine._storage_revision=None;engine.reviewed_sources={};engine.identity_decision={};engine.workspace_path=tmp_path/'resolution.sqlite';engine.pending_review=None
+    engine.session.inputs=ctx;engine.session.current=ctx.union_state();engine.session.lineage=LineageIndex(ctx);engine.session.revision=0;engine.session.storage_revision=None;engine.session.reviewed_sources={};engine.session.identity_decision={};engine.workspace_path=tmp_path/'resolution.sqlite';engine.session.pending_review=None
     engine._run_task(LocalTask('resolve','consolidate',{'owner'}),'resolution')
-    final=engine.current
+    final=engine.session.current
     assert not next(n for n in final.graph.nodes if n.id=='owner').alternatives
     assert 'two' not in {e.id for e in final.graph.edges}
     assert 'alternative_ids' not in next(e for e in final.graph.edges if e.id=='one').properties
-    assert len(engine.history)==1
+    assert len(engine.session.history)==1
 
 
 def test_alternative_tool_schema_uses_evidence_ids_not_internal_sources():

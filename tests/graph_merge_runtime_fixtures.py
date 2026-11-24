@@ -24,11 +24,11 @@ def prepare(base):
 def engine_for(base, agent, path):
     context, evidence = prepare(base)
     engine = IncrementalGraphIntegrationEngine(agent, max_rounds=1)
-    engine.ctx, engine.current, engine.lineage = context, base, LineageIndex(context)
-    engine._revision, engine.reviewed_sources, engine.history = 0, {}, []
-    engine.workspace_path, engine._storage_revision = path, None
-    engine.identity_decision = {}
-    engine.pending_relation_work = engine.pending_review = None
+    engine.session.inputs, engine.session.current, engine.session.lineage = context, base, LineageIndex(context)
+    engine.session.revision, engine.session.reviewed_sources, engine.session.history = 0, {}, []
+    engine.workspace_path, engine.session.storage_revision = path, None
+    engine.session.identity_decision = {}
+    engine.session.pending_relation_work = engine.session.pending_review = None
     return engine, evidence
 
 
@@ -50,15 +50,15 @@ def setup_engine(agent, path, saved=None):
                      [edge("keep", "A", "B", "has_feature")])
     ctx = IntegrationContext(state(), incoming, load_root_schema())
     engine = IncrementalGraphIntegrationEngine(agent, max_rounds=0)
-    engine.ctx, engine.current, engine.lineage = ctx, ctx.union_state(), LineageIndex(ctx)
-    engine._revision, engine.reviewed_sources, engine.history = 0, {}, []
+    engine.session.inputs, engine.session.current, engine.session.lineage = ctx, ctx.union_state(), LineageIndex(ctx)
+    engine.session.revision, engine.session.reviewed_sources, engine.session.history = 0, {}, []
     engine.workspace_path = path
-    engine._storage_revision = None
-    engine.identity_decision = {}
-    engine.pending_relation_work = None
+    engine.session.storage_revision = None
+    engine.session.identity_decision = {}
+    engine.session.pending_relation_work = None
     if saved:
-        engine.task_state = TaskState.from_dict(saved['task_state'])
-        engine.contract_versions = engine.task_state.versions
-        engine.open_tasks = saved['open_tasks']
-        engine._storage_revision = saved['revision']
+        engine.session.task_state = TaskState.from_dict(saved['task_state'])
+        engine.session.contract_versions = engine.session.task_state.versions
+        engine.session.open_tasks = saved['open_tasks']
+        engine.session.storage_revision = saved['revision']
     return engine, LocalTask('repair', 'reconcile', {ctx.input_node_map['A'], ctx.input_node_map['B']})

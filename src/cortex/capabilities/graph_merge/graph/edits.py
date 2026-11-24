@@ -33,7 +33,7 @@ class EvidenceConflict(Model):
 
 
 from cortex.capabilities.graph_merge.evidence import evidence_sources
-from cortex.capabilities.graph_merge.consolidation.conflicts import ConflictResolution
+from cortex.capabilities.graph_merge.graph.conflicts import ConflictResolution
 
 
 class NodeUpdate(Model):

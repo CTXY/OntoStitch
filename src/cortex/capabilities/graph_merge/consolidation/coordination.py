@@ -48,7 +48,7 @@ def coordinate_node_relations(engine, task, base, error, *, saved=None,
     A saved valid relation Patch is recompiled and hash checked, never regenerated.
     Rejected assessments feed back to the same local Writer; every draft remains checkpointed.
     """
-    ctx = engine.ctx
+    ctx = engine.session.inputs
     canonical_relation = getattr(engine.agent, 'reconciliation_contract', False)
     from cortex.capabilities.graph_merge.reconciliation.contract import DraftDocument, AssessmentRecord
     draft_model = DraftDocument if canonical_relation else MergePatch
@@ -61,8 +61,8 @@ def coordinate_node_relations(engine, task, base, error, *, saved=None,
     binding = {'version': 2 if canonical_relation else 1, 'draft_id': node_draft_id,
                'intermediate_hash': intermediate_hash, 'base_hash': canonical_hash(base)}
     if canonical_relation:
-        from cortex.capabilities.graph_merge.runtime.state import build_contract_versions
-        versions = getattr(engine, 'contract_versions', None) or build_contract_versions(ctx.schema)
+        from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+        versions = getattr(engine.session, 'contract_versions', None) or build_contract_versions(ctx.schema)
         binding['policy'] = canonical_hash(versions.to_dict())
     if saved is not None:
         if not isinstance(saved, dict) or any(saved.get(key) != value for key, value in binding.items()):
@@ -151,7 +151,7 @@ def coordinate_node_relations(engine, task, base, error, *, saved=None,
         save()
 
     def record_error(failure):
-        from cortex.capabilities.graph_merge.llm.agent import failure_feedback
+        from cortex.capabilities.graph_merge.runtime.errors import failure_feedback
         feedback = failure_feedback(failure)
         ctx.task_draft_errors = (feedback,)
         ctx.task_draft_errors_draft_id = ctx.task_draft_id

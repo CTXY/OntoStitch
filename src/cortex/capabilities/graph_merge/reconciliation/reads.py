@@ -2,8 +2,8 @@
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 from cortex.capabilities.graph_merge.identity.catalog import select_catalog_nodes
-from cortex.capabilities.graph_merge.reconciliation.context import node_view, edge_view, physical_view
-from cortex.capabilities.graph_merge.consolidation.review import graph_view
+from cortex.capabilities.graph_merge.graph.views import node_view, edge_view, physical_view
+from cortex.capabilities.graph_merge.graph.views import graph_view
 from cortex.capabilities.graph_merge.graph.impact import content_consumers
 from cortex.schema.relation_contracts import effective_schema
 

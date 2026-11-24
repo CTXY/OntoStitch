@@ -112,10 +112,10 @@ def test_later_single_group_plan_after_accepted_rewrite_requires_explicit_model_
     agent = Agent()
     engine = IncrementalGraphIntegrationEngine(agent)
     result = engine.merge(state(), original, load_root_schema(), run_id="retired-plan")
-    assert len(engine.content_plan) == 2
-    assert all(len(groups) == 1 for groups in engine.content_plan)
+    assert len(engine.session.content_plan) == 2
+    assert all(len(groups) == 1 for groups in engine.session.content_plan)
     assert agent.writes == 2
-    assert [row["task_id"] for row in engine.history if row["phase"] == "consolidate"] == ["content-0", "content-1"]
+    assert [row["task_id"] for row in engine.session.history if row["phase"] == "consolidate"] == ["content-0", "content-1"]
     assert agent.reviewed_rewritten_group and agent.reviews == 2
     rewritten = next(n for n in result.state.graph.nodes if n.id == "rewritten")
     assert {s.source_id for s in rewritten.sources} == {"A", "B"}

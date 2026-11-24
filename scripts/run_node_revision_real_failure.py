@@ -107,13 +107,13 @@ def run(root, path, slot):
 
     agent.recover_transport = recover
     engine = IncrementalGraphIntegrationEngine(agent, max_rounds=4, model_call_budget=30)
-    engine.ctx, engine.current, engine.lineage = context, base, LineageIndex(context)
-    engine.history = deepcopy(snapshot['history'])
-    engine.reviewed_sources, engine._revision, engine._storage_revision = {}, snapshot['accepted_revision'], None
-    engine.identity_decision, engine.open_tasks = {}, []
+    engine.session.inputs, engine.session.current, engine.session.lineage = context, base, LineageIndex(context)
+    engine.session.history = deepcopy(snapshot['history'])
+    engine.session.reviewed_sources, engine.session.revision, engine.session.storage_revision = {}, snapshot['accepted_revision'], None
+    engine.session.identity_decision, engine.session.open_tasks = {}, []
     engine.workspace_path = folder / 'workspace.sqlite'
-    engine.pending_relation_work = engine.pending_review = None
-    engine.relation_followups = []
+    engine.session.pending_relation_work = engine.session.pending_review = None
+    engine.session.relation_followups = []
     task_row = snapshot['open_tasks'][0]
     task = LocalTask(task_row['id'], 'consolidate', set(task_row['targets']), groups=task_row['groups'])
     write(folder / 'before.json', base.model_dump(mode='json'))
@@ -125,9 +125,9 @@ def run(root, path, slot):
         engine._run_task(task, 'real-node-revision:' + path, aliases=task_row['aliases'])
         saved = WorkspaceStore(engine.workspace_path).load('real-node-revision:' + path)
         assert saved['task_state']['stage'] == 'committed'
-        assert engine.history[:3] == snapshot['history'] and len(engine.history) == 4
-        nodes = {node.id: node for node in engine.current.graph.nodes}
-        edges = {edge.id: edge for edge in engine.current.graph.edges}
+        assert engine.session.history[:3] == snapshot['history'] and len(engine.session.history) == 4
+        nodes = {node.id: node for node in engine.session.current.graph.nodes}
+        edges = {edge.id: edge for edge in engine.session.current.graph.edges}
         if path == 'remove_relation' and 'input::input::e238' not in edges:
             assert 'input::input::e238' not in edges
             original = next(edge for edge in base.graph.edges if edge.id == 'input::input::e238')
@@ -149,7 +149,7 @@ def run(root, path, slot):
     except Exception as error:
         result.update(status='needs_attention', errors=transport_error_details(error,
             [key.api_key.get_secret_value() for key in read_key_slots(REPO / 'configs/sql_training.keys')]))
-    write(folder / 'after.json', engine.current.model_dump(mode='json'))
+    write(folder / 'after.json', engine.session.current.model_dump(mode='json'))
     write(folder / 'result.json', result)
     print(json.dumps({'path': path, 'status': result['status'], 'model_calls': agent.call_budget['used']}), flush=True)
     return result

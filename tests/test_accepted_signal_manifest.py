@@ -1,4 +1,5 @@
 """Real AFTER evidence: a repair must not invalidate its own accepted receipt."""
+from cortex.capabilities.graph_merge.runtime.session import MergeSession
 from copy import deepcopy
 import gzip
 import json
@@ -16,7 +17,8 @@ from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted,
 from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.runtime.task import accepted_signal_checks
-from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import GraphState, load_root_schema
@@ -35,7 +37,7 @@ def real():
 @pytest.mark.parametrize('index',[0,1])
 def test_actual_duplicate_is_only_stale_trigger_membership(real,index):
     data,graph,ctx=real;pair=data['pairs'][index]
-    engine=SimpleNamespace(ctx=ctx,current=graph)
+    engine=SimpleNamespace(session=MergeSession(inputs=ctx, current=graph))
     # Frozen v1 hashes remain historical evidence. The narrower v2 scope has
     # its own policy; old hashes are not silently recast as new receipts.
     historical = ['be1eceb8c238abb30186bd1d92b10247c33e2f0fce189c50f232dec0d5a66985',
@@ -48,8 +50,7 @@ def test_actual_duplicate_is_only_stale_trigger_membership(real,index):
 @pytest.mark.parametrize('index',[0,1])
 def test_record_actual_after_check_then_same_next_scan_reuses(real,index):
     data,graph,ctx=real;pair=data['pairs'][index]
-    engine=SimpleNamespace(ctx=ctx,current=graph,agent=SimpleNamespace(reconciliation_contract=True),
-        contract_versions=build_contract_versions(ctx.schema),signal_receipts=[])
+    engine=SimpleNamespace(session=MergeSession(inputs=ctx, current=graph, contract_versions=build_contract_versions(ctx.schema), signal_receipts=[]), agent=SimpleNamespace(reconciliation_contract=True))
     checks=accepted_signal_checks(ctx,graph,[pair['original']['check']])
     assert checks==[pair['detected_later']]
     task=LocalTask('controlled-real-replay','reconcile',set(checks[0]['node_ids']),checks=checks)
@@ -72,11 +73,11 @@ def test_refresh_does_not_remove_explicit_requirement_or_rewrite_obligation(real
 
 def test_real_changed_meaning_still_invalidates_after_refresh(real):
     data,graph,ctx=real;check=data['pairs'][0]['detected_later']
-    original=premise_hash(SimpleNamespace(ctx=ctx,current=graph),check)
+    original=premise_hash(SimpleNamespace(session=MergeSession(inputs=ctx, current=graph)),check)
     ident=check['node_ids'][0]
     changed=graph.model_copy(update={'graph':graph.graph.model_copy(update={'nodes':tuple(
         n.model_copy(update={'description':(n.description or '')+' A new substantive condition.'}) if n.id==ident else n for n in graph.graph.nodes)})})
-    assert premise_hash(SimpleNamespace(ctx=ctx,current=changed),check)!=original
+    assert premise_hash(SimpleNamespace(session=MergeSession(inputs=ctx, current=changed)),check)!=original
 
 
 def test_real_commit_with_edge_replacement_does_not_reprocess_surviving_triangle(tmp_path,monkeypatch):
@@ -91,15 +92,15 @@ def test_real_commit_with_edge_replacement_does_not_reprocess_surviving_triangle
         AIMessage(content='',tool_calls=[{'name':'edit_draft','id':'edit','args':edit}]),
         AIMessage(content=json.dumps({'explanation':'The retained relationship preserves the earlier assertion and its sources; the triangle is valid.','feedback':[]}))]))
     engine,_=engine_for(original,agent,tmp_path/'workspace.sqlite')
-    checks=[s for s in inspection_signals(engine.ctx,Preview(original,{}, {},[])) if s['kind']=='triangle']
+    checks=[s for s in inspection_signals(engine.session.inputs,Preview(original,{}, {},[])) if s['kind']=='triangle']
     assert len(checks)==1 and 'old' in checks[0]['edge_ids']
     engine._run_task(LocalTask('repair','reconcile',{'A','B','C'},checks=checks),'run')
-    current=[s for s in inspection_signals(engine.ctx,Preview(engine.current,{}, {},[])) if s['kind']=='triangle']
+    current=[s for s in inspection_signals(engine.session.inputs,Preview(engine.session.current,{}, {},[])) if s['kind']=='triangle']
     assert 'old' not in current[0]['edge_ids']
-    assert engine.signal_receipts[0]['check']==current[0] and is_accepted(engine,current[0])
-    assert engine.history[-1]['reconciliation_trigger_check_hashes']!=engine.history[-1]['reconciliation_check_hashes']
+    assert engine.session.signal_receipts[0]['check']==current[0] and is_accepted(engine,current[0])
+    assert engine.session.history[-1]['reconciliation_trigger_check_hashes']!=engine.session.history[-1]['reconciliation_check_hashes']
     monkeypatch.setattr('cortex.capabilities.graph_merge.engine.inspection_signals',lambda *a,**k:current)
     engine.agent=IncrementalIntegrationAgent(ScriptedModel([]))
-    accepted=deepcopy(engine.history)
+    accepted=deepcopy(engine.session.history)
     engine._reconcile('run',initial_targets={'A','B','C'})
-    assert engine.history==accepted
+    assert engine.session.history==accepted

@@ -5,12 +5,9 @@ from itertools import count
 from langchain_core.tools import tool
 
 from cortex.capabilities.graph_merge.identity.contract import identity_map
-from cortex.capabilities.graph_merge.runtime.feedback import (
-    validation_feedback,
-)
+from cortex.capabilities.graph_merge.runtime.errors import failure_feedback
 from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch
-from cortex.capabilities.graph_merge.graph.scope import scope_error
 from cortex.capabilities.graph_merge.consolidation.review import Review, validate_review
 from cortex.capabilities.graph_merge.identity.tools import build_tools
 from cortex.capabilities.graph_merge.llm.budget import check_request
@@ -27,18 +24,9 @@ from cortex.capabilities.graph_merge.llm.recovery import (
 from cortex.capabilities.graph_merge.llm.trace import EpisodeTrace
 from cortex.capabilities.graph_merge.llm.transport import invoke_with_recovery
 
-__all__ = ['IncrementalIntegrationAgent', 'OutputProtocolRecoveryExhausted', 'TaskNoProgress', 'failure_feedback']
+__all__ = ['IncrementalIntegrationAgent', 'OutputProtocolRecoveryExhausted', 'TaskNoProgress']
 
 
-def failure_feedback(error):
-    result = {'status': 'rejected_unapplied', 'error': validation_feedback(error), **scope_error(error)}
-    for attribute in ('before', 'after', 'missing_sources', 'counterexamples'):
-        if hasattr(error, attribute):
-            result[attribute] = [v.model_dump(mode='json') if hasattr(v, 'model_dump') else v
-                                 for v in getattr(error, attribute)]
-    if getattr(error, 'details', None) is not None:
-        result['details'] = error.details
-    return result
 
 
 class IncrementalIntegrationAgent:
