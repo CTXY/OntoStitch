@@ -8,11 +8,11 @@ import json
 from pathlib import Path
 import sqlite3
 
-from cortex.capabilities.graph_merge.graph.publication import identity_map
+from cortex.capabilities.graph_merge.identity.contract import identity_map
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.engine import identity_task_projection
+from cortex.capabilities.graph_merge.planning import identity_task_projection
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
-from cortex.capabilities.graph_merge.graph.edit_contract import IdentityDecision
+from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
 from cortex.capabilities.graph_merge.consolidation.compiler import IdentityIntegration
 from cortex.capabilities.graph_merge.runtime.state import ContractVersions, TaskState, canonical_hash
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore

@@ -7,18 +7,18 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from test_graph_integration import catalog, concept, state
+from graph_merge_fixtures import catalog, concept, state
 from test_merge_identity_integration_v2 import conflicted, content, points, prepare
 from cortex.capabilities.graph_merge.graph.publication import Preview
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.integration.legacy_patch_adapter import convert_legacy_patch
+from graph_merge_archive_fixtures import convert_legacy_patch
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.graph.edit_contract import IntegrationProposal
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch, identity_obligations
 from cortex.capabilities.graph_merge.graph.provenance import validate_rewrite_sources
 from cortex.capabilities.graph_merge.graph.source_units import PatchContractError, source_unit_manifest
-from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from graph_merge_archive import migrate_relation_notes
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import GraphSpace, GraphState, load_root_schema
 
 

@@ -5,7 +5,7 @@ from collections import defaultdict
 import sqlglot
 from sqlglot import exp
 
-from cortex.capabilities.graph_merge.inputs import PHYSICAL
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 from cortex.schema.relation_vocabulary import ABSTRACT_RELATIONS
 
 

@@ -119,7 +119,7 @@ def test_load_detects_corrupt_payload_and_revision(tmp_path):
 
 
 def test_store_allows_known_pending_global_grounding_conflict(tmp_path):
-    from test_graph_integration import catalog, concept, edge
+    from graph_merge_fixtures import catalog, concept, edge
 
     unfinished = GraphState(
         graph=GraphSpace(

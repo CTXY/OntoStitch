@@ -1,3 +1,5 @@
+from typing import Any, Protocol
+
 """Record each model request/response even when its enclosing agent fails."""
 
 from time import monotonic
@@ -71,3 +73,7 @@ class EpisodeTrace(BaseCallbackHandler):
         self.record(
             "model_error", call_id=str(run_id), error=f"{type(error).__name__}: {error}"
         )
+
+
+class GraphMergeAgentTraceSink(Protocol):
+    def record(self, event: dict[str, Any]) -> None: ...

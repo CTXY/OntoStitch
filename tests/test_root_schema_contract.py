@@ -5,7 +5,6 @@ from pydantic import ValidationError
 from test_graph_manager import apply, create, node
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.models import DifferencePosition
 from cortex.capabilities.sql_training.models import (
     GenerationRuleProperties,
     MetricProperties,
@@ -179,22 +178,17 @@ def test_conflict_legacy_fields_are_rejected_instead_of_discarded_or_renamed():
                 ],
             }
         )
+    # Current choices cite complete alternative identities rather than the
+    # old merge representation/member contract.
+    choice = ConflictChoice(alternative_ids=["a"], statement="A")
+    assert choice.alternative_ids == ("a",)
     with pytest.raises(ValidationError, match="Extra inputs"):
-        DifferencePosition.model_validate(
-            {
-                "members": [
-                    {
-                        "representation_ref": {
-                            "origin": "incoming_node",
-                            "ref_id": "a",
-                        },
-                        "source_case_ids": [],
-                    }
-                ],
-                "statement": "A",
-                "field_paths": ["name"],
-            }
-        )
+        ConflictChoice.model_validate({
+            "alternative_ids": ["a"], "statement": "A",
+            "members": [{"representation_ref": {"origin": "incoming_node", "ref_id": "a"},
+                         "source_case_ids": []}],
+        })
+
 
 
 def test_custom_relations_still_work_without_root_registration(manager):

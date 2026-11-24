@@ -1,13 +1,13 @@
+from graph_merge_fixtures import aligned_preview, compile_graph_edits
 """Compile-time type safety and complete catalog provenance at commit."""
 
 import pytest
-from test_graph_integration import business_contract
+from graph_merge_fixtures import business_contract
 
 from cortex.application.ontology_graph import GraphManager
 import cortex.capabilities.graph_merge.graph.publication as compiler
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.graph.edit_contract import (
-    IdentityDecision,
     IntegrationProposal,
 )
 from cortex.schema import GraphEdge, GraphNode, GraphSpace, GraphState, load_root_schema
@@ -81,8 +81,8 @@ def test_existing_semantic_id_cannot_change_type_during_compile(existing):
             }
         ],
     )
-    with pytest.raises(ValueError, match="Existing node type cannot change"):
-        compiler.compile_proposal(ctx, IdentityDecision(), proposal)
+    with pytest.raises(ValueError, match="Type correction needs a new node and explicit rewrite"):
+        compile_graph_edits(ctx, proposal.edits, proposal.changes, proposal.relation_contracts)
 
 
 def test_type_correction_with_new_identity_has_rewrite_not_alias():
@@ -104,7 +104,8 @@ def test_type_correction_with_new_identity_has_rewrite_not_alias():
             }
         ],
     )
-    preview = compiler.compile_proposal(ctx, IdentityDecision(), proposal)
+    preview = (compile_graph_edits(ctx, proposal.edits, proposal.changes, proposal.relation_contracts)
+               if proposal.edits else aligned_preview(ctx))
     result = compiler.commit_result(ctx, proposal, preview, run_id="type-correction")
     assert "old" not in {n.id for n in result.state.graph.nodes}
     assert (
@@ -120,7 +121,8 @@ def test_all_catalog_source_edges_map_after_physical_alignment_and_dedup(prefix)
     old, incoming = state(catalog()), state(catalog(prefix))
     ctx = context(old, incoming)
     proposal = IntegrationProposal()
-    preview = compiler.compile_proposal(ctx, IdentityDecision(), proposal)
+    preview = (compile_graph_edits(ctx, proposal.edits, proposal.changes, proposal.relation_contracts)
+               if proposal.edits else aligned_preview(ctx))
     result = compiler.commit_result(ctx, proposal, preview, run_id="catalog-mapping")
     incoming_maps = {m.input_id: m.canonical_id for m in result.edge_mappings}
     existing_maps = {m.input_id: m.canonical_id for m in result.existing_edge_mappings}
@@ -130,30 +132,6 @@ def test_all_catalog_source_edges_map_after_physical_alignment_and_dedup(prefix)
     assert set(incoming_maps.values()) == {e.id for e in result.state.graph.edges}
 
 
-def test_identity_alias_cannot_be_retyped_into_another_semantic_class():
-    ctx = context(state(), state([*catalog(), concept("A"), concept("B")]))
-    a, b = (ctx.input_node_map[key] for key in ("A", "B"))
-    decision = IdentityDecision(
-        groups=[
-            {
-                "members": [a, b],
-                "meaning": "Same category",
-                "reason": "Source identity evidence.",
-            }
-        ]
-    )
-    proposal = IntegrationProposal(
-        edits=[{"operation": "update_node", "node": event(a).model_dump(mode="json")}],
-        changes=[
-            {
-                "before": [{"kind": "node", "id": a}, {"kind": "node", "id": b}],
-                "after": [{"kind": "node", "id": a}],
-                "explanation": "Attempt to reinterpret an identity alias as an occurrence.",
-            }
-        ],
-    )
-    with pytest.raises(ValueError, match="Existing node type cannot change"):
-        compiler.compile_proposal(ctx, decision, proposal)
 
 
 def test_default_source_catalog_edge_maps_to_authored_ownership_when_it_suppresses_default():
@@ -171,7 +149,8 @@ def test_default_source_catalog_edge_maps_to_authored_ownership_when_it_suppress
     )
     ctx = context(old, incoming)
     proposal = IntegrationProposal()
-    preview = compiler.compile_proposal(ctx, IdentityDecision(), proposal)
+    preview = (compile_graph_edits(ctx, proposal.edits, proposal.changes, proposal.relation_contracts)
+               if proposal.edits else aligned_preview(ctx))
     result = compiler.commit_result(
         ctx, proposal, preview, run_id="authored-catalog-owner"
     )
@@ -199,7 +178,8 @@ def test_business_edges_with_same_triple_keep_distinct_source_correspondences():
         state(), state([*catalog(), concept("A"), concept("B", "value")], edges)
     )
     proposal = IntegrationProposal()
-    preview = compiler.compile_proposal(ctx, IdentityDecision(), proposal)
+    preview = (compile_graph_edits(ctx, proposal.edits, proposal.changes, proposal.relation_contracts)
+               if proposal.edits else aligned_preview(ctx))
     result = compiler.commit_result(
         ctx, proposal, preview, run_id="business-correspondence"
     )
@@ -216,7 +196,8 @@ def test_missing_or_ambiguous_catalog_commit_correspondence_is_not_silent(
 ):
     ctx = context(state(), state(catalog()))
     proposal = IntegrationProposal()
-    preview = compiler.compile_proposal(ctx, IdentityDecision(), proposal)
+    preview = (compile_graph_edits(ctx, proposal.edits, proposal.changes, proposal.relation_contracts)
+               if proposal.edits else aligned_preview(ctx))
     real_apply = compiler.apply_merge_state
 
     def corrupt_catalog(*args, **kwargs):
@@ -266,7 +247,7 @@ def test_conflict_name_placeholder_survives_handle_publication_and_repository(tm
     )
     handle = ctx.input_node_map[owner.id]
     ctx.read_ids.add(handle)
-    from cortex.capabilities.graph_merge.inputs import remap_node
+    from cortex.capabilities.graph_merge.graph.operations import remap_node
 
     candidate = remap_node(owner, {owner.id: handle})
     assert candidate.name == handle
@@ -282,7 +263,14 @@ def test_conflict_name_placeholder_survives_handle_publication_and_repository(tm
             }
         ],
     )
-    preview = compiler.compile_proposal(ctx, IdentityDecision(), proposal)
+    # Publication accepts a reviewed snapshot. Conflict construction is covered
+    # by the current consolidation compiler tests, rather than the retired
+    # global set_conflict proposal interface.
+    preview = aligned_preview(ctx)
+    preview.state = preview.state.model_copy(update={"graph": preview.state.graph.model_copy(update={
+        "nodes": tuple(candidate if node.id == handle else node for node in preview.state.graph.nodes),
+    })})
+    preview.node_map[handle] = handle
     result = compiler.commit_result(
         ctx, proposal, preview, run_id="conflict-publication"
     )
@@ -295,28 +283,9 @@ def test_conflict_name_placeholder_survives_handle_publication_and_repository(tm
 
 
 def test_remapping_does_not_change_ordinary_name_equal_to_old_id():
-    from cortex.capabilities.graph_merge.inputs import remap_node
+    from cortex.capabilities.graph_merge.graph.operations import remap_node
 
     ordinary = event("occurrence").model_copy(update={"name": "occurrence"})
     renamed = remap_node(ordinary, {"occurrence": "canonical"})
     assert renamed.id == "canonical"
     assert renamed.name == "occurrence"
-
-
-def test_abstract_relation_is_readable_but_must_be_replaced_in_incoming_merge():
-    legacy = GraphEdge(id='legacy', edge_type='has_attribute', from_node_id='A', to_node_id='B', properties={'description': 'The object has this recorded feature.'})
-    incoming = state([*catalog(), concept('A'), concept('B', 'value')], [legacy])
-    ctx = context(state(), incoming)
-    with pytest.raises(ValueError, match='abstract relation base'):
-        compiler.compile_proposal(ctx, IdentityDecision(), IntegrationProposal())
-    eid = ctx.input_edge_map['legacy']
-    concrete = ctx.edges[eid].model_copy(update={'edge_type': 'has_feature'})
-    proposal = IntegrationProposal(
-        relation_contracts=[business_contract()],
-        edits=[{'operation': 'update_edge', 'edge': concrete.model_dump(mode='json')}],
-        changes=[{'before': [{'kind': 'edge', 'id': eid}], 'after': [{'kind': 'edge', 'id': eid}], 'explanation': 'State the evidenced specific feature role.'}],
-    )
-    assert compiler.compile_proposal(ctx, IdentityDecision(), proposal).state.graph.edges
-    # Reading old global knowledge does not require an unrelated migration.
-    unrelated = context(incoming, state([event('new_event')]))
-    assert compiler.compile_proposal(unrelated, IdentityDecision(), IntegrationProposal())

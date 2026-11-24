@@ -3,13 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 from cortex.capabilities.graph_merge.graph.batch import ActiveBatch
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.graph.edit_contract import Element
 from cortex.capabilities.graph_merge.graph.provenance import SourceCoverageError, validate_rewrite_sources
 from cortex.capabilities.graph_merge.graph.edits import NewEdge, RelationPatch, submit_patch
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import SourceReference, load_root_schema
 
 

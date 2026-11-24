@@ -2,50 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
-from test_graph_integration import catalog, concept, state
-from test_incremental_agent import Chat
+from graph_merge_chat import Chat
 
-from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 from cortex.capabilities.graph_merge.llm.transport import invoke_with_recovery
-from cortex.schema import load_root_schema
-
-
-def test_recovery_preserves_tool_results_without_repeating_reads():
-    ctx = IntegrationContext(state(), state([*catalog(), concept("N", "a")]), load_root_schema())
-    ctx.candidate = ctx.union_state()
-    ident = ctx.input_node_map["N"]
-    read = AIMessage(content="", tool_calls=[{
-        "name": "inspect_graph", "args": {"mode": "items", "ids": [ident], "fields": ["properties.targets"]},
-        "id": "read-once", "type": "tool_call",
-    }])
-
-    class Broken(Chat):
-        def invoke(self, messages, config=None):
-            if self.requests:
-                self.requests.append(list(messages))
-                raise RuntimeError("[Errno 32] Broken pipe")
-            return super().invoke(messages, config=config)
-
-    first = Broken([read])
-    replacement = Chat([AIMessage(content='{"verdict":"accept"}')])
-    failures = []
-
-    def recover(error):
-        failures.append(str(error))
-        return replacement
-
-    agent = IncrementalIntegrationAgent(first, max_calls=None)
-    agent.recover_transport = recover
-    result = agent.invoke("graph_assess", ctx, {
-        "task_id": "unit", "nodes": [], "edges": [], "evidence": [],
-    })
-    assert result.verdict == "accept"
-    assert failures == ["[Errno 32] Broken pipe"]
-    assert first.requests[-1] == replacement.requests[0]
-    replies = [m for m in replacement.requests[0] if isinstance(m, ToolMessage)]
-    assert len(replies) == 1 and replies[0].tool_call_id == "read-once"
-    assert len(first.requests) == 2 and len(replacement.requests) == 1
 
 
 def test_unrecoverable_error_is_not_retried():
@@ -127,10 +86,38 @@ def test_success_starts_a_fresh_failure_window_for_the_next_logical_call():
     assert len(calls) == 6
 
 
-def test_node_agent_cannot_bypass_http502_stop_with_its_outer_retry():
+def test_canonical_transport_recovery_preserves_reads_without_replaying_them(tmp_path):
+    from graph_merge_chat import ScriptedModel
+    from test_reconciliation_agent_runtime import fixture, call
+    from test_merge_agent_recovery_resume import ACCEPT
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+
+    first = ScriptedModel([])
+    engine, task = fixture(tmp_path, first)
+    evidence_id = engine.ctx.evidence[0].id
+    first.replies = iter([call('read_evidence', {'ids': [evidence_id]}), ConnectionError('Logical request interrupted')])
+    replacement = ScriptedModel([call('edit_draft', {}), ACCEPT])
+    replacement.engine = engine
+    failures = []
+    def recover(error):
+        failures.append(error)
+        return replacement
+    engine.agent.recover_transport = recover
+    engine._run_task(task, 'transport')
+    assert len(failures) == 1 and len(first.requests) == 2 and len(replacement.requests) == 2
+    assert first.requests[-1] == replacement.requests[0]
+    saved = WorkspaceStore(engine.workspace_path).load('transport')
+    writer = next(row for row in saved['task_state']['agent_recovery'].values()
+                  if row.get('scope', {}).get('phase') == 'reconcile')
+    assert [row['name'] for row in writer['runtime']['journal']].count('read_evidence') == 1
+    assert len(engine.history) == 1
+
+
+def test_current_node_assessment_cannot_restart_a_terminal_transport_failure():
     import httpx
     from openai import InternalServerError
-    from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
+    from test_node_local_context import context
+    from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
     from cortex.capabilities.graph_merge.llm.transport import TransportRecoveryStopped
 
     class Failed(Chat):
@@ -138,10 +125,7 @@ def test_node_agent_cannot_bypass_http502_stop_with_its_outer_retry():
             self.requests.append(list(messages))
             raise InternalServerError('upstream unavailable', response=httpx.Response(
                 502, request=httpx.Request('POST', 'https://offline.invalid')), body={})
-
     model = Failed([])
-    ctx = IntegrationContext(state(), state([*catalog(), concept('N', 'a')]), load_root_schema())
-    ctx.candidate = ctx.union_state()
     agent = IncrementalIntegrationAgent(model, max_calls=None)
     recovered = []
     def recover(error):
@@ -149,8 +133,6 @@ def test_node_agent_cannot_bypass_http502_stop_with_its_outer_retry():
         return model
     agent.recover_transport = recover
     with pytest.raises(TransportRecoveryStopped):
-        agent.invoke('node_assess', ctx, {'task_id': 'review', 'candidate_nodes': [],
-            'candidate_relations': [], 'evidence': [], 'matched_groups': []})
-    assert len(model.requests) == 3
-    assert len(recovered) == 2
-    assert all(messages == model.requests[0] for messages in model.requests)
+        agent.invoke('node_assess', context(), {'task_id': 'node-group'})
+    assert len(model.requests) == 3 and len(recovered) == 2
+    assert all(request == model.requests[0] for request in model.requests)

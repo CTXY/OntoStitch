@@ -1,7 +1,7 @@
 """Execute an Agent-declared existing-branch selection; never choose a branch."""
 from pydantic import Field
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.graph.edit_contract import Model
+from cortex.capabilities.graph_merge.models import Model
 from cortex.schema.graph import alternative_sources
 
 

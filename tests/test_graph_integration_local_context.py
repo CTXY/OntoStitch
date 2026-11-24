@@ -1,10 +1,10 @@
 """Local Agent context stays bounded without restricting explicit graph reads."""
 
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.identity.tools import build_tools
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import (
     GraphNode,
     GraphSpace,

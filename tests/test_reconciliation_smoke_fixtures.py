@@ -138,7 +138,3 @@ def test_actual_validation_failure_is_preserved_apart_from_wrapper_exception(tmp
     row, = smoke.validation_failures(tmp_path)
     assert row['code'] == 'MISSING_SOURCE_UNIT' and row['path'] == 'changes[0]'
     assert row['target'] == 'submit_draft' and row['feedback'] == feedback
-
-
-
-

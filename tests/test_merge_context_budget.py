@@ -1,6 +1,6 @@
 """Large coupled identity groups retain complete evidence when budgets grow."""
 import pytest
-from test_graph_integration import catalog, concept, state
+from graph_merge_fixtures import catalog, concept, state
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
@@ -48,10 +48,10 @@ def test_character_budgets_are_configurable_and_positive():
 @pytest.mark.parametrize("budget", [210000, 400000])
 def test_relation_agent_checks_the_configured_complete_request_budget(budget):
     from langchain_core.messages import AIMessage
-    from test_incremental_agent import Chat
+    from graph_merge_chat import Chat
     from test_reconciliation_context import node_context, runtime
 
-    from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
+    from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
     from cortex.capabilities.graph_merge.llm.budget import RequestInputTooLarge, check_request
 
     class BudgetChat(Chat):

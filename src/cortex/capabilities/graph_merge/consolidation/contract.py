@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from cortex.capabilities.graph_merge.graph.edit_contract import Model
+from cortex.capabilities.graph_merge.models import Model
 from cortex.capabilities.graph_merge.consolidation.compiler import IdentityIntegration, MergePatch, LocalRelationRemoval
 from cortex.capabilities.graph_merge.consolidation.review import Review, ReviewReference
 from cortex.schema.semantic_validation import validate_semantic_properties
@@ -117,9 +117,6 @@ def node_output_model(role):
     return NodeWriterResult if node_role(role) == 'writer' else NodeAssessmentResult
 
 
-def canonical_node_result(role, value):
-    """Normalize a current narrow draft without expanding legacy empty operations."""
-    return node_output_model(role).model_validate(value).model_dump(mode='json', exclude_unset=True)
 
 
 def _relation_rows(value):
@@ -267,7 +264,7 @@ def _validate_review_binding(result, payload):
 
 
 def normalize_node_result(role, value, *, payload=None, allowed_edge_ids=None, base=None):
-    """Return legacy result and a sidecar; neither is committed by this function.
+    """Return the internal compiler result and a followup sidecar; neither is committed by this function.
 
     Packet binding is an additional local permission check. The real compiler and
     validate_review must still validate graph structure, source units and paths.

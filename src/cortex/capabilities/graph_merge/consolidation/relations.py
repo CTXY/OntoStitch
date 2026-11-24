@@ -10,8 +10,8 @@ from __future__ import annotations
 from collections import defaultdict
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
-from cortex.capabilities.graph_merge.inputs import remap_edge, remap_node
+from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
+from cortex.capabilities.graph_merge.graph.operations import remap_edge, remap_node
 from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.schema.semantic_validation import validate_semantic_properties

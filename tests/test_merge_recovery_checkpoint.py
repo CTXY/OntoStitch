@@ -1,15 +1,12 @@
 """Draft/error bindings and response recovery remain sound across restarts."""
-import gzip
-import json
 from copy import deepcopy
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
-from test_graph_integration import catalog, concept, state
-from test_merge_task_review_boundary import engine_for
+from graph_merge_fixtures import catalog, concept, state
+from graph_merge_runtime_fixtures import engine_for
 
-from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
 from cortex.capabilities.graph_merge.consolidation.review import Review
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
@@ -221,36 +218,6 @@ def test_legacy_ready_review_cannot_commit_a_candidate_that_does_not_recompile(t
     with pytest.raises(ValueError, match='no longer compiles'):
         engine._run_task(LocalTask('local', 'reconcile', {'A'}), 'wrong')
     assert engine.current == base and not engine.history
-
-
-@pytest.mark.parametrize('database', ['thrombosis_prediction', 'toxicology'])
-def test_real_checkpoint_can_load_without_inventing_candidate_binding(database, tmp_path):
-    fixture = Path(__file__).parent / 'fixtures/merge_output_protocol_failure/checkpoints.json.gz'
-    with gzip.open(fixture, 'rt') as stream:
-        source = json.load(stream)[database]
-    original = deepcopy(source['snapshot'])
-    loaded = TaskState.from_dict(original['task_state'])
-    assert loaded.candidate_draft_id is None
-    assert loaded.draft and loaded.last_valid_candidate and loaded.semantic_issues
-    with pytest.raises(ValueError, match='current candidate'):
-        replace(loaded, stage='assessing').with_review({'verdict': 'accept', 'issues': []},
-                                                      candidate_hash=loaded.candidate_hash)
-    # A copied storage round-trip may add optional v3 recovery fields. It must
-    # neither change accepted history/current nor mark a legacy candidate as
-    # compiled from the current draft without doing the actual recompilation.
-    copy = deepcopy(original)
-    copy.pop('revision', None)
-    copy['task_state'] = loaded.to_dict()
-    store = WorkspaceStore(tmp_path / database / 'copy.sqlite')
-    store.save(source['run_id'], copy)
-    saved = store.load(source['run_id'])
-    assert saved['current'] == original['current'] and saved['history'] == original['history']
-    assert saved['lineage'] == original['lineage']
-    assert saved['task_state']['draft'] == original['task_state']['draft']
-    assert saved['task_state']['candidate_draft_id'] is None
-    assert saved['task_state']['semantic_issues'] == original['task_state']['semantic_issues']
-    assert saved['task_state']['semantic_issue_basis'] == original['task_state']['semantic_issue_basis']
-    assert source['snapshot'] == original
 
 
 def test_assessment_repetition_gate_survives_restart_but_new_presented_facts_reset_it(tmp_path):

@@ -1,6 +1,6 @@
 """Public-result audits detect provenance loss without an engine recompile."""
 
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.application.merge_graph import GraphMergeResult
 from cortex.application.ontology_graph import GraphManager

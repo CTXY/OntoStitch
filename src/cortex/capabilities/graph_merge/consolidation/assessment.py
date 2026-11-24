@@ -72,7 +72,7 @@ def review_packets(context, candidate, task, *, origins, before, max_characters=
 def assess_nodes(agent, context, candidate, task, *, origins, before, earlier_findings=(),
                  max_characters=110000, previous_gate=None, policy=''):
     from cortex.capabilities.graph_merge.runtime.state import canonical_hash
-    from cortex.capabilities.graph_merge.llm.incremental import NodeReview
+    from cortex.capabilities.graph_merge.consolidation.review import Review as NodeReview
     from cortex.capabilities.graph_merge.llm.packets import (
         compact_node_packet,
         premise_fingerprint,

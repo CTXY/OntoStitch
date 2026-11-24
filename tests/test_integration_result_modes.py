@@ -4,7 +4,7 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
-from test_graph_integration import catalog, concept, state
+from graph_merge_fixtures import catalog, concept, state
 from test_merge_identity_integration_v2 import content, points, prepare
 
 from cortex.application.ontology_graph import GraphManager

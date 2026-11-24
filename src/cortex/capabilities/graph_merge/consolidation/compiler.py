@@ -5,10 +5,11 @@ from pydantic import Field, model_validator
 
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
-from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
-from cortex.capabilities.graph_merge.inputs import PHYSICAL, remap_edge, remap_node
+from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, remap_edge, remap_node
 from cortex.capabilities.graph_merge.evidence import evidence_sources, EvidencePresentation
-from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element, Model
+from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element
+from cortex.capabilities.graph_merge.models import Model
 from cortex.capabilities.graph_merge.graph.scope import ProposalScope
 from cortex.capabilities.graph_merge.graph.edits import EvidenceAlternative, RelationPatch, submit_patch
 from cortex.capabilities.graph_merge.graph.source_units import SourceRoute, PatchContractError, validate_source_routes
@@ -241,7 +242,7 @@ def compile_patch(context, base, patch, *, targets, aliases=None, payload=None):
 def _compile_patch(context, base, patch, *, targets, aliases=None, payload=None):
     """Build fresh graph/scope each time; a rejected/replaced draft leaves no writes."""
     if patch.failure:
-        from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+        from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
         raise IntegrationIncomplete(patch.failure)
     obligations = identity_obligations(base, aliases)
     original_group = None

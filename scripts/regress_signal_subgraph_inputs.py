@@ -39,7 +39,7 @@ from cortex.capabilities.graph_merge.reconciliation.projection import (
 from cortex.capabilities.graph_merge.reconciliation.policy import (
     reconciliation_system,
 )
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import GraphSpace, GraphState, load_root_schema
 
 ROOT = Path(__file__).resolve().parents[1]

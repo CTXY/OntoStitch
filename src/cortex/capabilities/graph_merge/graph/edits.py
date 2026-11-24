@@ -7,8 +7,9 @@ from cortex.capabilities.graph_merge.graph.batch import (
     ConflictWrite,
     EdgeMerge,
 )
-from cortex.capabilities.graph_merge.inputs import PHYSICAL
-from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element, Model
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
+from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element
+from cortex.capabilities.graph_merge.models import Model
 from cortex.capabilities.graph_merge.graph.source_units import SourceRoute
 from cortex.schema import NodeContent, ConflictPoint
 

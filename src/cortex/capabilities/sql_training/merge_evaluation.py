@@ -10,8 +10,8 @@ from typing import Any
 
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
 from cortex.bootstrap.knowledge import build_sql_training_evaluation_physical_graph
-from cortex.capabilities.graph_merge.edges import remap_property_node_ids
-from cortex.capabilities.graph_merge.inputs import remap_node
+from cortex.capabilities.graph_merge.graph.operations import remap_property_node_ids
+from cortex.capabilities.graph_merge.graph.operations import remap_node
 from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
 from cortex.capabilities.sql_training.artifacts.cases import load_case_assets
 from cortex.capabilities.sql_training.graph.case import project_case_graph

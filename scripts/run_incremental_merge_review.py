@@ -9,14 +9,11 @@ from audit_incremental_merge import audit_result
 from dotenv import load_dotenv
 from summarize_graph_merge_calls import summarize
 
-from cortex.capabilities.graph_merge.integration.engine import implementation_version
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash, implementation_sources
 from cortex.capabilities.graph_merge.engine import (
     IncrementalGraphIntegrationEngine,
 )
-from cortex.capabilities.graph_merge.integration.recovery import (
-    load_reviewed_node_stage,
-)
-from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,
     SqlTrainingGraphMergeEvidenceResolver,
@@ -46,7 +43,6 @@ def main():
         default="api.deepseek.com",
         help="Expected previously authorized host; refuse accidental endpoint changes",
     )
-    parser.add_argument("--reviewed-node-stage", type=Path)
     parser.add_argument("--feedback-file", type=Path)
     parser.add_argument(
         "--resume-from",
@@ -126,7 +122,7 @@ def main():
                 if args.resume_from
                 else None,
                 "model": model.model_name,
-                "implementation_version": implementation_version(),
+                "implementation_version": canonical_hash(implementation_sources()),
                 "host": host,
                 "sdk_max_retries": model.max_retries,
                 "streaming": model.streaming,
@@ -198,10 +194,6 @@ def main():
                         },
                         indent=2,
                     )
-                )
-            if args.reviewed_node_stage:
-                engine.reviewed_node_seed = load_reviewed_node_stage(
-                    args.reviewed_node_stage, empty, fragment, schema
                 )
             if args.feedback_file:
                 feedback = json.loads(args.feedback_file.read_text())

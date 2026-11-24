@@ -14,12 +14,17 @@ from typing import Any
 from cortex.schema import GraphState
 
 
-_SOURCE_PATHS = {'integration/signal_scope_migration.py': 'reconciliation/scope_migration.py', 'identity.py': 'identity/legacy.py', 'integration/incremental.py': 'engine.py', 'integration/context.py': 'inputs.py', 'integration/batch.py': 'graph/batch.py', 'integration/catalog.py': 'identity/catalog.py', 'integration/compiler.py': 'graph/publication.py', 'integration/conflict_resolution.py': 'consolidation/conflicts.py', 'integration/contracts.py': 'graph/contracts.py', 'integration/edit_feedback.py': 'runtime/feedback.py', 'integration/evidence_refs.py': 'evidence.py', 'integration/lineage.py': 'graph/lineage.py', 'integration/local_validation.py': 'graph/validation.py', 'integration/models.py': 'graph/edit_contract.py', 'integration/node_context.py': 'consolidation/context.py', 'integration/node_relation_repair.py': 'consolidation/coordination.py', 'integration/node_relations.py': 'consolidation/relations.py', 'integration/node_review.py': 'consolidation/assessment.py', 'integration/node_revision.py': 'consolidation/revision.py', 'integration/packing.py': 'llm/packing.py', 'integration/patch.py': 'consolidation/compiler.py', 'integration/proposal_scope.py': 'graph/scope.py', 'integration/provenance.py': 'graph/provenance.py', 'integration/receipt_ledger.py': 'reconciliation/ledger.py', 'integration/reconciliation_compile.py': 'reconciliation/compiler.py', 'integration/reconciliation_contract.py': 'reconciliation/contract.py', 'integration/relation_context.py': 'reconciliation/context.py', 'integration/relation_edits.py': 'graph/edits.py', 'integration/relation_followups.py': 'reconciliation/followups.py', 'integration/relation_merger.py': 'reconciliation/relation_merger.py', 'integration/relation_merger_stage.py': 'runtime/relation_stage.py', 'integration/review.py': 'consolidation/review.py', 'integration/signal_effects.py': 'graph/impact.py', 'integration/signal_premises.py': 'reconciliation/premises.py', 'integration/signal_receipts.py': 'reconciliation/receipts.py', 'integration/signal_scope.py': 'reconciliation/scope.py', 'integration/signals.py': 'reconciliation/inspection.py', 'integration/single_graph.py': 'reconciliation/single_graph.py', 'integration/source_units.py': 'graph/source_units.py', 'integration/task_context.py': 'consolidation/task_context.py', 'integration/task_runner.py': 'runtime/task.py', 'integration/task_state.py': 'runtime/state.py', 'integration/tools.py': 'identity/tools.py', 'integration/validation_repair.py': 'graph/repair.py', 'integration/workspace.py': 'runtime/workspace.py', 'llm/identity_guidance.py': 'identity/guidance.py', 'llm/node_context.py': 'consolidation/presentation.py', 'llm/node_contract.py': 'consolidation/contract.py', 'llm/reconciliation_agent.py': 'reconciliation/agent.py', 'llm/reconciliation_context.py': 'reconciliation/permissions.py', 'llm/reconciliation_presentation.py': 'reconciliation/presentation.py', 'llm/reconciliation_projection.py': 'reconciliation/projection.py', 'llm/reconciliation_prompts.py': 'reconciliation/policy.py', 'llm/task_agent.py': 'llm/agent.py', 'llm/input_budget.py': 'llm/budget.py', 'llm/relation_reads.py': 'reconciliation/reads.py'}
-
-def source_file(namespace, name):
-    """Resolve implementation dependencies used by conservative policy hashes."""
-    relative = namespace + '/' + name
-    return files('cortex.capabilities.graph_merge').joinpath(_SOURCE_PATHS.get(relative, relative))
+def implementation_sources():
+    """Hash all current implementation sources, including permissions and presentation."""
+    root = files('cortex.capabilities.graph_merge')
+    def walk(directory, prefix=''):
+        for child in sorted(directory.iterdir(), key=lambda entry: entry.name):
+            relative = prefix + child.name
+            if child.is_dir() and child.name != '__pycache__':
+                yield from walk(child, relative + '/')
+            elif child.name.endswith('.py'):
+                yield relative, child.read_text()
+    return dict(walk(root))
 
 
 TASK_STATE_VERSION = 4
@@ -92,7 +97,7 @@ def build_contract_versions(schema, *, tool_schemas=None, review_policy=REVIEW_P
     prompts['asset_guidance'] = guidance_root.joinpath('prompts/asset_contract.py').read_text()
     prompts['operation_guidance'] = guidance_root.joinpath('generation_rule_taxonomy.py').read_text()
     if tool_schemas is None:
-        from cortex.capabilities.graph_merge.graph.edit_contract import IdentityDecision
+        from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
         from cortex.capabilities.graph_merge.reconciliation.contract import TOOLS, AssessmentResult
         tool_schemas = {"reconciliation:" + name: model.model_json_schema() for name, model in TOOLS.items()}
         tool_schemas['reconciliation:assessment_result'] = AssessmentResult.model_json_schema()
@@ -109,16 +114,7 @@ def build_contract_versions(schema, *, tool_schemas=None, review_policy=REVIEW_P
         tool_schemas['node_local_reads'] = {name: {'description': tool.description,
             'parameters': tool.args_schema.model_json_schema()} for name, tool in local_reads.items()}
         tool_schemas['node_local_results'] = {role: node_output_model(role).model_json_schema() for role in ('writer', 'assessment')}
-        for name in ('identity_guidance.py', 'prompt_language.py', 'node_contract.py', 'node_context.py', 'packets.py', 'reconciliation_context.py', 'reconciliation_agent.py', 'reconciliation_prompts.py', 'reconciliation_projection.py', 'reconciliation_presentation.py'):
-            tool_schemas[name] = source_file('llm', name).read_text()
-        for name in ('single_graph.py', 'local_validation.py', 'semantic_notes.py', 'patch.py', 'node_revision.py', 'node_relations.py', 'node_relation_repair.py', 'relation_followups.py', 'reconciliation_contract.py', 'reconciliation_compile.py', 'signals.py', 'signal_premises.py', 'signal_scope.py', 'signal_effects.py', 'signal_scope_migration.py', 'signal_receipts.py', 'receipt_ledger.py'):
-            tool_schemas[name] = source_file('integration', name).read_text()
-        for namespace, names in (('integration', ('relation_merger.py', 'relation_merger_stage.py')),
-                                 ('llm', ('relation_merger.py',))):
-            for name in names:
-                path = source_file(namespace, name)
-                if path.is_file():
-                    tool_schemas[namespace + '/' + name] = path.read_text()
+        tool_schemas.update({'implementation:' + name: source for name, source in implementation_sources().items()})
     return ContractVersions(schema=canonical_hash({"ontology": schema.model_dump(mode="json"),
                                                   "graph_state": GraphState.model_json_schema()}),
                             tools=canonical_hash({"version": TOOL_CONTRACT_VERSION, "schemas": tool_schemas}),

@@ -1,4 +1,4 @@
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
@@ -75,7 +75,12 @@ def test_relation_packet_shows_complete_focus_branches_without_mutation():
         'edges': original.graph.edges + (common, scoped)})})
     snapshot = current.model_dump_json()
     ctx = IntegrationContext(current, GraphState(graph=GraphSpace()), load_root_schema())
-    packet = relation_context(ctx, current, LocalTask('relation', 'reconcile', {owner.id}))
+    check = {'id': 'preserve-branch-operands', 'kind': 'node_relation_followup',
+             'mode': 'required', 'node_ids': [owner.id],
+             'edge_ids': ['common-operand', 'local-operand'],
+             'required_outcome': 'Preserve complete branch meanings and each operand scope.'}
+    packet = relation_context(ctx, current, LocalTask('relation', 'reconcile', {owner.id}, checks=[check]))
+    assert {'common-operand', 'local-operand'} <= {row['id'] for row in packet['edges']}
     view = next(v for v in packet['current_conflict_views'] if v['node_id'] == owner.id)
     for row, alternative in zip(view['alternatives'], owner.alternatives):
         full = GraphManager.resolve_alternative(owner, alternative)

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.runtime.state import ContractVersions, TaskState
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore

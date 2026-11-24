@@ -63,7 +63,7 @@ def prepare(root):
         for case in ids:
             source=REPO/f'output/latest_graphs/{db}/case_level_graphs/{case}/state.json'
             assert sha(source)==row['cases'][case]['sha256']
-            from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+            from graph_merge_archive import migrate_relation_notes
             state,notes=migrate_relation_notes(read(source));GraphManager(load_root_schema()).validate_state(state)
             qa=REPO/f'output/bird_merge_v4_live_20261119_214104/integration/{db}/cases/{case}/input.json'
             raw=read(qa);assert raw['source_id']==f'bird-{db}-{case}'

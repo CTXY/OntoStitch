@@ -341,60 +341,6 @@ def test_retrieval_closure_keeps_all_key_columns(physical):
     assert "=" in text and "N:1" in text and " JOIN " not in text
 
 
-def test_graph_merge_remaps_pairs_merges_reversed_constraints_and_sources(physical):
-    from cortex.capabilities.graph_merge.edges import normalize_edges
-
-    _, _workspace, _, assets = physical
-    graph = build_graph(
-        [*assets.tables, *assets.columns], assets.join_edges, load_root_schema()
-    )
-    existing = next(
-        edge
-        for edge in graph.edges
-        if edge.edge_type == "joins_with" and edge.from_node_id == "table.child"
-    )
-    incoming = existing.model_copy(
-        update={
-            "id": "incoming-join",
-            "from_node_id": "new-parent",
-            "to_node_id": "new-child",
-            "properties": {
-                "description": "Deliberately invalid ownership test.",
-                "column_pairs": [
-                    {
-                        "from_column_ref": "new-" + pair["to_column_ref"],
-                        "to_column_ref": "new-" + pair["from_column_ref"],
-                    }
-                    for pair in reversed(existing.properties["column_pairs"])
-                ]
-            },
-        }
-    )
-    mapping = {
-        "new-parent": "table.parent",
-        "new-child": "table.child",
-        **{
-            "new-" + pair[key]: pair[key]
-            for pair in existing.properties["column_pairs"]
-            for key in pair
-        },
-    }
-    result = normalize_edges(
-        existing=(existing,),
-        incoming=(incoming,),
-        nodes=graph.nodes,
-        node_mappings=mapping,
-        schema=load_root_schema(),
-    )
-    (edge,) = result.edges
-    assert edge.id == existing.id
-    assert edge.properties["cardinality"] == "N:1"
-    assert result.mappings == (("incoming-join", existing.id),)
-    validate_graph_space(
-        graph.model_copy(update={"edges": result.edges}), load_root_schema()
-    )
-
-
 def test_physical_names_with_spaces_and_nested_aliases(tmp_path):
     from cortex.infrastructure.database.models import ColumnProfile, TableProfile
 
@@ -542,7 +488,7 @@ def test_local_computed_column_never_falls_back_to_outer_scope():
 
 
 def test_remapped_graph_ids_work_in_paths_rules_and_closure(physical):
-    from cortex.capabilities.graph_merge.edges import remap_property_node_ids
+    from cortex.capabilities.graph_merge.graph.operations import remap_property_node_ids
     from cortex.capabilities.retrieve_db.closure import TypedGraphClosure
     from cortex.capabilities.retrieve_db.graph_index import GraphIndex
     from cortex.capabilities.retrieve_db.join_paths import semantic_tables_from_sql

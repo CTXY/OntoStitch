@@ -1,18 +1,17 @@
 from types import SimpleNamespace
 
 import pytest
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.graph.batch import BatchResult
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-from cortex.capabilities.graph_merge.engine import (
-    IncrementalGraphIntegrationEngine,
-    identity_task_projection,
-)
+from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.planning import identity_task_projection
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
-from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element, IdentityDecision
-from cortex.capabilities.graph_merge.llm.incremental import NodeReview
+from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element
+from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
+from cortex.capabilities.graph_merge.consolidation.review import Review as NodeReview
 from cortex.schema import load_root_schema
 
 
@@ -58,9 +57,7 @@ def test_ordinary_confirmed_group_keeps_its_existing_projection():
     assert aliases == {a: a, b: a} and targets == {a} and not feedback
 
 
-def test_later_group_after_accepted_rewrite_requires_explicit_model_merge(monkeypatch):
-    import cortex.capabilities.graph_merge.engine as module
-    monkeypatch.setattr(module, "matched_batches", lambda groups, nodes, **kwargs: [[g] for g in groups])
+def test_later_single_group_plan_after_accepted_rewrite_requires_explicit_model_merge():
     original = state([*catalog(), concept("A", "a"), concept("B", "a"), concept("C", "b"), concept("D", "b")],
                      [edge("ca", "C", "A", "has_feature")])
 
@@ -113,7 +110,12 @@ def test_later_group_after_accepted_rewrite_requires_explicit_model_merge(monkey
             return result
 
     agent = Agent()
-    result = IncrementalGraphIntegrationEngine(agent).merge(state(), original, load_root_schema(), run_id="retired-plan")
+    engine = IncrementalGraphIntegrationEngine(agent)
+    result = engine.merge(state(), original, load_root_schema(), run_id="retired-plan")
+    assert len(engine.content_plan) == 2
+    assert all(len(groups) == 1 for groups in engine.content_plan)
+    assert agent.writes == 2
+    assert [row["task_id"] for row in engine.history if row["phase"] == "consolidate"] == ["content-0", "content-1"]
     assert agent.reviewed_rewritten_group and agent.reviews == 2
     rewritten = next(n for n in result.state.graph.nodes if n.id == "rewritten")
     assert {s.source_id for s in rewritten.sources} == {"A", "B"}

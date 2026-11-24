@@ -7,24 +7,11 @@ from pydantic import Field, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
-from cortex.capabilities.graph_merge.inputs import (
-    PHYSICAL,
-    remap_edge,
-    remap_node,
-)
-from cortex.capabilities.graph_merge.graph.edit_contract import (
-    Change,
-    CompleteAlternative,
-    EdgeDelete,
-    EdgeWrite,
-    Element,
-    InspectionCheck,
-    Model,
-    NodeDelete,
-    RationaleCheck,
-)
-from cortex.capabilities.graph_merge.integration.submission import (
+from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, remap_edge, remap_node
+from cortex.capabilities.graph_merge.graph.edit_contract import Change, CompleteAlternative, EdgeDelete, EdgeWrite, Element, InspectionCheck, NodeDelete, RationaleCheck
+from cortex.capabilities.graph_merge.models import Model
+from cortex.capabilities.graph_merge.graph.edit_validation import (
     content_errors,
     edit_key,
 )

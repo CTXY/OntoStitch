@@ -316,7 +316,7 @@ def test_saved_handoff_and_agent_use_same_node_scoped_guidance(state):
 
 
 def test_selected_concept_target_filters_explicit_grounding_without_legacy_target_id():
-    from test_graph_integration import catalog, edge, state as make_state
+    from graph_merge_fixtures import catalog, edge, state as make_state
     from cortex.capabilities.online_context.output.projection import _target_ref
     node=GraphNode(id='concept.code',node_type='concept',name='classification code',properties={'targets':[['a'],['b']]})
     original=make_state([*catalog(),node],[edge('binding-a',node.id,'a'),edge('binding-b',node.id,'b')])

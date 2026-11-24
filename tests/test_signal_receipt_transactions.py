@@ -4,8 +4,9 @@ from copy import deepcopy
 
 import pytest
 from langchain_core.messages import AIMessage
-from test_graph_integration import catalog, concept, state
-from test_merge_task_review_boundary import ScriptedModel, engine_for
+from graph_merge_fixtures import catalog, concept, state
+from graph_merge_chat import ScriptedModel
+from graph_merge_runtime_fixtures import engine_for
 
 from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
@@ -210,7 +211,7 @@ def test_new_checkpoint_cannot_silently_lose_entire_ledger(tmp_path):
 
 def test_full_merge_restart_after_durable_accept_before_scheduler_progress(tmp_path,monkeypatch):
     from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
-    from cortex.capabilities.graph_merge.graph.edit_contract import IdentityDecision
+    from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
     from cortex.schema import load_root_schema
     class Agent:
         reconciliation_contract=True

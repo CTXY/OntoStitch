@@ -8,7 +8,7 @@ No task/batch ID, workspace revision, global graph hash or policy enters here.
 import json
 from copy import deepcopy
 
-from cortex.capabilities.graph_merge.inputs import PHYSICAL
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.schema.relation_contracts import effective_schema
 

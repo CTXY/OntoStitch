@@ -1,35 +1,8 @@
 """Mechanical field diffs; never infer business intent from prose."""
-import hashlib
-import json
 
 
-def changed_fields(before, after):
-    changes = []
-    for kind in ("nodes", "edges"):
-        old = {x.id: x.model_dump(mode="json") for x in getattr(before.graph, kind)}
-        new = {x.id: x.model_dump(mode="json") for x in getattr(after.graph, kind)}
-        for key in sorted(old.keys() | new.keys()):
-            if key not in old or key not in new:
-                changes.append({"id": key, "operation": "created" if key in new else "deleted"})
-                continue
-            for field in old[key].keys() | new[key].keys():
-                a, b = old[key].get(field), new[key].get(field)
-                if a == b:
-                    continue
-                if field == "properties":
-                    for prop in sorted(a.keys() | b.keys()):
-                        if a.get(prop) != b.get(prop):
-                            changes.append({"id": key, "field": f"properties.{prop}", "before": a.get(prop), "after": b.get(prop)})
-                elif field not in {"sources", "reference_origin"}:
-                    changes.append({"id": key, "field": field, "before": a, "after": b})
-    return changes
 
 
-def review_key(payload):
-    # Feedback is prior judgment, not new graph/evidence. All evaluated content,
-    # before/after changes, scope and contracts remain part of this key.
-    value = {k: v for k, v in payload.items() if k != "feedback"}
-    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
 
 def current_repair_fields(candidate, findings, *, context=None, before=None):

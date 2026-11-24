@@ -5,22 +5,11 @@ import json
 from langchain_core.tools import tool
 
 from cortex.capabilities.graph_merge.identity.catalog import select_catalog_nodes
-from cortex.capabilities.graph_merge.inputs import (
-    PHYSICAL,
-    semantic_relations_first,
-)
-from cortex.capabilities.graph_merge.graph.edit_contract import (
-    Change,
-    CompleteAlternative,
-    Element,
-    SubmissionEdit,
-)
-from cortex.capabilities.graph_merge.integration.scope import content_consumers
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, semantic_relations_first
+from cortex.capabilities.graph_merge.graph.impact import content_consumers
 from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
     render_ontology_asset_contract,
 )
-from cortex.schema import ConflictPoint
-from cortex.schema.models import EdgeType
 from cortex.schema.relation_contracts import effective_schema
 
 
@@ -279,142 +268,4 @@ def build_tools(context, *, visible_source_ids=()):
             table, columns, view=view, offset=offset, limit=limit)
 
     tools = [inspect_graph, lookup_catalog, read_evidence, read_guidance]
-    buffer = getattr(context, "proposal_buffer", None)
-    if buffer is not None:
-
-        @tool
-        def submit_edits(
-            edits: tuple[SubmissionEdit, ...] = (),
-            changes: tuple[Change, ...] = (),
-            relation_contracts: tuple[EdgeType, ...] = (),
-            remove_edits: tuple[str, ...] = (),
-            remove_contracts: tuple[str, ...] = (),
-            remove_changes: tuple[Element, ...] = (),
-            expected_revision: int | None = None,
-        ) -> dict:
-            """Save a SMALL patch to the cumulative proposal; replace edits by object ID.
-
-            Exact write shapes: {"operation":"update_node","node":{...complete node...}}
-            or {"operation":"update_edge","edge":{...complete edge...}}.
-            Do not add node_id/edge_id to writes; IDs live inside node/edge.
-            Delete shape: {"operation":"delete_edge","edge_id":"ID"}.
-            Supply only new/replacement edits and changes, not the whole saved proposal.
-            changes.before always uses immutable input handles. Replacement changes must
-            cover each overlapping previous before-group in full. expected_revision detects
-            stale repairs. Invalid pending data is saved for repair but never applied.
-            remove_edits removes named object edits from the pending proposal.
-            remove_contracts withdraws pending contract IDs (never installed contracts).
-            remove_changes withdraws complete before-groups; include every before member.
-            Read the
-            returned errors and replace only those objects. A validated result updates
-            candidate view; unrelated saved edits remain. Finish with StageCompletion.
-            """
-            edits = [e.model_dump(mode="json") for e in edits]
-            changes = [c.model_dump(mode="json") for c in changes]
-            relation_contracts = [c.model_dump(mode="json") for c in relation_contracts]
-            remove_changes = [e.model_dump(mode="json") for e in remove_changes]
-            result = buffer.update(
-                edits=edits,
-                changes=changes,
-                relation_contracts=relation_contracts,
-                remove_edits=remove_edits,
-                remove_contracts=remove_contracts,
-                remove_changes=remove_changes,
-                expected_revision=expected_revision,
-            )
-            return context.log(
-                "submit_edits",
-                {
-                    "edits": edits,
-                    "changes": changes,
-                    "relation_contracts": relation_contracts,
-                    "remove_edits": remove_edits,
-                    "remove_contracts": remove_contracts,
-                    "remove_changes": remove_changes,
-                    "expected_revision": expected_revision,
-                },
-                result,
-            )
-
-        @tool
-        def inspect_pending(ids: tuple[str, ...] = ()) -> dict:
-            """Read saved pending edits/changes, which may be invalid and are NOT candidate view.
-
-            No IDs returns a small edit directory. Supply object IDs for full pending objects.
-            """
-            from cortex.capabilities.graph_merge.integration.submission import edit_key
-
-            if not ids:
-                return {
-                    "revision": buffer.revision,
-                    "edits": [
-                        {"kind": edit_key(e)[0], "id": edit_key(e)[1]}
-                        for e in buffer.pending["edits"]
-                    ],
-                    "contract_ids": [
-                        c["id"] for c in buffer.pending["relation_contracts"]
-                    ],
-                }
-            return {
-                "revision": buffer.revision,
-                "edits": [e for e in buffer.pending["edits"] if edit_key(e)[1] in ids],
-                "changes": [
-                    c
-                    for c in buffer.pending["changes"]
-                    if any(e["id"] in ids for e in c["before"] + c["after"])
-                ],
-            }
-
-        @tool
-        def write_conflict(
-            node_id: str,
-            alternatives: list[CompleteAlternative],
-            conflict_points: list[ConflictPoint],
-            changes: list[Change],
-            edits: tuple[SubmissionEdit, ...] = (),
-        ) -> dict:
-            """Save a conflict from COMPLETE alternative contents, not hand-written overrides.
-
-            You decide each complete behavior/formula, evidence and conflict point. Code
-            losslessly factors common fields and correct placeholders using GraphManager.
-            Vary the ACTUAL conflicting properties (action/formula/etc), not only labels.
-            Prefer a shared business decision name if only implementation differs.
-            Include necessary deletion/replacement of competing ordinary nodes and repair
-            their consumers in edits; never leave incompatible ordinary copies active.
-            changes refers to immutable sources. This updates the SAME buffered proposal.
-            """
-            from cortex.application.ontology_graph import GraphManager
-
-            owner = next(
-                (n for n in context.candidate.graph.nodes if n.id == node_id), None
-            )
-            if owner is None:
-                return {
-                    "status": "rejected",
-                    "errors": [
-                        "Conflict owner must exist in candidate; use a canonical existing node"
-                    ],
-                }
-            try:
-                compact, _ = GraphManager.compact_conflict(
-                    owner,
-                    [(a.alternative_id, a.content, a.sources) for a in alternatives],
-                    consolidation_status="semantic_conflict",
-                    conflict_points=tuple(conflict_points),
-                )
-                result = buffer.update(
-                    edits=[
-                        {
-                            "operation": "set_conflict",
-                            "node": compact.model_dump(mode="json"),
-                        },
-                        *[e.model_dump(mode="json") for e in edits],
-                    ],
-                    changes=[c.model_dump(mode="json") for c in changes],
-                )
-            except (ValueError, TypeError, KeyError) as exc:
-                result = {"status": "rejected", "errors": [str(exc)]}
-            return context.log("write_conflict", {"node_id": node_id}, result)
-
-        tools.extend([submit_edits, inspect_pending, write_conflict])
     return tools

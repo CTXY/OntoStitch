@@ -1,10 +1,10 @@
 """Protocol repairs preserve provider tool IDs without an extra completion turn."""
 
 from langchain_core.messages import AIMessage, ToolMessage
-from test_graph_integration import state
+from graph_merge_fixtures import state
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.schema import load_root_schema
 
 

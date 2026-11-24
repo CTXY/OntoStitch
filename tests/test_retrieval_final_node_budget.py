@@ -10,7 +10,7 @@ from cortex.application.retrieve_db import RetrieveDbService, RetrievalCheckpoin
 from cortex.capabilities.retrieve_db.engine import RetrieveDbCapability
 from cortex.capabilities.retrieve_db.graph.context import select_context, expand_context, build_retrieved_graph_state
 from cortex.schema import GraphNode, GraphEdge, GraphSpace, GraphState, load_root_schema
-from test_graph_integration import concept, edge, state
+from graph_merge_fixtures import concept, edge, state
 from test_unified_retrieval_workflow import source
 
 

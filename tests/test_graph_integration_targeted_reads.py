@@ -1,13 +1,9 @@
+from graph_merge_fixtures import aligned_preview
 """Targeted reads preserve complete objects, exact scope and prompt information."""
 
-from test_graph_integration import catalog, concept, contexts, edge, state
+from graph_merge_fixtures import catalog, concept, contexts, edge, state
 
 from cortex.capabilities.graph_merge.identity.catalog import select_catalog_nodes
-from cortex.capabilities.graph_merge.graph.publication import compile_proposal
-from cortex.capabilities.graph_merge.graph.edit_contract import (
-    IdentityDecision,
-    IntegrationProposal,
-)
 from cortex.capabilities.graph_merge.llm.packing import (
     expand_payload,
     pack_payload,
@@ -71,7 +67,7 @@ def test_catalog_name_ambiguity_requires_id_and_does_not_pick_one_table():
 
 def test_catalog_lookup_respects_candidate_view_and_pagination():
     ctx = contexts(state(), state(catalog()))
-    preview = compile_proposal(ctx, IdentityDecision(), IntegrationProposal())
+    preview = aligned_preview(ctx)
     # Tool-view isolation fixture; no production physical mutation is allowed.
     ctx.candidate = preview.state.model_copy(
         update={

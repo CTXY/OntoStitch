@@ -6,10 +6,10 @@ from dataclasses import replace
 import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
-from test_graph_integration import catalog, concept, edge, state
-from test_merge_task_review_boundary import engine_for
+from graph_merge_fixtures import catalog, concept, edge, state
+from graph_merge_runtime_fixtures import engine_for
 
-from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.reconciliation.followups import drain_relation_followups
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash

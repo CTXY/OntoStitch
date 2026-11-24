@@ -10,7 +10,7 @@ from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.infrastructure.artifacts.graph_merge_trace import FileSystemGraphMergeTraceSink
 from cortex.schema import GraphState,GraphSpace,load_root_schema
 from reconciliation_probe_fixtures import write

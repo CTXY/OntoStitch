@@ -1,4 +1,4 @@
-from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
+from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
 from cortex.schema import GraphEdge, SourceReference
 
 

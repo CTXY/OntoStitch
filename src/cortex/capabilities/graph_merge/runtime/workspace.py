@@ -51,10 +51,7 @@ def _normalize(payload):
             payload['signal_receipts'], history=normalized['history'], current=normalized['current'])
     elif any('reconciliation_receipt_policy_hash' in h for h in normalized['history']):
         raise ValueError('Missing receipt ledger for a workspace with accepted reconciliation receipts')
-    if 'signal_scope_migrations' in payload:
-        from cortex.capabilities.graph_merge.reconciliation.scope_migration import validate_scope_migrations
-        normalized['signal_scope_migrations'] = validate_scope_migrations(
-            payload['signal_scope_migrations'], ledger=normalized.get('signal_receipts', []))
+
     if payload.get("task_state") is not None:
         from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash
 

@@ -133,3 +133,37 @@ found no remaining relocation regression.
 The temporary implementation-source map preserves existing invalidation coverage;
 it is an internal migration aid, not an old public import or checkpoint adapter.
 It will be replaced with current resource paths during the subsequent cleanup.
+
+## Stage C — remove retired execution paths
+
+Removed the Operator, old node-group reconciliation, two old integration engines,
+old LangGraph workflows, old role agents and buffered model tools. Current batch,
+scope, source-route, validation and publication primitives were extracted first;
+their retained function bodies were AST-compared with stage B. SQL training uses
+the graph leaf operations directly. Historical regression-data converters live
+in test/report utilities, not the production import graph. Old migration scripts
+and unsupported CLI options were retired, and current runners use WorkspaceStore.
+
+Only current prompt assets remain. The same 402 KB model-visible snapshot remains
+byte-identical to stage A. Conservative policy binding now includes all current
+implementation source files rather than a map of obsolete source locators.
+
+Test retirement and replacement are documented in
+`graph-merge-test-retirement-map.md`. Canonical recovery tests now cover corrupt
+envelopes, failure budgets across restart, new/repeated/failed read facts,
+result-only recovery, commit-write rollback and candidate reconstruction failure.
+New direct guards cover changed/deleted payload round trips and rejection of
+abstract predicates at final publication.
+
+Full run: 2,096 passed, 25 failed, 3 skipped. Three merge test-fixture/old-seam
+failures from that run were then corrected and their group plus new guards passed
+15/15. The remaining 22 full-baseline failures are the optional external-data
+probe, pre-existing shared self-JOIN assertion, and 20 online/rule-guidance cases
+outside this refactor. No corresponding production constraint was loosened.
+Additional focused results: 375 stage-migration tests, 149 recovery/protocol tests,
+77 core transaction tests and 98 affected offline/downstream tests passed (sets
+overlap; these counts are not a combined total).
+
+Three independent reviewers approved the stage after the coverage gaps were
+filled. The deterministic no-op merger fixture now preserves identical original
+descriptions and refuses nontrivial semantic merging instead of inventing prose.

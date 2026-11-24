@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.reconciliation.receipts import dependency_facts, read_dependencies
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import ConflictAlternative, GraphSpace, GraphState, SourceReference, load_root_schema
 
 

@@ -1,32 +1,15 @@
-"""Compile an explicit semantic proposal; never infer business edges or predicates."""
-
+"""Publish one accepted graph with stable public IDs and exact provenance mappings."""
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
 
-from cortex.application.merge_graph import (
-    CanonicalIdMapping,
-    GraphMergeResult,
-    MergeElementRef,
-    StructuralRewrite,
-)
-from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.inputs import (
-    PHYSICAL,
-    remap_edge,
-    remap_node,
-)
-from cortex.capabilities.graph_merge.transactions import apply_merge_state
-from cortex.schema import GraphEdge, GraphNode, GraphSpace, GraphState
-from cortex.schema.relation_contracts import merge_relation_contracts
-from cortex.schema.relation_vocabulary import require_concrete_relation
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
-
-def unique(values):
-    return tuple(dict.fromkeys(values))
-
+from cortex.application.merge_graph import CanonicalIdMapping, GraphMergeResult, MergeElementRef, StructuralRewrite
+from cortex.application.ontology_graph import GraphManager, GraphRejected
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, remap_node, remap_edge
+from cortex.schema import GraphState
 
 def assessed_semantic_content(state):
     """Compare effective assertions, preserving every partial branch scope."""
@@ -50,123 +33,6 @@ def assessed_semantic_content(state):
     )
 
 
-def identity_map(context, decision):
-    mappings = dict(context.physical_map)
-    used = set()
-    old = {n.id for n in context.existing.graph.nodes}
-    for group in decision.groups:
-        members = set(group.members)
-        if len(members) != len(group.members) or members & used:
-            raise ValueError(
-                "Identity groups must have distinct, non-overlapping members"
-            )
-        if not members <= context.read_ids:
-            raise ValueError(
-                f"Read identity members before deciding: {sorted(members - context.read_ids)}"
-            )
-        types = {context.nodes[key].node_type for key in members}
-        if len(types) != 1 or types & PHYSICAL:
-            raise ValueError(
-                "Identity aliases require one semantic type; type correction is an explicit rewrite"
-            )
-        canonical = min(members, key=lambda key: (key not in old, key))
-        mappings.update({key: canonical for key in members})
-        used |= members
-    distinctions = {frozenset(d.members) for d in decision.distinctions}
-    for d in decision.distinctions:
-        if len(set(d.members)) != 2 or not set(d.members) <= context.read_ids:
-            raise ValueError("Distinction members must be two read semantic nodes")
-        if mappings.get(d.members[0], d.members[0]) == mappings.get(
-            d.members[1], d.members[1]
-        ):
-            raise ValueError("A pair cannot be both same and different identity")
-    for a, b in context.mandatory:
-        if (
-            mappings.get(a, a) != mappings.get(b, b)
-            and frozenset((a, b)) not in distinctions
-        ):
-            raise ValueError(
-                f"Explicit identity decision needed for binding contest: {a}, {b}"
-            )
-    return mappings
-
-
-def deduplicate_edges(edges):
-    """Exact semantic assertions; physical JOIN identity is direction independent."""
-    from cortex.schema.physical_joins import join_edge_key, merge_join_edges
-
-    by_signature, mappings = {}, {}
-    for edge in edges:
-        # Only controller-generated catalog prose embeds temporary source IDs.
-        # Canonicalize that template after endpoint remapping so identical
-        # physical ownership assertions can share one edge and exact sources.
-        if (
-            edge.reference_origin == "default"
-            and edge.edge_type in {"belongs_to", "value_of"}
-            and isinstance(edge.properties.get("description"), str)
-            and re.fullmatch(
-                rf"\S+ {edge.edge_type} its catalog owner \S+\.",
-                edge.properties.get("description", ""),
-            )
-        ):
-            edge = edge.model_copy(update={"properties": {
-                **edge.properties,
-                "description": f"{edge.from_node_id} {edge.edge_type} its catalog owner {edge.to_node_id}.",
-            }})
-        if edge.edge_type == "joins_with":
-            signature = (edge.edge_type, join_edge_key(edge))
-            previous = by_signature.get(signature)
-            merged = merge_join_edges([previous] if previous else [], [edge])[0]
-            by_signature[signature] = merged
-            mappings[edge.id] = merged.id
-            continue
-        signature = (
-            edge.edge_type,
-            edge.from_node_id,
-            edge.to_node_id,
-            json.dumps(edge.properties, sort_keys=True, ensure_ascii=False),
-        )
-        previous = by_signature.get(signature)
-        if previous:
-            mappings[edge.id] = previous.id
-            by_signature[signature] = previous.model_copy(
-                update={"sources": unique((*previous.sources, *edge.sources))}
-            )
-        else:
-            by_signature[signature] = edge
-            mappings[edge.id] = edge.id
-    return {e.id: e for e in by_signature.values()}, mappings
-
-
-def mapped_base(context, decision):
-    mappings = identity_map(context, decision)
-    nodes = {}
-    for n in context.nodes.values():
-        key = mappings.get(n.id, n.id)
-        if key not in nodes:
-            nodes[key] = remap_node(context.nodes[key], mappings)
-        current = nodes[key]
-        nodes[key] = current.model_copy(
-            update={
-                "sources": unique((*current.sources, *n.sources)),
-                "aliases": list(
-                    dict.fromkeys(
-                        [
-                            *current.aliases,
-                            *n.aliases,
-                            *([n.name] if n.name != current.name else []),
-                        ]
-                    )
-                ),
-            }
-        )
-    edges, edge_map = deduplicate_edges(
-        remap_edge(e, mappings) for e in context.edges.values()
-    )
-    nodes = {key: remap_node(n, {}, edge_map) for key, n in nodes.items()}
-    return nodes, edges, mappings, edge_map
-
-
 @dataclass
 class Preview:
     state: GraphState
@@ -175,223 +41,89 @@ class Preview:
     impacts: list[dict]
 
 
-def compile_proposal(context, decision, proposal, *, strict=True):
-    nodes, edges, node_map, edge_map = mapped_base(context, decision)
-    before_nodes, before_edges = dict(nodes), dict(edges)
-    changes_before = {
-        (e.kind, e.id) for change in proposal.changes for e in change.before
-    }
-    edited = set()
-    unexplained = []
-    known_sources = {s for n in context.raw_nodes.values() for s in n.sources}
-    known_sources |= {s for e in context.raw_edges.values() for s in e.sources}
-    for n in context.raw_nodes.values():
-        for a in n.alternatives:
-            known_sources.update(a.sources)
-    authorized_nodes = {node_map.get(key, key) for key in context.read_ids}
-    authorized_edges = {
-        edge_map.get(e.id, e.id)
-        for e in context.edges.values()
-        if e.from_node_id in context.read_ids or e.to_node_id in context.read_ids
-    }
-    for edit in proposal.edits:
-        operation = edit.model_dump(exclude_none=True)
-        kind = operation.get("operation")
-        is_node = kind in {"create_node", "update_node", "delete_node", "set_conflict"}
-        if not is_node and kind not in {"create_edge", "update_edge", "delete_edge"}:
-            raise ValueError(f"Unsupported operation {kind!r}")
-        label, cls, objects, aliases, allowed = (
-            ("node", GraphNode, nodes, node_map, authorized_nodes)
-            if is_node
-            else ("edge", GraphEdge, edges, edge_map, authorized_edges)
+@traceable(name="merge_transaction", run_type="chain")
+def apply_merge_state(manager: GraphManager, state: GraphState, *, request_id: str):
+    trace = get_current_run_tree()
+    if trace is not None:
+        trace.add_metadata(
+            {"transaction_id": request_id, "base_revision": manager.revision}
         )
-        deletion = kind.startswith("delete_")
-        if deletion:
-            raw_id = operation.get(label + "_id")
-            key = aliases.get(raw_id, raw_id)
-            obj = objects.get(key)
-        else:
-            raw = dict(operation.get(label) or {})
-            raw_id = raw.get("id")
-            key = aliases.get(raw_id, raw_id)
-            raw["id"] = key
-            previous = objects.get(key)
-            if previous is not None and "sources" not in raw:
-                raw["sources"] = [s.model_dump(mode="json") for s in previous.sources]
-            obj = cls.model_validate(raw)
-            obj = (
-                remap_node(obj, node_map, edge_map)
-                if is_node
-                else remap_edge(obj, node_map)
-            )
-        if obj is None:
-            raise ValueError(f"Cannot {kind}: missing {key}")
-        if (label, key) in edited:
-            raise ValueError(f"One explicit operation per element per proposal: {key}")
-        edited.add((label, key))
-        if kind.startswith("create_") and key in objects:
-            raise ValueError(f"Use update for existing {key}")
-        if not kind.startswith("create_") and key not in objects:
-            raise ValueError(f"Use create for new {key}")
-        if key in objects and key not in allowed:
-            raise ValueError(f"Read {label} and its owner before modifying {key}")
-        previous = (before_nodes if is_node else before_edges).get(key)
-        if previous is not None and (
-            (is_node and previous.node_type in PHYSICAL)
-            or (
-                not is_node
-                and before_nodes[previous.from_node_id].node_type in PHYSICAL
-                and before_nodes[previous.to_node_id].node_type in PHYSICAL
-            )
-        ):
-            raise ValueError(
-                "Merge Agent cannot modify existing physical catalog objects"
-            )
-        if is_node and previous is not None and obj.node_type != previous.node_type:
-            raise ValueError(
-                f"Existing node type cannot change for {key}; create a new ID, "
-                "delete the old node, repair its references and record the rewrite"
-            )
-        if is_node and obj.node_type in PHYSICAL:
-            raise ValueError("Merge Agent cannot edit physical catalog nodes")
-        if (
-            not is_node
-            and obj.from_node_id in nodes
-            and obj.to_node_id in nodes
-            and nodes[obj.from_node_id].node_type in PHYSICAL
-            and nodes[obj.to_node_id].node_type in PHYSICAL
-        ):
-            raise ValueError("Merge Agent cannot modify physical catalog edges")
-        if not set(obj.sources) <= known_sources:
-            raise ValueError(
-                f"Invented source on {key}; use provided source references"
-            )
-        if is_node:
-            if obj.consolidation_status == "unresolved":
-                raise ValueError(
-                    "Uncertain preservation is not a successful integration result"
-                )
-            for a in obj.alternatives:
-                if not set(a.sources) <= known_sources:
-                    raise ValueError(f"Invented alternative source on {key}")
-        # An edited source object must have an explicit semantic disposition.
-        original_ids = {
-            ref
-            for ref in (context.raw_nodes if is_node else context.raw_edges)
-            if aliases.get(ref, ref) == key
-        }
-        if original_ids and not any(
-            (label, ref) in changes_before for ref in original_ids
-        ):
-            unexplained.append({"operation": kind, "source_ids": sorted(original_ids)})
-        if deletion:
-            del objects[key]
-        else:
-            objects[key] = obj
-    if unexplained:
-        raise ValueError(f"Explain substantive edits in changes.before: {unexplained}")
-    # No deletion cascades: missing endpoints/refs must be fixed explicitly.
-    edges, final_edge_map = deduplicate_edges(edges.values())
-    edge_map = {
-        key: final_edge_map.get(value, value) for key, value in edge_map.items()
-    }
-    nodes = {key: remap_node(n, {}, final_edge_map) for key, n in nodes.items()}
-    contracts = merge_relation_contracts(context.contracts, proposal.relation_contracts)
-    candidate = GraphState(
-        graph=GraphSpace(
-            nodes=tuple(nodes.values()),
-            edges=tuple(edges.values()),
-            relation_contracts=contracts,
-        )
-    )
-    if strict:
-        GraphManager(context.schema).validate_state(candidate)
-    else:
-        from cortex.schema.validation import validate_graph_state
-        validate_graph_state(candidate, context.schema)
-    # Normalize incoming/edited neighborhoods without forcing unrelated legacy cleanup.
-    affected_nodes = {
-        node_map.get(key, key) for key in context.input_node_map.values()
-    } | {key for kind, key in edited if kind == "node"}
-    edited_edges = {key for kind, key in edited if kind == "edge"}
-    for edge in candidate.graph.edges:
-        if (
-            edge.id in edited_edges
-            or edge.from_node_id in affected_nodes
-            or edge.to_node_id in affected_nodes
-        ) and strict:
-            require_concrete_relation(edge.edge_type)
-    # Validate correspondence references, including actual alternative selection.
-    for change in proposal.changes:
-        for element in change.before:
-            objects = context.raw_nodes if element.kind == "node" else context.raw_edges
-            if element.id not in objects:
-                raise ValueError(f"Unknown before handle {element.id}")
-            if element.alternative_id and (
-                element.kind != "node"
-                or element.alternative_id
-                not in {a.alternative_id for a in objects[element.id].alternatives}
-            ):
-                raise ValueError(f"Unknown before alternative {element.alternative_id}")
-        for element in change.after:
-            aliases = node_map if element.kind == "node" else edge_map
-            key = aliases.get(element.id, element.id)
-            objects = nodes if element.kind == "node" else edges
-            if key not in objects:
-                raise ValueError(f"Unknown after handle {element.id}")
-            if element.alternative_id and (
-                element.kind != "node"
-                or element.alternative_id
-                not in {a.alternative_id for a in objects[key].alternatives}
-            ):
-                raise ValueError(f"Unknown after alternative {element.alternative_id}")
-    # A node alias never silently selects/remaps a competing version.
-    before_alternatives = {
-        (e.id, e.alternative_id)
-        for c in proposal.changes
-        for e in c.before
-        if e.kind == "node" and e.alternative_id
-    }
-    for old in context.raw_nodes.values():
-        current = nodes.get(node_map.get(old.id, old.id))
-        current_alternatives = (
-            {a.alternative_id: a for a in current.alternatives} if current else {}
-        )
-        normalized = remap_node(old, node_map, edge_map)
-        for alternative in normalized.alternatives:
-            target = current_alternatives.get(alternative.alternative_id)
-            if (target is None or alternative.overrides != target.overrides) and (
-                old.id,
-                alternative.alternative_id,
-            ) not in before_alternatives:
-                raise ValueError(
-                    f"Explicit branch correspondence required for {old.id}/{alternative.alternative_id}"
-                )
-    for kind, originals, mapping, final in (
-        ("node", context.raw_nodes, node_map, nodes),
-        ("edge", context.raw_edges, edge_map, edges),
-    ):
-        for key in originals:
-            if mapping.get(key, key) not in final and (kind, key) not in changes_before:
-                raise ValueError(
-                    f"Unaccounted source {kind} {key}; no safe mapping or explicit rewrite"
-                )
-    impacts = []
-    for key, n in before_nodes.items():
-        if n == nodes.get(key):
+    before = manager.get_snapshot()
+    old_nodes = {node.id: node for node in before.graph.nodes}
+    new_nodes = {node.id: node for node in state.graph.nodes}
+    old_conflicts = {conflict.id: conflict for conflict in before.conflict_nodes}
+    new_conflicts = {conflict.id: conflict for conflict in state.conflict_nodes}
+    operations = []
+    for node in state.graph.nodes:
+        conflict = new_conflicts.get(node.id)
+        if node == old_nodes.get(node.id) and conflict == old_conflicts.get(node.id):
             continue
-        source_ids = {raw for raw in context.nodes if node_map.get(raw, raw) == key}
-        for raw in source_ids:
-            for ref in context.consumers.get(raw, ()):
-                impacts.append(
-                    {"changed_node": key, "consumer": node_map.get(ref, ref)}
-                )
-        for e in before_edges.values():
-            if key in (e.from_node_id, e.to_node_id):
-                impacts.append(
-                    {"changed_node": key, "relation": e.id, "preserved": e.id in edges}
-                )
-    return Preview(candidate, node_map, edge_map, impacts)
+        operation = {
+            "operation": "set_conflict"
+            if conflict
+            else "update_node"
+            if node.id in old_nodes
+            else "create_node",
+            "node": node.model_dump(mode="json"),
+        }
+        operations.append(operation)
+    for node_id in old_nodes.keys() - new_nodes.keys():
+        operations.append({"operation": "delete_node", "node_id": node_id})
+    old_edges = {
+        edge.id: edge
+        for edge in before.graph.edges
+        if edge.reference_origin != "default"
+    }
+    new_edges = {
+        edge.id: edge
+        for edge in state.graph.edges
+        if edge.reference_origin != "default"
+    }
+    for edge_id in old_edges.keys() - new_edges.keys():
+        operations.append({"operation": "delete_edge", "edge_id": edge_id})
+    for edge_id, edge in new_edges.items():
+        if edge != old_edges.get(edge_id):
+            operations.append(
+                {
+                    "operation": "update_edge"
+                    if edge_id in old_edges
+                    else "create_edge",
+                    "edge": edge.model_dump(mode="json"),
+                }
+            )
+    changed_owners = {
+        operation["node"]["id"] for operation in operations if "node" in operation
+    }
+    for edge_id in old_edges.keys() | new_edges.keys():
+        if old_edges.get(edge_id) == new_edges.get(edge_id):
+            continue
+        edge = new_edges.get(edge_id) or old_edges[edge_id]
+        owner = edge.from_node_id
+        if owner in new_conflicts and owner not in changed_owners:
+            operations.append(
+                {
+                    "operation": "set_conflict",
+                    "node": new_nodes[owner].model_dump(mode="json"),
+                }
+            )
+            changed_owners.add(owner)
+    if not operations and state.graph.relation_contracts == before.graph.relation_contracts:
+        manager.validate_state(state)
+        return before
+    result = manager.apply(
+        operations,
+        expected_revision=manager.revision,
+        request_id=request_id,
+        reviewed_reconciliation=True,
+        relation_contracts=state.graph.relation_contracts,
+    )
+    if trace is not None:
+        trace.add_metadata(
+            {"transaction_status": result.status, "result_revision": result.revision}
+        )
+    if result.status != "applied":
+        raise GraphRejected(result.errors, result.revision)
+    return manager.get_snapshot()
 
 
 def commit_result(context, proposal, preview, *, run_id):

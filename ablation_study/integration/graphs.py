@@ -9,7 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.edges import remap_property_node_ids
+from cortex.capabilities.graph_merge.graph.operations import remap_property_node_ids
 from cortex.capabilities.sql_training.graph.nodes import build_node
 from cortex.capabilities.sql_training.models import NodeAsset
 from cortex.schema import GraphSpace, GraphState, load_root_schema

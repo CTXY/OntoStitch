@@ -2,31 +2,20 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
+from pydantic import Field, create_model, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
+from cortex.capabilities.graph_merge.models import Model
 from cortex.schema import NodeContent, SourceReference
 from cortex.schema.models import EdgeType
 
 
-class Model(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class IdentityGroup(Model):
-    members: tuple[str, ...] = Field(min_length=2)
-    meaning: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
 
 
-class Distinction(Model):
-    members: tuple[str, str]
-    reason: str = Field(min_length=1)
 
 
-class IdentityDecision(Model):
-    groups: tuple[IdentityGroup, ...] = ()
-    distinctions: tuple[Distinction, ...] = ()
 
 
 class Element(Model):

@@ -1,3 +1,4 @@
+from graph_merge_fixtures import CurrentNoopAgent
 """Full and serialized split training share the same gate and integration result."""
 
 from dataclasses import dataclass, field
@@ -70,7 +71,7 @@ class Engine:
 
 class Merge:
     def __init__(self, diagnostics=(), error=None, invalid=False):
-        self.operator = build_graph_merge_operator(CortexConfig(), live_semantics=False)
+        self.operator = build_graph_merge_operator(CortexConfig(), integration_agent=CurrentNoopAgent())
         self.diagnostics = diagnostics
         self.error = error
         self.invalid = invalid

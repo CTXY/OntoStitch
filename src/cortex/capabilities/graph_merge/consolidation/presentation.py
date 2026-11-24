@@ -9,7 +9,7 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.inputs import references
+from cortex.capabilities.graph_merge.graph.operations import references
 from cortex.capabilities.graph_merge.evidence import EvidencePresentation
 from cortex.capabilities.graph_merge.graph.source_units import source_unit_manifest
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash

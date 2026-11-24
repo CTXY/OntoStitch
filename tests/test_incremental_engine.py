@@ -1,14 +1,12 @@
 """Semantic roles remain separate while accepted workspace changes are incremental."""
 
-from test_graph_integration import catalog, concept, state
+from graph_merge_fixtures import catalog, concept, state
 
 from cortex.capabilities.graph_merge.graph.batch import BatchResult
-from cortex.capabilities.graph_merge.engine import (
-    IncrementalGraphIntegrationEngine,
-    review_batches,
-)
-from cortex.capabilities.graph_merge.graph.edit_contract import IdentityDecision
-from cortex.capabilities.graph_merge.llm.incremental import NodeReview
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.planning import review_batches
+from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
+from cortex.capabilities.graph_merge.consolidation.review import Review as NodeReview
 from cortex.schema import load_root_schema
 
 
@@ -92,7 +90,7 @@ def test_interrupted_assessment_resumes_validated_writer_result_without_repeatin
 
 
 def test_no_edit_decision_judgment_skips_independent_assessment():
-    from test_graph_integration import edge
+    from graph_merge_fixtures import edge
 
     from cortex.capabilities.graph_merge.inputs import IntegrationContext
     from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
@@ -172,10 +170,10 @@ def test_no_edit_decision_judgment_skips_independent_assessment():
 
 def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
     import pytest
-    from test_graph_integration import edge
+    from graph_merge_fixtures import edge
 
     from cortex.capabilities.graph_merge.inputs import IntegrationContext
-    from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+    from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
     from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
     from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
     from cortex.schema import GraphNode
@@ -331,10 +329,8 @@ def test_later_identity_batch_does_not_reproject_a_consumed_member():
     import pytest
 
     from cortex.capabilities.graph_merge.inputs import IntegrationContext
-    from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-    from cortex.capabilities.graph_merge.engine import (
-        active_identity_projection,
-    )
+    from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
+    from cortex.capabilities.graph_merge.planning import active_identity_projection
     from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
     from cortex.capabilities.graph_merge.graph.edit_contract import Change
 

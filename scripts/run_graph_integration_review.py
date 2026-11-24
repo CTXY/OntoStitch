@@ -11,14 +11,10 @@ import json
 from pathlib import Path
 
 from dotenv import load_dotenv
-from langgraph.checkpoint.sqlite import SqliteSaver
 
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
-from cortex.capabilities.graph_merge.inputs import (
-    IntegrationContext,
-    remap_edge,
-    remap_node,
-)
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.operations import remap_edge, remap_node
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,
     SqlTrainingGraphMergeEvidenceResolver,
@@ -80,9 +76,6 @@ def main():
     parser.add_argument("--config", type=Path, default=Path("configs/cortex.yaml"))
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--run-id", default="integration-review")
-    parser.add_argument("--pending-proposal", type=Path, help="Continue repairing saved pending data; never treated as accepted graph")
-    parser.add_argument("--feedback-file", type=Path, help="Explicit experimental reviewer feedback; never counted as model assessment")
-    parser.add_argument("--reviewed-node-stage", type=Path, help="Explicitly reuse an accepted node-stage checkpoint with identical sources/schema; graph reconciliation runs live")
     parser.add_argument("--max-rounds", type=int, default=5)
     parser.add_argument(
         "--prepare-only",
@@ -168,34 +161,20 @@ def main():
         (args.output / "context_audit.json").write_text(json.dumps(audit, indent=2))
         print(json.dumps(audit))
         return
-    with SqliteSaver.from_conn_string(str(args.output / "checkpoints.sqlite")) as saver:
-        engine = build_graph_merge_operator(
-            config,
-            evidence_resolver=resolver,
-            checkpointer=saver,
-            trace_sink=FileSystemGraphMergeTraceSink(
-                args.output / "agent_traces.jsonl"
-            ),
-        )
-        if args.reviewed_node_stage:
-            from cortex.capabilities.graph_merge.integration.recovery import load_reviewed_node_stage
-            engine.reviewed_node_seed = load_reviewed_node_stage(args.reviewed_node_stage, GraphState(graph=GraphSpace()), incoming, schema)
-        if args.feedback_file:
-            feedback = json.loads(args.feedback_file.read_text())
-            engine.external_feedback = feedback['issues']
-            (args.output / 'external_feedback.json').write_text(json.dumps(feedback, ensure_ascii=False, indent=2))
-        if args.pending_proposal:
-            engine.pending_seed = json.loads(args.pending_proposal.read_text())
-            (args.output / 'pending_seed.json').write_text(json.dumps({'origin':str(args.pending_proposal.resolve()),'data':engine.pending_seed,'not_accepted':True},ensure_ascii=False,indent=2))
-        result = engine.merge(
-            GraphState(graph=GraphSpace()), incoming, schema, run_id=args.run_id
-        )
-        snapshot = saver.get_tuple({"configurable": {"thread_id": args.run_id}})
-        (args.output / "workflow.json").write_text(
-            json.dumps(
-                snapshot.checkpoint["channel_values"], ensure_ascii=False, indent=2
-            )
-        )
+    engine = build_graph_merge_operator(
+        config,
+        evidence_resolver=resolver,
+        workspace_path=args.output / "workspace.sqlite",
+        trace_sink=FileSystemGraphMergeTraceSink(
+            args.output / "agent_traces.jsonl"
+        ),
+    )
+    result = engine.merge(
+        GraphState(graph=GraphSpace()), incoming, schema, run_id=args.run_id
+    )
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+    snapshot = WorkspaceStore(args.output / "workspace.sqlite").load(args.run_id)
+    (args.output / "workflow.json").write_text(json.dumps(snapshot, ensure_ascii=False, indent=2))
     (args.output / "merge_report.json").write_text(result.model_dump_json(indent=2))
     (args.output / "graph_state.json").write_text(
         result.state.model_dump_json(indent=2)

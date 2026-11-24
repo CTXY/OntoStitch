@@ -20,16 +20,17 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.inputs import PHYSICAL, IntegrationContext, references, remap_edge, remap_node
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, references, remap_edge, remap_node
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
-from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
+from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import TaskState, build_contract_versions, canonical_hash
 from cortex.capabilities.graph_merge.consolidation.presentation import NodeTaskDialogue, build_node_packet
 from cortex.capabilities.graph_merge.consolidation.contract import node_system
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import GraphSpace, GraphState, SourceReference, load_root_schema, validate_graph_state
 
 REPO = Path(__file__).resolve().parents[1]

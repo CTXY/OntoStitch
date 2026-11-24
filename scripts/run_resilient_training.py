@@ -386,9 +386,7 @@ def merge_worker(args):
         IncrementalGraphIntegrationEngine,
     )
     from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
-    from cortex.capabilities.graph_merge.llm.incremental import (
-        IncrementalIntegrationAgent,
-    )
+    from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
     from cortex.capabilities.sql_training.graph_merge_evidence import (
         MappingEvidenceRepository,
         SqlTrainingGraphMergeEvidenceResolver,

@@ -22,7 +22,7 @@ from run_resilient_training import transport_error_details
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.graph.batch import alias_view
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+from graph_merge_archive import migrate_relation_notes
 from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent

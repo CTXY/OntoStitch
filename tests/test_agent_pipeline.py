@@ -1,3 +1,4 @@
+from graph_merge_fixtures import CurrentNoopAgent
 import json
 from pathlib import Path
 
@@ -69,7 +70,7 @@ def test_default_application_runs_case_graph_and_merges_valid_incoming(case_grap
     repository = Repository()
     service = SqlTrainingService(
         capability,
-        graph_merge=build_graph_merge_operator(config, live_semantics=False),
+        graph_merge=build_graph_merge_operator(config, integration_agent=CurrentNoopAgent()),
         state_repository=repository,
     )
     trained = service.run(

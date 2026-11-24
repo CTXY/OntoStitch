@@ -12,7 +12,7 @@ from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.graph.batch import alias_view
 from cortex.capabilities.graph_merge.graph.publication import Preview
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.integration.engine import implementation_version
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash, implementation_sources
 from cortex.capabilities.graph_merge.engine import (
     IncrementalGraphIntegrationEngine,
 )
@@ -25,7 +25,7 @@ from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
 )
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
-from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,
     SqlTrainingGraphMergeEvidenceResolver,
@@ -81,7 +81,7 @@ def main():
     engine._revision, engine.reviewed_sources = 0, {}
     targets = set(json.loads(args.targets.read_text()))
     dump("manifest.json", {"host": host, "model": model.model_name,
-        "implementation_version": implementation_version(), "max_model_calls": 10,
+        "implementation_version": canonical_hash(implementation_sources()), "max_model_calls": 10,
         "state": str(args.state), "evidence": str(args.evidence),
         "targets": sorted(targets), "streaming": True, "sdk_retries": 0,
         "full_merge": False, "targeted_feedback": False})

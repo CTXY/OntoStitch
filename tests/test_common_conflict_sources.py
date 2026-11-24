@@ -86,22 +86,6 @@ def test_extraction_schema_does_not_advertise_code_managed_common_sources():
     assert "common_sources" not in schema["conflict"]["properties"]
 
 
-def test_legacy_group_keeps_existing_common_conflict_but_refuses_reassignment():
-    from cortex.capabilities.graph_merge.models import FinalNodeGroup, NodeRepresentation, RepresentationRef
-    from cortex.capabilities.graph_merge.reconciliation.service import NodeGroupReconciler
-    state, _ = shared_state()
-    owner = state.conflict_nodes[0]
-    member = NodeRepresentation(ref=RepresentationRef(origin="existing_node", ref_id=owner.id),
-        node_type=owner.node_type, content=GraphManager.resolve_alternative(owner, owner.alternatives[0]), sources=owner.sources)
-    group = FinalNodeGroup(group_id="legacy", node_type=owner.node_type, existing_node_id=owner.id, members=(member,))
-    reconciler = NodeGroupReconciler()
-    kept = reconciler.reconcile_group(group, schema=load_root_schema(), historical_conflict=owner)
-    assert kept.node == owner
-    assert kept.conflict.common_sources == (COMMON,)
-    with pytest.raises(ValueError, match="Legacy group consolidation.*incremental"):
-        reconciler.reconcile_group(group, schema=load_root_schema(), historical_conflict=owner, force_reconcile=True)
-
-
 def test_public_branch_reads_and_resolution_keep_only_common_and_selected_support():
     state, _ = shared_state()
     manager = GraphManager(load_root_schema(), state)

@@ -11,16 +11,11 @@ from cortex.application.ontology_graph import GraphManager, GraphRejected
 from cortex.capabilities.graph_merge.graph.batch import (
     alias_view,
 )
-from cortex.capabilities.graph_merge.graph.publication import (
-    Preview,
-    commit_result,
-    identity_map,
-)
-from cortex.capabilities.graph_merge.inputs import (
-    PHYSICAL,
-    IntegrationContext,
-)
-from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+from cortex.capabilities.graph_merge.graph.publication import Preview, commit_result
+from cortex.capabilities.graph_merge.identity.contract import identity_map
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.graph.edit_contract import IntegrationProposal
 from cortex.capabilities.graph_merge.graph.provenance import (
@@ -29,9 +24,8 @@ from cortex.capabilities.graph_merge.graph.provenance import (
 from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
 from cortex.capabilities.graph_merge.consolidation.task_context import (
     LocalTask,
-    build_task_context,
 )
-from cortex.capabilities.graph_merge.integration.two_stage import matched_batches
+from cortex.capabilities.graph_merge.planning import _nodes, _signal_targets, identity_task_projection, review_batches
 from cortex.schema import GraphState
 from cortex.schema.relation_vocabulary import require_concrete_relation
 
@@ -56,119 +50,16 @@ def input_fingerprint(context):
     ).hexdigest()
 
 
-def _nodes(state):
-    return {n.id: n for n in state.graph.nodes}
-
-
-def active_identity_projection(current, aliases, lineage):
-    """Project live members only; retain recorded earlier structural rewrites.
-
-    Identity is already Agent-confirmed. Provenance here only verifies why an
-    absent member needs no second physical projection; it establishes no match.
-    The subsequent Agent still compares the complete immutable matched group.
-    """
-    nodes = _nodes(current)
-    active = {}
-    for source, target in aliases.items():
-        if target not in nodes:
-            raise IntegrationIncomplete(
-                f"Matched canonical {target} was retired; rebuild the unpublished plan"
-            )
-        if source in nodes:
-            active[source] = target
-        elif not any(
-            r.kind == "node" and r.id == source
-            for r in lineage.origin_refs("node", target)
-        ):
-            raise IntegrationIncomplete(
-                f"Matched member {source} is absent without a recorded rewrite to {target}"
-            )
-    return active
 
 
 
-def identity_task_projection(current, aliases, lineage):
-    """Keep ordinary aliases; route rewritten groups to explicit Agent review.
-
-    Provenance locates current assertions, but does not establish a new identity.
-    A stale group therefore receives no mechanical aliases. The Writer and its
-    independent reviewer compare complete archived groups with all live outputs.
-    """
-    try:
-        active = active_identity_projection(current, aliases, lineage)
-        return active, set(active.values()), []
-    except IntegrationIncomplete:
-        nodes = _nodes(current)
-        origins = {
-            key: {r.id for r in lineage.origin_refs("node", key) if r.kind == "node"}
-            for key in nodes
-        }
-        locations = {}
-        for source in sorted(set(aliases) | set(aliases.values())):
-            live = {key for key, refs in origins.items() if source in refs}
-            if source in nodes:
-                live.add(source)
-            if not live:
-                raise  # An unrepresented/discarded source needs a new plan.
-            locations[source] = sorted(live)
-        import json
-
-        feedback = [
-            "An earlier accepted rewrite changed the live objects of this archived "
-            "matched group. These provenance locations do not assert new identity: "
-            + json.dumps(locations, sort_keys=True)
-            + ". Compare complete current contents with the archived group. Preserve "
-            "accepted rewrites and make explicit sourced edits/dispositions for any "
-            "remaining integration. A group already represented by one live object "
-            "needs content review without recreating retired copies. If the current "
-            "meanings reveal an identity counterexample, report it."
-        ]
-        return {}, set().union(*(set(v) for v in locations.values())), feedback
 
 
 
-def _signal_targets(check, state):
-    edges = {e.id: e for e in state.graph.edges}
-    keys = set(check.get('node_ids', ())) | set(check.get('edge_ids', ()))
-    keys |= {x.get('concept') for x in check.get('members', ())}
-    for eid in check.get('edge_ids', ()):
-        if eid in edges:
-            keys.update((edges[eid].from_node_id, edges[eid].to_node_id))
-    if check.get('kind') == 'source_selection_variants':
-        operands = set(check.get('node_ids', ()))
-        keys.update(e.from_node_id for e in edges.values()
-                    if e.edge_type == 'applies_to' and e.to_node_id in operands)
-    return {k for k in keys if k in _nodes(state) or k in edges}
 
 
-def review_batches(state, *, targets=None, checks=(), budget=14000, signals_only=False):
-    """Bound root definitions, keeping each supplied inspection indivisible.
 
-    Context neighbours are retrieved separately and are not writable by default.
-    No domain topic, semantic conclusion or fixed case partition is encoded here.
-    """
-    nodes = _nodes(state)
-    roots = set(
-        targets
-        if targets is not None
-        else (k for k, n in nodes.items() if n.node_type not in PHYSICAL)
-    )
-    units = [(set(_signal_targets(c, state)), [c]) for c in checks]
-    covered = set().union(*(u[0] for u in units)) if units else set()
-    if not signals_only:
-        units.extend(({k}, []) for k in sorted(roots - covered))
-    batches, keys, findings, used = [], set(), [], 0
-    for ids, cs in units:
-        cost = sum(len(nodes[k].model_dump_json()) for k in ids - keys if k in nodes)
-        if keys and used + cost > budget:
-            batches.append((keys, findings))
-            keys, findings, used = set(), [], 0
-        keys |= ids
-        findings.extend(cs)
-        used += cost
-    if keys:
-        batches.append((keys, findings))
-    return batches
+
 
 
 class IncrementalGraphIntegrationEngine:
@@ -179,20 +70,16 @@ class IncrementalGraphIntegrationEngine:
         agent,
         *,
         evidence_resolver=None,
-        checkpoint_factory=None,
+        workspace_path=None,
         max_rounds=3,
         top_k=5,
-        runtime_signature="",
         sql_dialect=None,
         model_call_budget=80,
         node_context_max_characters=110000,
     ):
         self.agent, self.evidence_resolver = agent, evidence_resolver
         self.max_rounds, self.top_k = max_rounds, top_k
-        self.checkpoint_factory, self.runtime_signature = (
-            checkpoint_factory,
-            runtime_signature,
-        )
+        self.workspace_path = workspace_path
         self.sql_dialect = sql_dialect
         self.model_call_budget = model_call_budget
         if node_context_max_characters < 1:
@@ -202,7 +89,6 @@ class IncrementalGraphIntegrationEngine:
         self.last_session = None
         self.relation_coverage = set()
         self.signal_receipts = []
-        self.signal_scope_migrations = []
 
     def merge(self, existing, incoming, schema, *, run_id=None):
         run_id = run_id or uuid4().hex
@@ -253,7 +139,6 @@ class IncrementalGraphIntegrationEngine:
         self.content_plan = None
         self.relation_coverage = set()
         self.signal_receipts = []
-        self.signal_scope_migrations = []
         self.reconciliation_complete = False
         self.pending_relation_work = None
         self.pending_review = None
@@ -294,9 +179,6 @@ class IncrementalGraphIntegrationEngine:
             }
             self.identity_decision = resume.get("identity")
             identity_reads = resume.get("identity_read_ids")
-            if identity_reads is None and self.identity_decision and getattr(self, "identity_trace_path", None):
-                from cortex.capabilities.graph_merge.integration.identity_reads import identity_reads_from_trace
-                identity_reads = identity_reads_from_trace(self.identity_trace_path, self.identity_decision)
             if identity_reads is not None:
                 if not set(identity_reads) <= set(ctx.nodes):
                     raise ValueError("Saved identity reads reference nodes outside the original input")
@@ -310,9 +192,6 @@ class IncrementalGraphIntegrationEngine:
             self.signal_receipts = validate_receipt_ledger(
                 resume['signal_receipts'], history=self.history, current=self.current
             ) if 'signal_receipts' in resume else []
-            from cortex.capabilities.graph_merge.reconciliation.scope_migration import validate_scope_migrations
-            self.signal_scope_migrations = validate_scope_migrations(
-                resume.get('signal_scope_migrations', []), ledger=self.signal_receipts)
             self.reconciliation_complete = resume.get("reconciliation_complete", False)
             self.pending_relation_work = resume.get("pending_relation_work")
             self.pending_review = resume.get("pending_review")
@@ -332,53 +211,7 @@ class IncrementalGraphIntegrationEngine:
                 )
                 self.current = normalized
         self._persist(run_id)
-        seed = getattr(self, "reviewed_node_seed", None)
-        if seed:
-            if [e.model_dump(mode="json") for e in ctx.evidence] != seed["evidence"]:
-                raise ValueError("Source evidence differs from the reviewed candidate")
-            from cortex.capabilities.graph_merge.graph.edit_contract import (
-                IdentityDecision,
-            )
-
-            decision = IdentityDecision.model_validate(seed["identity"])
-            aliases = identity_map(ctx, decision)
-            self.identity_read_ids = sorted(ctx.read_ids & set(ctx.nodes))
-            imported = GraphState.model_validate(seed["preview"])
-            lineage.observe(
-                current,
-                imported,
-                IntegrationProposal.model_validate(seed["proposal"]).changes,
-                node_aliases=aliases,
-                explanation="Explicitly import the reviewed candidate for a controlled comparison",
-            )
-            self.current = imported
-            self._mark_reviewed(set(seed.get("reviewed_node_ids", ())))
-            feedback = list(getattr(self, "external_feedback", ()))
-            # Feedback references are parsed as handles only, never instructions
-            # executed by code. The model decides the requested semantic repair.
-            import re
-
-            known = (
-                set(_nodes(imported))
-                | {e.id for e in imported.graph.edges}
-                | set(ctx.raw_nodes)
-                | set(ctx.raw_edges)
-            )
-            targets = {
-                k
-                for text in feedback
-                for k in re.findall(r"input::[ne]\d+", str(text))
-                if k in known
-            }
-            if not targets:
-                raise ValueError(
-                    "Controlled local repair requires feedback naming existing current handles"
-                )
-            self._run_task(
-                LocalTask("external-review", "reconcile", targets, feedback=feedback),
-                run_id,
-            )
-        elif resume and getattr(self, "external_feedback", None):
+        if resume and getattr(self, "external_feedback", None):
             # A reviewed graph needs a local feedback transaction, not another
             # identity/consolidation pass or a scan of every original input.
             if not resume.get("final"):
@@ -411,9 +244,7 @@ class IncrementalGraphIntegrationEngine:
             payload = ctx.payload("identity")
             ctx.output_validator = lambda d: identity_map(ctx, d)
             if resume and self.identity_decision:
-                from cortex.capabilities.graph_merge.graph.edit_contract import (
-                    IdentityDecision,
-                )
+                from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
 
                 decision = IdentityDecision.model_validate(self.identity_decision)
             else:
@@ -423,34 +254,11 @@ class IncrementalGraphIntegrationEngine:
             aliases = identity_map(ctx, decision)
             self.identity_read_ids = sorted(ctx.read_ids & set(ctx.nodes))
             self._persist(run_id)
-            def input_size(groups):
-                import json
-                from cortex.capabilities.graph_merge.consolidation.context import compact_task_context
-                from cortex.capabilities.graph_merge.llm.packets import compact_node_packet
-                targets = set()
-                for group in groups:
-                    _projection, live, _ = identity_task_projection(
-                        self.current, {k: aliases[k] for k in group["members"]}, self.lineage
-                    )
-                    targets.update(live)
-                candidate = self.current
-                task = LocalTask("input-preflight", "consolidate", targets, groups=groups)
-                packet = build_task_context(ctx, candidate, task, origins=self.lineage, before=self.current)
-                packet = compact_task_context(packet, ctx, candidate, targets, groups, for_review=False)
-                return len(json.dumps(compact_node_packet(packet), ensure_ascii=False))
-
             if self.content_plan is None:
                 groups = [g.model_dump(mode="json") for g in decision.groups]
-                started = any(h["task_id"].startswith("content-") for h in self.history) or bool(
-                    self.pending_review and self.pending_review.get("phase") == "consolidate"
-                )
-                # Legacy checkpoints keep their existing task numbering. New
-                # plans measure complete transport context and survive resumes.
-                self.content_plan = ([[group] for group in groups] if getattr(self.agent, 'node_local_contract', False) else
-                    matched_batches(groups, ctx.nodes) if started else
-                    matched_batches(groups, ctx.nodes, budget=self.node_context_max_characters, measure=input_size))
+                self.content_plan = [[group] for group in groups]
                 self._persist(run_id)
-            if getattr(self.agent, 'node_local_contract', False) and any(len(groups) != 1 for groups in self.content_plan):
+            if any(len(groups) != 1 for groups in self.content_plan):
                 raise ValueError('Saved multi-group content plan requires explicit migration; completed task IDs were preserved')
             for index, groups in enumerate(self.content_plan):
                 if any(h["task_id"] == f"content-{index}" for h in self.history):
@@ -703,7 +511,6 @@ class IncrementalGraphIntegrationEngine:
             "content_plan": getattr(self, "content_plan", None),
             "relation_coverage": sorted(getattr(self, "relation_coverage", ())),
             "signal_receipts": deepcopy(getattr(self, 'signal_receipts', [])),
-            "signal_scope_migrations": deepcopy(getattr(self, 'signal_scope_migrations', [])),
             "reconciliation_complete": getattr(self, "reconciliation_complete", False),
             "pending_relation_work": getattr(self, "pending_relation_work", None),
             "pending_review": getattr(self, "pending_review", None),

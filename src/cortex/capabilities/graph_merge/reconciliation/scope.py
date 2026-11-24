@@ -6,7 +6,7 @@ are readable context; they never become expansion anchors merely by appearing.
 import json
 from dataclasses import dataclass, field
 
-from cortex.capabilities.graph_merge.inputs import PHYSICAL, references
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, references
 from cortex.schema.relation_contracts import authoring_schema, effective_schema
 
 

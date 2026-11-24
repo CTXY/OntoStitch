@@ -5,7 +5,7 @@ No inferred business edges, field-name classifiers or source broadcasting.
 from collections import defaultdict
 
 from cortex.capabilities.graph_merge.graph.batch import delta
-from cortex.capabilities.graph_merge.inputs import PHYSICAL
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 from cortex.schema.relation_contracts import effective_schema
 
 
@@ -208,9 +208,7 @@ def relation_signature(context, current, task):
     import hashlib
     import json
 
-    from cortex.capabilities.graph_merge.integration.engine import (
-        implementation_version,
-    )
+    from cortex.capabilities.graph_merge.runtime.state import canonical_hash, implementation_sources
 
     packet = relation_context(context, current, task)
     ids = {n["id"] for n in packet["nodes"]}
@@ -218,5 +216,5 @@ def relation_signature(context, current, task):
     content["nodes"] = [n.model_dump(mode="json") for n in current.graph.nodes if n.id in ids]
     # An explicitly audited infrastructure-only rollout may retain the prior
     # review policy. Actual loaded-code hashes are still recorded separately.
-    content["implementation"] = getattr(context, "review_policy_version", None) or implementation_version()
+    content["implementation"] = getattr(context, "review_policy_version", None) or canonical_hash(implementation_sources())
     return hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

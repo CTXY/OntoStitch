@@ -10,7 +10,7 @@ from cortex.capabilities.graph_merge.reconciliation.relation_merger import (
     consolidate_relations, relation_groups,
 )
 from cortex.schema import SourceReference, load_root_schema
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 
 def fixture(*, metadata=False):
@@ -23,7 +23,7 @@ def fixture(*, metadata=False):
     a = concept('A', 'a')
     graph = state([*catalog(), a, concept('B', 'b')], [first, second])
     if metadata:
-        from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+        from graph_merge_archive import migrate_relation_notes
         raw=graph.model_dump(mode='json')
         next(n for n in raw['graph']['nodes'] if n['id']=='A')['properties']['relation_metadata']=[
             {'id':'paired','edges':['E1','E2'],'description':'Both original roles remain meaningful.'}]
@@ -93,7 +93,7 @@ def test_checkpoint_corruption_or_source_change_is_rejected():
 
 
 def test_evidence_change_does_not_reuse_old_semantic_result():
-    from cortex.capabilities.graph_merge.models import EvidenceItem
+    from cortex.capabilities.graph_merge.evidence import EvidenceItem
     graph, ctx = fixture(); hook = Hook()
     result = consolidate_relations(hook, ctx, graph)
     ctx.evidence = (EvidenceItem(id='new-evidence', source=SourceReference(source_id='first'),

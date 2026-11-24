@@ -5,8 +5,8 @@ import json
 import pytest
 from langchain_core.messages import AIMessage
 
-from test_graph_integration import catalog, concept, edge, state
-from test_merge_task_review_boundary import engine_for
+from graph_merge_fixtures import catalog, concept, edge, state
+from graph_merge_runtime_fixtures import engine_for
 
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex

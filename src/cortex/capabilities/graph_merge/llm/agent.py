@@ -1,15 +1,14 @@
 """Shared task tools and structured outputs for the serial merge roles."""
-import json
 from importlib.resources import files
 from itertools import count
 
 from langchain_core.tools import tool
 
-from cortex.capabilities.graph_merge.graph.publication import identity_map
+from cortex.capabilities.graph_merge.identity.contract import identity_map
 from cortex.capabilities.graph_merge.runtime.feedback import (
     validation_feedback,
 )
-from cortex.capabilities.graph_merge.graph.edit_contract import IdentityDecision
+from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch
 from cortex.capabilities.graph_merge.graph.scope import scope_error
 from cortex.capabilities.graph_merge.consolidation.review import Review, validate_review

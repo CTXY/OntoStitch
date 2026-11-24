@@ -1,6 +1,6 @@
 """Locate controller-reported contract errors without choosing semantic repairs."""
 
-from cortex.capabilities.graph_merge.inputs import PHYSICAL
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 
 
 def validation_targets(state, issues):

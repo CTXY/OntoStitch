@@ -223,7 +223,7 @@ def invoke_reconciliation(agent, phase, context, payload):
                     continue
                 runtime.set_feedback({'writer_problem':raw})
                 persist()
-                from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+                from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
                 raise IntegrationIncomplete('Writer cannot safely continue: '+raw['problem'])
             read_batch=bool(calls) and all(call.get('name') in offered for call in calls)
             result_call=len(calls)==1 and calls[0].get('name') in results

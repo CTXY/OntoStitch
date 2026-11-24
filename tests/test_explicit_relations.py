@@ -325,7 +325,8 @@ def test_relation_contract_guides_and_diff_include_explicit_edges(case_graph):
 def test_explicit_relations_survive_incoming_remap_merge_and_online_projection(
     case_graph,
 ):
-    from cortex.capabilities.graph_merge.edges import normalize_edges
+    from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+    from graph_merge_fixtures import CurrentNoopAgent
     from cortex.capabilities.online_context.output.projection import project_graph
 
     store, tool = seed_pair(case_graph)
@@ -346,19 +347,11 @@ def test_explicit_relations_survive_incoming_remap_merge_and_online_projection(
     hierarchy = next(e for e in incoming.graph.edges if e.edge_type == "is_a")
     assert hierarchy.from_node_id != "concept.a"
     assert hierarchy.to_node_id != "concept.b"
-    normalized = normalize_edges(
-        existing=(),
-        incoming=incoming.graph.edges,
-        nodes=incoming.graph.nodes,
-        node_mappings={},
-        schema=store.schema,
-    )
-    merged, _ = GraphManager(store.schema).prepare_state(
-        GraphState(
-            graph=GraphSpace(nodes=incoming.graph.nodes, edges=normalized.edges),
-            node_conflicts=(),
-        )
-    )
+    # Exercise the current merge/publication path rather than the retired
+    # normalize_edges implementation before downstream graph projection.
+    merged = IncrementalGraphIntegrationEngine(CurrentNoopAgent()).merge(
+        GraphState(graph=GraphSpace()), incoming, store.schema,
+    ).state
     projected, _ = project_graph(
         schema=store.schema,
         state=merged,

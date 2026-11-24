@@ -1,26 +1,15 @@
 """Reviewed previews preserve explicit facts across conflict transitions."""
 
-from types import SimpleNamespace
 
 import pytest
 from ontology_v2_fixtures import formula_edge
 from relation_fixtures import metric_context_contract
 from test_conflict_writes import set_operation
-from test_graph_manager import apply, create, metric, node
+from test_graph_manager import apply, create, node
 
-from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.identity.legacy import node_content
-from cortex.capabilities.graph_merge.models import (
-    FinalNodeGroup,
-    NodeRepresentation,
-    RepresentationRef,
-)
-from cortex.capabilities.graph_merge.transactions import (
-    apply_merge_state,
-    preview_group,
-)
-from cortex.capabilities.graph_merge.workflow.context import GroupContext
-from cortex.schema import GraphNode, GraphSpace, load_root_schema
+from cortex.application.ontology_graph import GraphManager
+from cortex.capabilities.graph_merge.graph.publication import apply_merge_state
+from cortex.schema import GraphSpace, load_root_schema
 
 
 @pytest.fixture
@@ -58,60 +47,6 @@ def manager():
     )
     assert result.status == "applied", result.errors
     return manager
-
-
-def context_for(manager):
-    member = NodeRepresentation(
-        ref=RepresentationRef(origin="existing_node", ref_id="m"),
-        node_type="metric",
-        content=node_content(manager.get_node("m")),
-        sources=(),
-    )
-    return GroupContext(
-        group=FinalNodeGroup(
-            group_id="merge-m",
-            node_type="metric",
-            existing_node_id="m",
-            members=(member,),
-        ),
-        schema_definition=manager.schema,
-        existing_state=manager.get_snapshot(),
-    )
-
-
-def test_conflict_preview_and_actual_commit_preserve_explicit_branch_fact(manager):
-    before, revision = manager.get_snapshot(), manager.revision
-    replacement = GraphNode.model_validate(metric("m", "a"))
-    preview = preview_group(
-        context_for(manager), SimpleNamespace(node=replacement, conflict=None)
-    )
-    assert manager.get_snapshot() == before and manager.revision == revision
-    assert not preview.conflict_nodes
-    explicit = next(edge for edge in preview.graph.edges if edge.id == "explicit")
-    assert explicit.edge_type == "custom_measures"
-    assert explicit.reference_origin is None
-    assert "alternative_ids" not in explicit.properties
-    assert {
-        edge.to_node_id for edge in preview.graph.edges if edge.from_node_id == "m"
-    } == {"a"}
-    actual = apply_merge_state(manager, preview, request_id="commit-preview")
-    assert actual == preview
-    manager.validate_state(actual)
-
-
-def test_preview_requires_explicit_relation_for_new_formula_operand(manager):
-    before, revision = manager.get_snapshot(), manager.revision
-    with pytest.raises(GraphRejected) as caught:
-        preview_group(
-            context_for(manager),
-            SimpleNamespace(
-                node=GraphNode.model_validate(metric("m", "c")), conflict=None
-            ),
-        )
-    assert any(
-        issue.code == "MISSING_FORMULA_RELATION" for issue in caught.value.issues
-    )
-    assert manager.get_snapshot() == before and manager.revision == revision
 
 
 def test_relation_only_update_of_conflict_owner_uses_atomic_reconciliation(manager):

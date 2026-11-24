@@ -1,7 +1,7 @@
 """Controller-owned scope checks over explicit patch objects, not LLM permissions."""
 import json
 
-from cortex.capabilities.graph_merge.inputs import PHYSICAL, references
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, references
 from cortex.capabilities.graph_merge.reconciliation.context import node_view, edge_view, physical_view
 from cortex.application.ontology_graph import GraphManager
 

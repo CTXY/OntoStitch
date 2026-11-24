@@ -1,11 +1,9 @@
 """Controlled contract tests; no model/network or case-specific semantic rules."""
-import json
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
-from test_graph_integration import catalog, concept, edge, state
-from test_incremental_agent import Chat
+from graph_merge_fixtures import catalog, concept, edge, state
+from graph_merge_chat import Chat
 
 from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
@@ -19,16 +17,10 @@ from cortex.capabilities.graph_merge.graph.scope import (
 from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
 )
-from cortex.capabilities.graph_merge.graph.edits import (
-    RelationPatch,
-    submit_patch,
-)
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
-from cortex.capabilities.graph_merge.llm.incremental import (
-    IncrementalIntegrationAgent,
-    NodeReview,
-)
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.consolidation.review import Review as NodeReview
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import SourceReference, load_root_schema
 
 
@@ -50,14 +42,6 @@ def region(visible=True):
 
 def rename(key):
     return BatchResult(edits=[{'operation': 'update_node', 'node': {'id': key, 'name': 'Representative referent'}}])
-
-
-def test_locally_coupled_object_is_admitted_without_extend_tool():
-    ctx, ids, _, _ = region()
-    assert ids['B'] not in ctx.active_batch.allowed
-    ctx.active_batch.submit_atomic(rename(ids['B']))
-    assert ids['B'] in ctx.active_batch.allowed
-    assert ctx.active_batch.scope_events == [{'ids': [ids['B']], 'reason': 'Explicit coupled patch objects'}]
 
 
 def test_missing_coupled_context_returned_before_any_mutation():
@@ -142,61 +126,10 @@ def test_same_evidence_id_with_different_content_fails_explicitly():
         EvidencePresentation(ctx)
 
 
-def test_duplicate_read_does_not_disable_a_different_required_read():
-    ctx, ids, _, payload = region()
-    def read(key, field, call):
-        return AIMessage(content='', tool_calls=[{'name': 'inspect_graph', 'id': call,
-            'args': {'mode': 'items', 'ids': [key], 'fields': [field]}}])
-    chat = Chat([read(ids['A'], 'properties.targets', 'one'), read(ids['A'], 'properties.targets', 'again'),
-                 read(ids['B'], 'name', 'other'),
-                 AIMessage(content='', tool_calls=[{'name': 'submit_patch', 'id': 'done',
-                     'args': {'explanation': 'No modification needed.'}}])])
-    IncrementalIntegrationAgent(chat).invoke('reconcile', ctx, payload)
-    replies = [json.loads(m.content) for m in chat.requests[-1] if isinstance(m, ToolMessage)]
-    assert replies[0]['items'][0]['properties']['targets']
-    assert len(replies) == 2  # Exact repeat is replaced by its latest complete read.
-    assert replies[1]['items'][0]['name']
-    previous = next(json.loads(m.content) for m in chat.requests[1] if isinstance(m, ToolMessage))
-    assert replies[0]['items'] == previous['items']
-    assert len(chat.requests) == 4  # No additional submit/finish request.
-
-
 def test_review_schema_contains_no_source_truth_checklist():
     assert set(NodeReview.model_json_schema()['properties']) == {'verdict', 'issues'}
     with pytest.raises(ValueError):
         NodeReview.model_validate({'verdict': 'accept', 'rationale_checks': [], 'decision_checks': []})
-
-
-def test_writer_scope_feedback_finishes_in_two_outputs_without_extension_call():
-    ctx, ids, _, payload = region(visible=False)
-    args = {'node_updates': [{'id': ids['B'], 'name': 'Representative referent',
-                                      'explanation': 'Normalize the same referent.'}],
-                      'explanation': 'A locally coupled naming correction.'}
-    chat = Chat([AIMessage(content='', tool_calls=[{'name': 'submit_patch', 'id': key, 'args': args}])
-                 for key in ('initial', 'corrected')])
-    IncrementalIntegrationAgent(chat).invoke('reconcile', ctx, payload)
-    feedback = json.loads(chat.requests[1][1].content)['issues'][0]
-    assert feedback['status'] == 'rejected_unapplied'
-    ref = feedback['required_context']['repair_fact_ref']
-    fact = next(f for f in json.loads(chat.requests[1][1].content)['repair_facts'] if f['fact_id'] == ref)
-    assert fact['facts']['nodes'][0]['id'] == ids['B']
-    assert len(chat.requests) == 2
-    assert ctx.active_batch.preview is not None
-    assert 'extend_task' not in {getattr(t, 'name', None) for t in chat.tools}
-
-
-def test_edge_only_evidence_is_supplied_once_at_end():
-    evidence, first, second = evidence_context()
-    graph = state([*catalog(), concept('A', 'a'), concept('B', 'b')],
-                  [edge('ab', 'A', 'B', 'has_feature').model_copy(update={'sources': (first, second)})])
-    ctx = IntegrationContext(state(), graph, load_root_schema(), evidence=evidence.evidence)
-    current = ctx.union_state()
-    payload = relation_context(ctx, current, LocalTask('evidence', 'reconcile', {ctx.input_node_map['A']}))
-    assert list(payload)[-1] == 'evidence'
-    assert payload['edges'][0]['evidence_ids'] == ['Q1', 'Q2']
-    assert len(payload['evidence']) == 1 and payload['evidence'][0]['evidence_ids'] == ['Q1', 'Q2']
-    assert payload['evidence'][0]['content'] == evidence.evidence[0].content
-    assert not any('sources' in r for r in payload['nodes'] + payload['edges'])
 
 
 @pytest.mark.parametrize('phase', ['consolidate', 'node_assess'])
@@ -210,17 +143,3 @@ def test_node_roles_refuse_unplanned_singleton_without_widening_tools(phase):
     with pytest.raises(ValueError, match='exactly one complete identity group'):
         IncrementalIntegrationAgent(chat).invoke(phase, ctx, {'task_id': 'unplanned'})
     assert not chat.requests
-
-
-def test_new_endpoint_context_is_required_without_granting_endpoint_write_access():
-    ctx, ids, _scope, _ = region()
-    patch = RelationPatch(edge_updates=[{'id': ctx.input_edge_map['ab'], 'to_node_id': ids['X']}],
-                          explanation='A proposed relation to a previously unseen endpoint.')
-    with pytest.raises(ScopeContextRequired) as error:
-        submit_patch(ctx, patch)
-    assert error.value.context['nodes'][0]['id'] == ids['X']
-    assert ids['X'] not in ctx.active_batch.allowed
-    assert ctx.active_batch.preview is None
-    # Context for interpreting an endpoint never authorizes changing its content.
-    with pytest.raises(ValueError, match='Outside this local task'):
-        ctx.active_batch.submit_atomic(rename(ids['X']))

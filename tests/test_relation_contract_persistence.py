@@ -106,7 +106,7 @@ def test_contract_roundtrip_accept_retain_and_guide(case_graph, tmp_path):
 
 def test_contract_survives_incoming_merge_and_retrieval(case_graph):
     from cortex.application.ontology_graph import GraphManager
-    from cortex.capabilities.graph_merge.transactions import apply_merge_state
+    from cortex.capabilities.graph_merge.graph.publication import apply_merge_state
     from cortex.capabilities.retrieve_db.graph.context import (
         build_retrieved_graph_state,
     )

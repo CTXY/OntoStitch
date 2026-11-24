@@ -2,7 +2,7 @@
 
 
 import pytest
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
 from cortex.capabilities.graph_merge.inputs import IntegrationContext

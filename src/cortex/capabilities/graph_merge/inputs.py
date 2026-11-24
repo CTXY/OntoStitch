@@ -10,95 +10,22 @@ import re
 from collections import defaultdict
 from difflib import SequenceMatcher
 
-from cortex.capabilities.graph_merge.identity.legacy import exact_identity_key, node_content
+from cortex.capabilities.graph_merge.identity.contract import exact_identity_key, node_content
 from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
 from cortex.capabilities.graph_merge.llm.packing import bounded_items
 from cortex.schema import GraphSpace, GraphState
-from cortex.schema.references import property_reference_ids, remap_references
 
-PHYSICAL = frozenset({"table", "column", "dimension_value"})
-
-
-def semantic_relations_first(edges, nodes):
-    """Stable pagination: show business topology before physical grounding."""
-    return sorted(
-        edges,
-        key=lambda e: any(
-            nodes[key].node_type in PHYSICAL
-            for key in (e.from_node_id, e.to_node_id)
-        ),
-    )
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, semantic_relations_first, remap_node, remap_edge, references, decision_references
 
 
-def remap_node(node, node_map, edge_map=None):
-    """Only declared reference slots; never replace prose or SQL literals."""
-
-    def properties(value):
-        return remap_references(value,node_map)
-
-    return node.model_copy(
-        update={
-            "id": node_map.get(node.id, node.id),
-            # A varying name uses the owner's ID as a structural placeholder.
-            # Alternative names and ordinary display names remain authored text.
-            "name": node_map.get(node.id, node.id)
-            if node.name == node.id
-            and any("name" in a.overrides for a in node.alternatives)
-            else node.name,
-            "properties": properties(node.properties),
-            "alternatives": tuple(
-                a.model_copy(
-                    update={
-                        "overrides": {
-                            key: properties({key.removeprefix("properties."): value})[
-                                key.removeprefix("properties.")
-                            ]
-                            if key.startswith("properties.")
-                            else value
-                            for key, value in a.overrides.items()
-                        }
-                    }
-                )
-                for a in node.alternatives
-            ),
-        }
-    )
 
 
-def remap_edge(edge, node_map, edge_map=None):
-    return edge.model_copy(
-        update={
-            "id": (edge_map or {}).get(edge.id, edge.id),
-            "from_node_id": node_map.get(edge.from_node_id, edge.from_node_id),
-            "to_node_id": node_map.get(edge.to_node_id, edge.to_node_id),
-            "properties": remap_references(edge.properties, node_map),
-        }
-    )
 
 
-def references(node):
-    result = property_reference_ids(node.properties)
-    for alternative in node.alternatives:
-        props = {
-            k.removeprefix("properties."): v
-            for k, v in alternative.overrides.items()
-            if k.startswith("properties.")
-        }
-        result |= property_reference_ids(props)
-    return result
 
 
-def decision_references(node, nodes, adjacent):
-    """Recall through explicit Rule operands; never infer SQL or business identity."""
-    result = references(node)
-    if node.node_type == "generation_rule":
-        for edge in adjacent:
-            if edge.from_node_id == node.id and edge.edge_type == "applies_to":
-                result.add(edge.to_node_id)
-                operand = nodes.get(edge.to_node_id)
-                if operand is not None:
-                    result.update(references(operand))
-    return result
+
+
 
 
 def _tokens(value):

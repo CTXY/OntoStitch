@@ -11,12 +11,12 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from cortex.capabilities.graph_merge.inputs import PHYSICAL, references
-from cortex.capabilities.graph_merge.integration.scope import content_consumers
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, references
+from cortex.capabilities.graph_merge.graph.impact import _CORE_DEPENDENCIES, content_consumers, _indexes, _metadata_edges
 from cortex.schema import GraphNode, GraphState
 from cortex.schema.relation_contracts import effective_schema
 
-_CORE_DEPENDENCIES = frozenset({"grounded_on", "depends_on", "applies_to"})
+
 
 
 @dataclass
@@ -29,176 +29,22 @@ class LocalTask:
     feedback: list[dict | str] = field(default_factory=list)
 
 
-def _indexes(state):
-    return ({n.id: n for n in state.graph.nodes}, {e.id: e for e in state.graph.edges})
 
 
-def _semantic(obj):
-    # Branch sources change the justification of a competing version and remain
-    # semantic. Only ordinary object-level provenance is excluded here.
-    return obj.model_dump(mode="json", exclude={"sources", "reference_origin"})
 
 
-def _changed(before, after):
-    return {
-        key for key in before.keys() | after.keys() if before.get(key) != after.get(key)
-    }
 
 
-def _semantic_changes(before, after):
-    return {
-        key
-        for key in before.keys() | after.keys()
-        if key not in before
-        or key not in after
-        or _semantic(before[key]) != _semantic(after[key])
-    }
 
 
-def _metadata_edges(node):
-    props = [node.properties] + [
-        {
-            k.removeprefix("properties."): v
-            for k, v in a.overrides.items()
-            if k.startswith("properties.")
-        }
-        for a in node.alternatives
-    ]
-    return {
-        edge
-        for p in props
-        for group in p.get("relation_metadata", ())
-        for edge in group["edges"]
-    }
 
 
-def _contract_affected_edges(before, after):
-    old = {c.id: c for c in before.graph.relation_contracts}
-    new = {c.id: c for c in after.graph.relation_contracts}
-    changed = _changed(old, new)
-    while True:
-        descendants = {
-            c.id for c in (*old.values(), *new.values()) if c.extends in changed
-        }
-        if descendants <= changed:
-            break
-        changed |= descendants
-    return {
-        e.id
-        for e in (*before.graph.edges, *after.graph.edges)
-        if e.edge_type in changed
-    }
 
 
-def affected_query_roots(before: GraphState, after: GraphState) -> set[str]:
-    """Changed definitions and both endpoints of added/removed semantic edges.
-
-    Sources-only updates do not reopen neighbourhood queries. Callers separately
-    handle new evidence; this function does not certify metadata as safe.
-    """
-    old_nodes, old_edges = _indexes(before)
-    new_nodes, new_edges = _indexes(after)
-    result = _semantic_changes(old_nodes, new_nodes)
-    for key in _semantic_changes(old_edges, new_edges) | _contract_affected_edges(
-        before, after
-    ):
-        for edges in (old_edges, new_edges):
-            edge = edges.get(key)
-            if edge is not None:
-                result.update((edge.from_node_id, edge.to_node_id))
-    return result
 
 
-def _core_dependency(predicate, state):
-    contracts = {c.id: c for c in state.graph.relation_contracts}
-    seen = set()
-    while predicate and predicate not in seen:
-        if predicate in _CORE_DEPENDENCIES:
-            return True
-        seen.add(predicate)
-        contract = contracts.get(predicate)
-        predicate = contract.extends if contract else None
-    return False
 
 
-def semantic_review_targets(
-    before: GraphState, after: GraphState, task_targets, *, evidence_changed=False
-):
-    """Return semantic targets and provenance flags, never a blanket shared-rule closure.
-
-    ``metadata_only`` describes the object delta, not permission to skip review.
-    Source additions/removals must be checked against the evidence previously
-    reviewed for this decision. The caller owns that evidence comparison.
-    """
-    task_targets = set(task_targets)
-    old_nodes, old_edges = _indexes(before)
-    new_nodes, new_edges = _indexes(after)
-    changed_nodes = _semantic_changes(old_nodes, new_nodes)
-    changed_edges = _semantic_changes(old_edges, new_edges)
-    contract_edges = _contract_affected_edges(before, after)
-    affected = set(changed_nodes)
-    for key in changed_edges | contract_edges:
-        for edges, state in ((old_edges, before), (new_edges, after)):
-            edge = edges.get(key)
-            if edge is not None and _core_dependency(edge.edge_type, state):
-                affected.add(edge.from_node_id)
-    # Direct declared consumers include expression refs, relation groups and all
-    # applies_to intents. Do not recursively flood the graph through a hub.
-    dependency_changes = changed_nodes | changed_edges
-    for nodes in (old_nodes, new_nodes):
-        affected.update(
-            row["consumer"]
-            for row in content_consumers(nodes.values(), dependency_changes)
-        )
-    for edges in (old_edges, new_edges):
-        affected.update(
-            e.from_node_id
-            for e in edges.values()
-            if e.edge_type in _CORE_DEPENDENCIES and e.to_node_id in changed_nodes
-        )
-    if evidence_changed:
-        affected.update(task_targets)
-        for edges in (old_edges, new_edges):
-            for edge in edges.values():
-                if edge.id in task_targets:
-                    affected.update((edge.from_node_id, edge.to_node_id))
-    targets = {
-        key
-        for key in affected
-        if key in new_nodes and new_nodes[key].node_type not in PHYSICAL
-    }
-    provenance_changed = False
-    added_sources = set()
-    removed_sources = set()
-    for old, new in ((old_nodes, new_nodes), (old_edges, new_edges)):
-        for key in old.keys() & new.keys():
-            a, b = old[key], new[key]
-            added_sources.update(set(b.sources) - set(a.sources))
-            removed_sources.update(set(a.sources) - set(b.sources))
-            provenance_changed |= a.sources != b.sources or getattr(
-                a, "reference_origin", None
-            ) != getattr(b, "reference_origin", None)
-    contracts_changed = {c.id: c for c in before.graph.relation_contracts} != {
-        c.id: c for c in after.graph.relation_contracts
-    }
-    semantic_changed = changed_nodes | changed_edges | contract_edges
-    return {
-        "targets": targets,
-        "semantic_changed_ids": semantic_changed,
-        "metadata_only": not semantic_changed
-        and not contracts_changed
-        and not evidence_changed,
-        "contracts_changed": contracts_changed,
-        "provenance_changed": provenance_changed,
-        "added_sources": tuple(
-            sorted(added_sources, key=lambda s: s.model_dump_json())
-        ),
-        "removed_sources": tuple(
-            sorted(removed_sources, key=lambda s: s.model_dump_json())
-        ),
-        "requires_evidence_check": bool(added_sources or removed_sources),
-        "evidence_changed": evidence_changed,
-    }
 
 
 def _source_refs(origins, kind, key):

@@ -4,11 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.edges import normalize_edges
 from cortex.capabilities.online_context.output.projection import project_graph
 from cortex.capabilities.sql_training.models.semantic_mapping import ConceptProperties
 from cortex.schema import GraphEdge, GraphNode, GraphSpace, GraphState, load_root_schema
-from cortex.schema.relationships import edge_identity_key
 
 
 def node(key, kind, properties):
@@ -144,13 +142,6 @@ def test_custom_relation_requires_specific_description(state):
     invalid = custom.model_copy(update={"id": "bad", "properties": {}})
     result = manager.apply([{"operation": "create_edge", "edge": invalid.model_dump(mode="json")}], expected_revision=manager.revision, request_id="blank-description")
     assert result.status == "rejected"
-
-
-def test_merge_keeps_explicit_connection_and_description(state):
-    result = normalize_edges(existing=(), incoming=state.graph.edges, nodes=state.graph.nodes, node_mappings={}, schema=load_root_schema())
-    explicit = next(e for e in result.edges if e.id == "active_binding")
-    assert explicit.properties["description"] == "Explicit business connection."
-    assert edge_identity_key(explicit, load_root_schema().edge_type_index()["grounded_on"])
 
 
 def test_ordinary_projection_reads_stored_edges_without_recompilation(state, monkeypatch):

@@ -98,7 +98,7 @@ def test_conflict_metric_checks_each_branch_without_broadcasting_edges():
 
 
 def test_migrated_combination_text_survives_node_relation_sync():
-    from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+    from graph_merge_archive import migrate_relation_notes
     original=state([column('col'),concept('owner'),concept('A'),concept('B')],
         [edge('e1',source='owner',target='A',kind='has_property'),
          edge('e2',source='owner',target='B',kind='has_property')])
@@ -113,7 +113,7 @@ def test_migrated_combination_text_survives_node_relation_sync():
 
 
 def test_exact_dedup_preserves_sources_and_migrated_business_meaning():
-    from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+    from graph_merge_archive import migrate_relation_notes
     first=edge('e1',source='owner',target='A',kind='has_property').model_copy(update={'sources':(SourceReference(source_id='case-A'),)})
     second=first.model_copy(update={'id':'e2','sources':(SourceReference(source_id='case-B'),)})
     original=state([column('col'),concept('owner'),concept('A')],[first,second]).model_dump(mode='json')
@@ -180,7 +180,7 @@ def test_unchanged_existing_conflict_target_does_not_reopen_coordination():
 
 
 def test_exact_same_target_versions_with_confirmed_owner_alias_can_inherit():
-    from cortex.capabilities.graph_merge.inputs import remap_node
+    from cortex.capabilities.graph_merge.graph.operations import remap_node
     target=conflict_concept('old-target')
     before=state([column('col'),concept('source'),target],
         [edge('incoming',source='source',target='old-target',kind='has_property')])

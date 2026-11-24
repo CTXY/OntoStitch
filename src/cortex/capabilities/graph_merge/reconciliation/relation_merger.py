@@ -8,7 +8,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.inputs import PHYSICAL, remap_node
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, remap_node
 from cortex.capabilities.graph_merge.evidence import EvidencePresentation
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.schema import GraphState

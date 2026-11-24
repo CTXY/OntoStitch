@@ -11,7 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine, _signal_targets, input_fingerprint
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine, input_fingerprint
+from cortex.capabilities.graph_merge.planning import _signal_targets
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted
 from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals

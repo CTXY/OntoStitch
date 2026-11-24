@@ -10,7 +10,7 @@ def compact_task_context(payload, context, candidate, ids, groups, *, for_review
     # neighbour is context, not a request to revalidate all its bindings.
     full = set(ids) | {member for g in groups for member in g["members"]}
     full.update(ref["id"] for row in payload.get("origin_links", []) for ref in row["source_refs"] if ref["kind"] == "node")
-    from cortex.capabilities.graph_merge.inputs import references
+    from cortex.capabilities.graph_merge.graph.operations import references
     for n in candidate.graph.nodes:
         if n.id in ids:
             full.update(references(n))

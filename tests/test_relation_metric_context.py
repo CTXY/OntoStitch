@@ -1,5 +1,5 @@
 """A dependency repair is assessed against its actual retained operands."""
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.reconciliation.context import relation_context

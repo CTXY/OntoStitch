@@ -1,5 +1,5 @@
 """Relation descriptions enter the production engine without an Assessment."""
-from test_merge_task_review_boundary import engine_for
+from graph_merge_runtime_fixtures import engine_for
 from test_relation_merger import fixture, Hook
 from cortex.capabilities.graph_merge.runtime.relation_stage import run_relation_merger
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore

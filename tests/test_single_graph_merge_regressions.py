@@ -5,9 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from test_graph_integration import catalog,concept,edge
+from graph_merge_fixtures import catalog,concept,edge
 from test_reconciliation_context import runtime,node_context
-from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+from graph_merge_archive import migrate_relation_notes
 from cortex.capabilities.graph_merge.reconciliation.relation_merger import consolidate_relations
 from cortex.capabilities.graph_merge.graph.validation import validate_local_transition
 from cortex.capabilities.graph_merge.reconciliation.contract import ObjectReference
@@ -80,7 +80,7 @@ def test_single_graph_checkpoint_resumes_assessment_and_skips_completed_models(t
     from cortex.capabilities.graph_merge.reconciliation.single_graph import reconcile_current_graph
     from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
     from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
-    from test_graph_integration import state
+    from graph_merge_fixtures import state
     class BoundChat:
         def __init__(self,model,names):
             self.model,self.names=model,names

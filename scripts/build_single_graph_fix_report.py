@@ -7,7 +7,7 @@ from build_reconciliation_simplified_report import head,box,one
 from build_concept_metric_pipeline_report import details
 from reconciliation_probe_fixtures import write,digest
 from cortex.schema import GraphState,load_root_schema
-from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+from graph_merge_archive import migrate_relation_notes
 from cortex.infrastructure.artifacts.graph_html import render_graph_html
 
 ROOT=Path('output/single_graph_merge_fix_20261121').resolve()

@@ -2,17 +2,15 @@
 
 from types import SimpleNamespace
 
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.graph.publication import mapped_base
+from cortex.capabilities.graph_merge.identity.contract import identity_map
+from cortex.capabilities.graph_merge.graph.batch import alias_view
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.graph.edit_contract import Element, IdentityDecision
-from cortex.capabilities.graph_merge.consolidation.task_context import (
-    LocalTask,
-    affected_query_roots,
-    build_task_context,
-    semantic_review_targets,
-)
+from cortex.capabilities.graph_merge.graph.edit_contract import Element
+from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask, build_task_context
+from cortex.capabilities.graph_merge.graph.impact import affected_query_roots, semantic_review_targets
 from cortex.schema import (
     ConflictAlternative,
     GraphNode,
@@ -120,10 +118,8 @@ def test_complete_group_sources_are_visible_through_alias_lineage():
             }
         ]
     )
-    ns, es, nm, _ = mapped_base(ctx, decision)
-    current = GraphState(
-        graph=GraphSpace(nodes=tuple(ns.values()), edges=tuple(es.values()))
-    )
+    nm = identity_map(ctx, decision)
+    current, _ = alias_view(ctx.union_state(), nm)
     origins = SimpleNamespace(
         node_map=nm,
         edge_map={},
@@ -421,7 +417,7 @@ def test_small_hub_keeps_existing_context_and_large_focus_is_not_split():
 
 
 def test_budget_keeps_explicit_relation_followup_indivisible():
-    from cortex.capabilities.graph_merge.engine import review_batches
+    from cortex.capabilities.graph_merge.planning import review_batches
     from cortex.capabilities.graph_merge.reconciliation.context import relation_context
 
     descriptions = {f"N{i:03}": f"Supported feature {i}: " + "Evidence " * 100 for i in range(100)}

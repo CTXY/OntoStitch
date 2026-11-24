@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.application.ontology_graph import GraphRejected
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine

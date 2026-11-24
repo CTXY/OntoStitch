@@ -1,7 +1,7 @@
 """Current-relative edits and pending-object repair have different lifecycles."""
 
 import pytest
-from test_graph_integration import catalog, concept, state
+from graph_merge_fixtures import catalog, concept, state
 
 from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
@@ -23,7 +23,7 @@ def write(node, operation="update_node"):
 
 
 def test_generated_catalog_prose_does_not_prevent_exact_edge_deduplication():
-    from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
+    from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
     from cortex.schema import GraphEdge, SourceReference
 
     def catalog_edge(key, description, source, origin="default"):
@@ -142,7 +142,7 @@ def test_scope_rejects_read_only_neighbour_node_and_keeps_last_valid_draft():
 
 
 def test_rejected_installed_contract_is_not_a_poisoned_pending_operation():
-    from test_graph_integration import edge
+    from graph_merge_fixtures import edge
 
     schema = load_root_schema()
     incoming = state(
@@ -162,7 +162,7 @@ def test_rejected_installed_contract_is_not_a_poisoned_pending_operation():
 
 
 def test_deleting_an_owner_before_retargeting_its_edge_is_atomic():
-    from test_graph_integration import edge
+    from graph_merge_fixtures import edge
 
     incoming = state(
         [*catalog(), concept("A", "a"), concept("B", "b"), concept("C", "c")],
@@ -276,7 +276,7 @@ def test_new_conflict_owner_survives_replaying_its_saved_patch():
 
 
 def test_new_edge_survivor_copies_current_sources_without_inventing_before_ref():
-    from test_graph_integration import edge
+    from graph_merge_fixtures import edge
 
     from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from cortex.capabilities.graph_merge.graph.edit_contract import Model
+from cortex.capabilities.graph_merge.models import Model
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
 

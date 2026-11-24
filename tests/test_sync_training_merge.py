@@ -1,3 +1,4 @@
+from graph_merge_fixtures import CurrentNoopAgent
 """Exercise the synchronous business boundary with real merge and model adapters."""
 
 import asyncio
@@ -14,14 +15,6 @@ from cortex.application.sql_training import (
     SqlTrainingService,
 )
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
-from cortex.capabilities.graph_merge.identity.legacy import IdentityGrouper
-from cortex.capabilities.graph_merge.llm.agents import LLMSemanticIdentityResolver
-from cortex.capabilities.graph_merge.models import (
-    GroupIdentityView,
-    IdentityRepresentationView,
-    NodeIdentityView,
-    RepresentationRef,
-)
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,
     SqlTrainingGraphMergeEvidenceResolver,
@@ -79,7 +72,7 @@ def test_application_runs_real_merge_and_saves_without_event_loop(
     repo = Repository()
     service = SqlTrainingService(
         Engine(),
-        graph_merge=build_graph_merge_operator(CortexConfig(), live_semantics=False),
+        graph_merge=build_graph_merge_operator(CortexConfig(), integration_agent=CurrentNoopAgent()),
         state_repository=repo,
     )
     result = service.run(
@@ -110,7 +103,7 @@ def test_merge_deduplicates_exact_nodes_synchronously(case_graph):
         update={"properties": {"table_name": table.properties["table_name"]}}
     )
     incoming = table.model_copy(update={"id": "incoming-table"})
-    operator = build_graph_merge_operator(CortexConfig(), live_semantics=False)
+    operator = build_graph_merge_operator(CortexConfig(), integration_agent=CurrentNoopAgent())
     existing = GraphState(graph=GraphSpace(nodes=(table,)), node_conflicts=())
     result = operator.merge(
         existing,
@@ -120,53 +113,6 @@ def test_merge_deduplicates_exact_nodes_synchronously(case_graph):
     assert len(result.state.graph.nodes) == 1
     assert result.node_mappings[0].canonical_id == table.id
     assert not inspect.isawaitable(result)
-
-
-def test_identity_uses_sync_embeddings_and_real_llm_resolver():
-    calls = []
-
-    class Embeddings:
-        def embed_documents(self, texts):
-            calls.append(texts)
-            return [[1.0, 0.0] for _ in texts]
-
-        def aembed_documents(self, texts):
-            raise AssertionError("async embedding path used")
-
-    model = ScriptModel(
-        [
-            AIMessage(
-                content='{"selected_entry_id":"entry", "query_verdicts":[], "reason":"Same count intent"}'
-            )
-        ]
-    )
-    resolver = LLMSemanticIdentityResolver(model)
-    grouper = IdentityGrouper(resolver, embeddings=Embeddings())
-    assert grouper._embedding_vectors(("count rows", "number of rows")) == {
-        "count rows": (1.0, 0.0),
-        "number of rows": (1.0, 0.0),
-    }
-    assert calls == [["count rows", "number of rows"]]
-    rep = IdentityRepresentationView(
-        ref=RepresentationRef(origin="incoming_node", ref_id="incoming"),
-        sources=(),
-        identity_fields={"name": "count"},
-        key_implementation={},
-    )
-    result = resolver.resolve(
-        NodeIdentityView(
-            query_id="incoming", node_type="generation_rule", representation=rep
-        ),
-        (
-            GroupIdentityView(
-                entry_id="entry", existing_node_id="existing", representations=(rep,)
-            ),
-        ),
-        (),
-        load_root_schema().node_type_index()["generation_rule"].identity_policy,
-    )
-    assert result.selected_entry_id == "entry"
-    assert len(model._calls) == 1
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -259,9 +205,7 @@ def test_training_sql_generator_invokes_sync_and_executes_real_sql(
 
 
 def test_evidence_resolution_and_cache_are_synchronous():
-    from cortex.capabilities.graph_merge.reconciliation.evidence import (
-        CachedEvidenceResolver,
-    )
+    from cortex.capabilities.graph_merge.evidence import CachedEvidenceResolver
 
     source = SourceReference(source_id="case")
     resolver = SqlTrainingGraphMergeEvidenceResolver(

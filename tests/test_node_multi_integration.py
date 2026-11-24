@@ -4,9 +4,9 @@ import json
 import pytest
 from langchain_core.messages import AIMessage
 
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 from test_merge_identity_integration_v2 import content, prepare
-from test_merge_task_review_boundary import engine_for
+from graph_merge_runtime_fixtures import engine_for
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask

@@ -8,7 +8,7 @@ from cortex.capabilities.graph_merge.graph.batch import (
     delta,
 )
 from cortex.capabilities.graph_merge.graph.publication import Preview
-from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.graph.edit_contract import IntegrationProposal
 from cortex.capabilities.graph_merge.consolidation.compiler import (
@@ -21,12 +21,8 @@ from cortex.capabilities.graph_merge.graph.provenance import (
     validate_rewrite_sources,
 )
 from cortex.capabilities.graph_merge.consolidation.review import Review, validate_review
-from cortex.capabilities.graph_merge.consolidation.task_context import (
-    LocalTask,
-    affected_query_roots,
-    build_task_context,
-    semantic_review_targets,
-)
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask, build_task_context
+from cortex.capabilities.graph_merge.graph.impact import affected_query_roots, semantic_review_targets
 from cortex.capabilities.graph_merge.runtime.state import (
     TaskState,
     build_contract_versions,

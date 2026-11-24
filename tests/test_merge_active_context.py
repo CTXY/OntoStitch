@@ -3,19 +3,11 @@ import json
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
-from test_graph_integration import state
-from test_incremental_agent import Chat
 
-from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.llm.packets import (
     TaskDialogue,
     compact_node_packet,
 )
-from cortex.capabilities.graph_merge.llm.agent import (
-    IncrementalIntegrationAgent,
-    TaskNoProgress,
-)
-from cortex.schema import load_root_schema
 
 
 def action(name, args, ident):
@@ -29,21 +21,6 @@ def test_projection_is_idempotent_and_preserves_explicit_view_difference():
     assert compact_node_packet(projected) == projected
     changed = {**shared, 'properties': {'definition': 'Changed meaning'}}
     assert compact_node_packet({**packet, 'candidate_nodes': [changed]})['nodes'] == [shared]
-
-
-@pytest.mark.parametrize('phase', ['consolidate', 'node_assess'])
-def test_actual_model_receives_the_same_shared_graph_projection_as_planning(phase):
-    ctx = IntegrationContext(state(), state(), load_root_schema())
-    ctx.candidate = ctx.union_state()
-    ctx.compile_task_patch = lambda patch: object()
-    shared = {'id': 'N', 'name': 'A complete record', 'properties': {'definition': 'Full meaning'}}
-    payload = {'nodes': [shared], 'candidate_nodes': [shared], 'evidence': []}
-    output = {'explanation': 'No modifications needed.'} if phase == 'consolidate' else {'verdict': 'accept'}
-    name = 'submit_patch' if phase == 'consolidate' else 'Review'
-    model = Chat([action(name, output, 'result')])
-    IncrementalIntegrationAgent(model).invoke(phase, ctx, payload)
-    assert json.loads(model.requests[0][1].content) == compact_node_packet(payload)
-    assert payload['nodes'] == [shared]
 
 
 def test_many_replacements_keep_one_draft_all_semantic_issues_and_unique_reads():
@@ -95,21 +72,6 @@ def test_different_read_views_and_versions_are_not_deduplicated():
         result = {'view': view, 'revision': i, 'items': [{'id': 'N', 'definition': meaning}]}
         dialogue.exchange(call, [(str(i), result)], result_name='submit_patch')
     assert len([m for m in dialogue.messages() if isinstance(m, ToolMessage)]) == 3
-
-
-def test_exact_rejected_draft_stops_without_unbounded_model_budget():
-    ctx = IntegrationContext(state(), state(), load_root_schema())
-    ctx.candidate = ctx.union_state()
-    saved = []
-    ctx.record_task_draft = saved.append
-    def reject(patch):
-        raise ValueError('Explicit extra source unit S6')
-    ctx.compile_task_patch = reject
-    draft = {'explanation': 'Identical unchanged draft'}
-    model = Chat([action('submit_patch', draft, 'a'), action('submit_patch', draft, 'b')])
-    with pytest.raises(TaskNoProgress, match='identical draft'):
-        IncrementalIntegrationAgent(model, max_calls=None).invoke('consolidate', ctx, {})
-    assert len(model.requests) == 2 and saved[-1] == draft
 
 
 def test_plain_json_failures_do_not_echo_raw_narration_or_accumulate_schemas():

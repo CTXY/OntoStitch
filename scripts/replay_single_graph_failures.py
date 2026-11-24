@@ -3,7 +3,7 @@ from pathlib import Path
 sys.path.insert(0,'scripts')
 from reconciliation_probe_fixtures import write
 from cortex.schema import GraphState,GraphSpace,load_root_schema
-from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+from graph_merge_archive import migrate_relation_notes
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.reconciliation.relation_merger import relation_groups,consolidate_relations,policy_fingerprint
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash

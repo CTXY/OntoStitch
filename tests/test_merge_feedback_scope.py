@@ -1,11 +1,11 @@
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
-from cortex.capabilities.graph_merge.llm.incremental import NodeReview
+from cortex.capabilities.graph_merge.consolidation.review import Review as NodeReview
 from cortex.schema import load_root_schema
 
 

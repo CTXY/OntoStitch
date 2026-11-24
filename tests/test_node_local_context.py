@@ -54,7 +54,7 @@ def test_complete_group_outgoing_only_and_allowlisted_evidence():
 
 
 def test_legacy_combination_text_migrates_without_expanding_incoming_neighbors():
-    from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+    from graph_merge_archive import migrate_relation_notes
     ctx=context();raw=ctx.task_before.model_dump(mode='json')
     owner=next(n for n in raw['graph']['nodes'] if n['id']=='N1')
     owner['properties']['relation_metadata']=[{'id':'business-fact','edges':['e1','e2'],

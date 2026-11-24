@@ -2,7 +2,7 @@
 from copy import deepcopy
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.inputs import PHYSICAL
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 from cortex.capabilities.graph_merge.evidence import EvidencePresentation
 from cortex.schema.relation_contracts import effective_schema
 

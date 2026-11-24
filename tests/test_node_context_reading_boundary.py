@@ -1,6 +1,6 @@
 """Transport diagnostics must not instruct agents to enumerate unrelated context."""
 import pytest
-from test_graph_integration import catalog, concept, state
+from graph_merge_fixtures import catalog, concept, state
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.consolidation.context import compact_task_context
@@ -56,29 +56,32 @@ def test_current_owner_only_when_one_source_group_member_is_present(current_memb
     assert 'current_owner' not in group  # Transport annotation cannot mutate controller identity groups.
 
 
-def test_empty_predicate_filter_is_unfiltered_and_current_owner_is_explicit():
-    import json
-    from langchain_core.messages import AIMessage, ToolMessage
-    from test_graph_integration import edge
-    from test_incremental_agent import Chat
-    from cortex.capabilities.graph_merge.graph.batch import ActiveBatch
-    from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
-    source = state([*catalog(), concept('A', 'a'), concept('B', 'b')], [edge('ab', 'A', 'B', 'has_feature')])
+def test_identity_predicate_filter_requires_nonempty_list_and_current_owner_is_explicit():
+    from graph_merge_fixtures import edge
+    from cortex.capabilities.graph_merge.identity.tools import build_tools
+
+    source = state([*catalog(), concept('A', 'a'), concept('B', 'b')],
+                   [edge('ab', 'A', 'B', 'has_feature')])
     ctx = IntegrationContext(state(), source, load_root_schema())
     ctx.candidate = ctx.union_state()
     a = ctx.input_node_map['A']
-    ctx.active_batch = ActiveBatch(ctx, ctx.candidate, targets={a})
     group = {'members': [a], 'meaning': 'Same referent', 'reason': 'Confirmed matching'}
     task = LocalTask('content', 'consolidate', {a}, groups=[group])
     payload = compact_task_context(build_task_context(ctx, ctx.candidate, task, before=ctx.candidate),
                                    ctx, ctx.candidate, {a}, [group], for_review=False)
-    model = Chat([AIMessage(content='', tool_calls=[{'name': 'inspect_graph', 'id': 'read', 'args': {
-        'mode': 'relations', 'ids': [a], 'edge_types': []}}]),
-        AIMessage(content='', tool_calls=[{'name': 'submit_patch', 'id': 'final', 'args': {'explanation': 'No changes.'}}])])
-    IncrementalIntegrationAgent(model, max_calls=None).invoke('consolidate', ctx, payload)
-    supplied = json.loads(model.requests[0][1].content)
-    assert 'provisional_identity_projection' not in supplied
-    assert supplied['matched_groups'][0]['current_owner'] == a
-    reply = next(json.loads(m.content) for m in model.requests[1] if isinstance(m, ToolMessage))
-    assert 'error' not in reply and reply['complete']
-    assert len(reply['items']) == 1
+    assert 'provisional_identity_projection' not in payload
+    assert payload['matched_groups'][0]['current_owner'] == a
+    assert 'current_owner' not in group
+    # Graph inspection belongs to Identity. Node roles receive a complete group
+    # and only their evidence tool; do not exercise graph tools via a Node call.
+    ctx.payload('identity')
+    inspect = next(tool for tool in build_tools(ctx) if tool.name == 'inspect_graph')
+    rejected = inspect.invoke({'mode': 'relations', 'ids': [a], 'edge_types': []})
+    assert rejected == {'error': 'edge_types requires mode=relations and a nonempty list'}
+    response = inspect.invoke({'mode': 'relations', 'ids': [a]})
+    assert 'error' not in response
+    assert response['next_offset'] is None and response['total'] == 1
+    assert [row['id'] for row in response['items']] == [ctx.input_edge_map['ab']]
+    filtered = inspect.invoke({'mode': 'relations', 'ids': [a], 'edge_types': ['has_feature']})
+    assert filtered['items'] == response['items']
+    assert filtered['next_offset'] is None and filtered['total'] == response['total']

@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.consolidation.compiler import CompiledPatch, MergePatch, compile_patch
 from cortex.capabilities.graph_merge.reconciliation.context import relation_context
 from cortex.capabilities.graph_merge.consolidation.review import Review, validate_review

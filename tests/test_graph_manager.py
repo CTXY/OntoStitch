@@ -1,3 +1,4 @@
+from graph_merge_fixtures import CurrentNoopAgent
 """The public graph boundary: atomic batches, actionable errors and actual IDs."""
 
 import pytest
@@ -913,7 +914,7 @@ def test_generation_rejects_invalid_formula_before_merge_work(manager):
 
     bad = metric("m", "field")
     bad["properties"]["expression"]["refs"] = {}
-    operator = build_graph_merge_operator(CortexConfig(), live_semantics=False)
+    operator = build_graph_merge_operator(CortexConfig(), integration_agent=CurrentNoopAgent())
     incoming = GraphState(
         graph=GraphSpace(nodes=(GraphNode.model_validate(bad),)), node_conflicts=()
     )
@@ -1165,32 +1166,27 @@ def test_cached_snapshot_cannot_hide_invalid_content_behind_fingerprints(case_gr
     assert caught.value.issues[0].code == "REFERENCE_NOT_FOUND"
 
 
-def test_completed_merge_checkpoint_cannot_bypass_final_validation(
-    manager, monkeypatch
-):
-    from cortex.application.merge_graph import GraphMergeResult
+def test_final_merge_validation_rejects_invalid_working_candidate(manager, monkeypatch):
     from cortex.application.ontology_graph import GraphRejected
     from cortex.bootstrap.graph_merge import build_graph_merge_operator
-    from cortex.capabilities.graph_merge.workflow import run
     from cortex.config import CortexConfig
     from cortex.schema import GraphNode, GraphSpace, GraphState
 
-    incoming = GraphState(
-        graph=GraphSpace(nodes=(GraphNode.model_validate(metric("m", "field")),), edges=(GraphEdge(id="incoming_operand", edge_type="grounded_on", from_node_id="m", to_node_id="field", properties={"description": "Input from existing catalog."}),)),
-        node_conflicts=(),
-    )
-    cached = GraphState(
-        graph=GraphSpace(nodes=(GraphNode.model_validate(metric("bad", "missing")),)),
-        node_conflicts=(),
-    )
-    monkeypatch.setattr(
-        run,
-        "run_merge",
-        lambda *args, **kwargs: GraphMergeResult(
-            state=cached, node_mappings=(), edge_mappings=(), diagnostics=()
-        ),
-    )
-    operator = build_graph_merge_operator(CortexConfig(), live_semantics=False)
+    incoming = GraphState(graph=GraphSpace(
+        nodes=(GraphNode.model_validate(metric("m", "field")),),
+        edges=(GraphEdge(id="incoming_operand", edge_type="grounded_on", from_node_id="m", to_node_id="field",
+                         properties={"description": "Input from existing catalog."}),),
+    ))
+    corrupted = GraphState(graph=GraphSpace(nodes=(GraphNode.model_validate(metric("bad", "missing")),)))
+    operator = build_graph_merge_operator(CortexConfig(), integration_agent=CurrentNoopAgent())
+    operator.max_rounds = 0
+
+    def inject_invalid_candidate(*args, **kwargs):
+        operator.current = corrupted
+
+    # A completed earlier phase cannot authorize an invalid working snapshot.
+    # Keep the final production validation gate in the actual merge flow.
+    monkeypatch.setattr(operator, "_reconcile", inject_invalid_candidate)
     with pytest.raises(GraphRejected) as caught:
         operator.merge(manager.get_snapshot(), incoming, load_root_schema())
     assert caught.value.issues[0].code == "REFERENCE_NOT_FOUND"

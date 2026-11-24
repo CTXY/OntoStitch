@@ -4,10 +4,10 @@ import json
 import pytest
 from langchain_core.messages import AIMessage
 from test_agent_runtime import ScriptModel
-from test_graph_integration import catalog, concept, state
+from graph_merge_fixtures import catalog, concept, state
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.infrastructure.llm.key_slots import read_key_slots
 from cortex.schema import load_root_schema
 
@@ -84,15 +84,20 @@ def test_selected_credentials_receive_independent_request_limits(tmp_path, monke
             client.close()
 
 
-def test_uncapped_merge_can_correct_format_beyond_twelve_calls():
+def test_uncapped_merge_still_stops_repeated_protocol_failure_without_accepting():
+    from cortex.capabilities.graph_merge.llm.recovery import OutputProtocolRecoveryExhausted
+
     context = IntegrationContext(state(), state([*catalog(), concept('A', 'a')]), load_root_schema())
-    # Malformed output is never accepted; the thirteenth valid result can finish.
+    original = context.union_state().model_dump(mode='json')
     model = ScriptModel([*[AIMessage(content=f'not JSON attempt {i}') for i in range(12)],
                          AIMessage(content=json.dumps({'groups': [], 'distinctions': []}))])
     agent = IncrementalIntegrationAgent(model, max_calls=None)
-    result = agent.invoke('identity', context, {'incoming_seeds': []})
-    assert result.groups == () and result.distinctions == ()
-    assert len(model._calls) == 13
+    # No configured call cap does not disable the current no-progress policy:
+    # changed error narration supplies no new graph facts or valid protocol.
+    with pytest.raises(OutputProtocolRecoveryExhausted):
+        agent.invoke('identity', context, {'incoming_seeds': []})
+    assert len(model._calls) == 3
+    assert context.union_state().model_dump(mode='json') == original
 
 
 def test_supervisor_restart_after_extraction_enters_merge_without_new_workers(tmp_path, monkeypatch):
@@ -345,8 +350,8 @@ def test_merge_worker_submits_multiple_case_graphs_per_operator_call(tmp_path, m
     assert maps['one']['nodes']['same-local-id'] != maps['two']['nodes']['same-local-id']
 
 
-def test_multi_graph_input_preserves_per_case_relations_and_metadata():
-    from test_graph_integration import edge
+def test_multi_graph_input_preserves_per_case_relations_and_business_meaning():
+    from graph_merge_fixtures import edge
 
     from cortex.application.ontology_graph import GraphManager
     from cortex.capabilities.sql_training.merge_evaluation import (
@@ -354,7 +359,7 @@ def test_multi_graph_input_preserves_per_case_relations_and_metadata():
     )
 
     parent = concept('parent', 'a').model_copy(update={'properties': {
-        'targets': [['a']], 'relation_metadata': [{'id': 'group', 'edges': ['x', 'y'], 'description': 'Compatible categories'}]}})
+        'targets': [['a']], 'definition': 'The two evidenced classifications are compatible categories.'}})
     graph = state([*catalog(), parent, concept('child1', 'b'), concept('child2', 'c')],
                   [edge('x', 'child1', 'parent', 'is_a'), edge('y', 'child2', 'parent', 'is_a')]).graph
     bundle = _combined_incoming_state((('first', graph), ('second', graph)), state())
@@ -366,8 +371,10 @@ def test_multi_graph_input_preserves_per_case_relations_and_metadata():
     assert len({n.id for n in bundle.graph.nodes}) == 2 * len(graph.nodes)
     for n in bundle.graph.nodes:
         if n.name == 'parent':
-            refs = n.properties['relation_metadata'][0]['edges']
-            assert all(any(e.id == ref and e.to_node_id == n.id for e in bundle.graph.edges) for ref in refs)
+            assert n.properties['definition'] == parent.properties['definition']
+            relations = [e for e in bundle.graph.edges if e.to_node_id == n.id and e.edge_type == 'is_a']
+            assert len(relations) == 2
+            assert {next(node.name for node in bundle.graph.nodes if node.id == edge.from_node_id) for edge in relations} == {'child1', 'child2'}
 
 
 def test_empty_fatal_report_retains_original_error_without_indexing_cases(tmp_path,monkeypatch):

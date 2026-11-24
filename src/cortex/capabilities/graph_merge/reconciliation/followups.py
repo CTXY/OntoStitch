@@ -1,7 +1,7 @@
 """Persisted node-to-reconciliation obligations over stable original edge IDs."""
 from copy import deepcopy
 
-from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
+from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.consolidation.relations import resolve_alias
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash

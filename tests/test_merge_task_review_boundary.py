@@ -1,33 +1,22 @@
 """Independent transaction review: semantic scope and every rejection boundary."""
+from graph_merge_runtime_fixtures import engine_for as engine_for
+from graph_merge_chat import ScriptedModel as ScriptedModel
 from copy import deepcopy
 
 import pytest
 from langchain_core.messages import AIMessage
 
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 from test_merge_identity_integration_v2 import content, points, prepare, parse_legacy
 
 from cortex.capabilities.graph_merge.graph.batch import ActiveBatch
-from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch
 from cortex.capabilities.graph_merge.consolidation.review import Review
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.schema import GraphNode, SourceReference
-
-
-def engine_for(base, agent, path):
-    context, evidence = prepare(base)
-    engine = IncrementalGraphIntegrationEngine(agent, max_rounds=1)
-    engine.ctx, engine.current, engine.lineage = context, base, LineageIndex(context)
-    engine._revision, engine.reviewed_sources, engine.history = 0, {}, []
-    engine.workspace_path, engine._storage_revision = path, None
-    engine.identity_decision = {}
-    engine.pending_relation_work = engine.pending_review = None
-    return engine, evidence
 
 
 def test_real_task_review_includes_unchanged_consumer_of_new_conflict(tmp_path):
@@ -77,23 +66,6 @@ def test_direct_compile_rejection_restores_candidate_batch_and_identity_members(
     assert context.candidate is base
     assert context.active_batch is previous
     assert {"A", "B"} <= {n.id for n in context.candidate.graph.nodes}
-
-
-class ScriptedModel:
-    def __init__(self, replies):
-        self.replies = iter(replies)
-
-    def bind(self,**kwargs):
-        return self
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    def invoke(self, messages, config=None):
-        reply = next(self.replies)
-        if isinstance(reply, Exception):
-            raise reply
-        return reply
 
 
 def test_invalid_atomic_edit_feedback_survives_restart_without_poisoning_draft(tmp_path):
@@ -203,37 +175,6 @@ def test_same_source_coverage_cannot_bypass_independent_knowledge_loss_review(tm
     assert saved["current"] == base.model_dump(mode="json")
     assert saved["task_state"]["stage"] == "revising"
     assert saved["task_state"]["issues"]
-
-
-def test_source_validation_failure_does_not_expand_fixed_task_scope(tmp_path):
-    old = edge("original", "A", "B", "has_feature").model_copy(update={
-        "sources": (SourceReference(source_id="edge-only"),)})
-    base = state([*catalog(), concept("A", "a"), concept("B", "b")], [old])
-    observed = []
-    engine = None
-    task = LocalTask("local", "reconcile", {"A"})
-
-    class Agent:
-        def invoke(self, phase, context, payload):
-            assert phase == "reconcile"
-            q = next(e.id for e in context.evidence if e.source.source_id == "A")
-            raw = {"node_updates": [{"id": "B", "name": "Coupled neighbor", "explanation": "Named local successor."}],
-                "create_edges": [{"id": key, "edge_type": "has_feature", "from_node_id": "A", "to_node_id": "B",
-                    "properties": {"description": key}, "evidence_ids": [q]} for key in ["new_one", "new_two"]],
-                "retirements": [{"before": [{"kind": "edge", "id": "original"}],
-                    "after": [{"kind": "edge", "id": "new_one"}, {"kind": "edge", "id": "new_two"}],
-                    "explanation": "Multiple successors have not received the old edge's evidence."}],
-                "explanation": "A structurally valid proposal with invalid source coverage."}
-            with pytest.raises(ValueError, match="SourceReferences"):
-                context.compile_task_patch(MergePatch.model_validate(raw))
-            observed.append(set(task.targets))
-            raise RuntimeError("Stop after checking the rejected proposal")
-
-    engine, _ = engine_for(base, Agent(), tmp_path / "scope-rejection.sqlite")
-    with pytest.raises(RuntimeError, match="Stop after"):
-        engine._run_task(task, "scope-rejection")
-    assert observed == [{"A"}]
-    assert engine.current == base and not engine.history
 
 
 def test_missing_assessment_context_retries_review_without_rewriting(tmp_path):

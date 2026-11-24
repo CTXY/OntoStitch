@@ -97,8 +97,7 @@ def is_accepted(engine, check):
     ledger = getattr(engine, 'signal_receipts', [])
     record = latest_receipt(ledger, check, policy_hash=policy)
     if record is None:
-        from cortex.capabilities.graph_merge.reconciliation.scope_migration import migrated_receipt
-        return migrated_receipt(engine, check) is not None
+        return False
     return has_receipt(ledger, check, premise_hash=premise_hash(engine, check, record['dependencies']), policy_hash=policy)
 
 
@@ -121,9 +120,6 @@ def stable_task_id(engine, checks):
     rows = []
     for c in checks:
         previous = latest_receipt(getattr(engine, 'signal_receipts', []), c, policy_hash=policy_hash(engine))
-        if previous is None:
-            from cortex.capabilities.graph_merge.reconciliation.scope_migration import migrated_receipt
-            previous = migrated_receipt(engine, c)
         rows.append((signal_key(c), premise_hash(engine, c, previous['dependencies'] if previous else ())))
     rows.sort()
     return 'structure-' + canonical_hash({'checks': rows, 'policy': policy_hash(engine)})[:24]

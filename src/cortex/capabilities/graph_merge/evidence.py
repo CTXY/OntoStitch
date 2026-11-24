@@ -1,6 +1,42 @@
 """Resolve explicit evidence references without reconstructing provenance in an LLM."""
 
+from __future__ import annotations
+
 import json
+from typing import Any, Protocol
+
+from cortex.capabilities.graph_merge.models import Model
+from cortex.schema import SourceReference
+
+
+class EvidenceItem(Model):
+    id: str
+    source: SourceReference
+    case_id: str | None
+    content: dict[str, Any]
+
+
+class EvidenceResolver(Protocol):
+    def resolve(
+        self, sources: tuple[SourceReference, ...]
+    ) -> tuple[EvidenceItem, ...]: ...
+
+
+class CachedEvidenceResolver:
+    def __init__(self, resolver: EvidenceResolver):
+        self.resolver = resolver
+        self._cache: dict[SourceReference, EvidenceItem] = {}
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+    def resolve(self, sources: tuple[SourceReference, ...]) -> tuple[EvidenceItem, ...]:
+        missing = tuple(dict.fromkeys(s for s in sources if s not in self._cache))
+        if missing:
+            self._cache.update(
+                {item.source: item for item in self.resolver.resolve(missing)}
+            )
+        return tuple(self._cache[s] for s in sources if s in self._cache)
 
 
 class EvidencePresentation:

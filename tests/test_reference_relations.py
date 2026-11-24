@@ -5,7 +5,6 @@ from relation_fixtures import metric_context_contract
 from test_graph_manager import apply, create, metric, node
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.edges import normalize_edges
 from cortex.capabilities.online_context.output.projection import project_graph
 from cortex.schema import GraphSpace, load_root_schema
 
@@ -86,14 +85,6 @@ def test_relationship_reader_preserves_custom_edges_without_recompilation(manage
     graph, _ = project_graph(schema=manager.schema, state=state, selected_node_ids={"m"}, choice_points=(), selected_by_point={})
     assert any(e.id == "custom" for e in graph.edges)
     assert any(e.edge_type == "grounded_on" for e in graph.edges)
-
-
-def test_explicit_business_edge_survives_merge_normalization(manager):
-    assert apply(manager, create(metric("m", "amount")), explicit()).status == "applied"
-    state = manager.get_snapshot()
-    result = normalize_edges(existing=(), incoming=state.graph.edges, nodes=state.graph.nodes, node_mappings={}, schema=manager.schema)
-    GraphManager(manager.schema).validate_state(state.model_copy(update={"graph": GraphSpace(nodes=state.graph.nodes, edges=result.edges)}))
-    assert any(e.id == "custom" and e.properties["description"] for e in result.edges)
 
 
 def test_description_is_required_and_cannot_be_replaced_by_role_or_qualifier(manager):

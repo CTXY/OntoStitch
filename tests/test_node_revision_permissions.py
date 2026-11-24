@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 from test_merge_identity_integration_v2 import content, prepare
 
 from cortex.application.ontology_graph import GraphManager

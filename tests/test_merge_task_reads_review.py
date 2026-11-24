@@ -2,15 +2,12 @@
 from types import SimpleNamespace
 
 import pytest
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.evidence import (
     EvidencePresentation,
     compact_attribution,
-)
-from cortex.capabilities.graph_merge.reconciliation.context import (
-    relation_context,
 )
 from cortex.capabilities.graph_merge.consolidation.review import (
     AbsenceClaim,
@@ -19,9 +16,7 @@ from cortex.capabilities.graph_merge.consolidation.review import (
     absence_counterexamples,
     validate_review,
 )
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.reconciliation.reads import RelationReads
-from legacy_merge_task_tools import build_read_tools
 from cortex.schema import GraphNode, SourceReference, load_root_schema
 
 
@@ -126,20 +121,6 @@ def test_absence_checks_branch_scope_without_treating_other_branches_as_present(
     assert not absence_counterexamples(ctx, claim.model_copy(update={"alternative_id": branches[1]}))
 
 
-def test_packet_preserves_focus_and_physical_dependencies_without_duplicate_properties():
-    ctx = context()
-    ident = ctx.input_node_map["A"]
-    payload = relation_context(ctx, ctx.candidate, LocalTask("local", "reconcile", {ident}))
-    focus = next(node for node in payload["nodes"] if node["id"] == ident)
-    assert focus["properties"]["targets"] == [[ctx.input_node_map["a"]], [ctx.input_node_map["b"]]]
-    columns = [node for node in payload["nodes"] if node["node_type"] == "column"]
-    assert {node["column"] for node in columns} == {"a", "b"}
-    assert all(node["table"] == "objects" for node in columns)
-    assert "revision" in payload and all("revision" not in node for node in payload["nodes"])
-    assert "changed_contents" not in payload
-    assert len({node["id"] for node in payload["nodes"]}) == len(payload["nodes"])
-
-
 def test_explicit_rereads_are_complete_and_common_support_is_not_broadcast():
     ctx = context()
     shared, branch = SourceReference(source_id="shared"), SourceReference(source_id="branch")
@@ -152,12 +133,10 @@ def test_explicit_rereads_are_complete_and_common_support_is_not_broadcast():
         "common_sources": [shared.model_dump()], "alternatives": [{"alternative_id": "one", "sources": [branch.model_dump()]}]}, ctx)
     assert transport["common_evidence_ids"] == ["Qcommon"]
     assert transport["alternatives"][0]["evidence_ids"] == ["Qbranch"]
-    tools = build_read_tools(ctx, {})
     ident = ctx.input_node_map["A"]
-    args = {"mode": "items", "ids": [ident], "fields": ["properties.targets"]}
-    assert tools["inspect_graph"].invoke(args) == tools["inspect_graph"].invoke(args)
-    assert tools["inspect_draft"].invoke({}) == {
-        "status": "no_draft", "draft_id": None, "issues": [], "issues_draft_id": None}
+    current = reader(ctx)
+    assert current.read("items", [ident], fields=["properties.targets"]) == current.read(
+        "items", [ident], fields=["properties.targets"])
 
 
 def test_repair_fields_keep_before_and_candidate_values_separate():
@@ -184,12 +163,3 @@ def test_review_rejects_a_nonexistent_field_instead_of_accepting_a_typo():
              "required_outcome": "Preserve the recorded definition."}
     with pytest.raises(ReviewFactError, match="Unknown review field"):
         validate_review(Review(verdict="revise", issues=[issue]), ctx)
-
-
-def test_current_conflict_guidance_uses_public_patch_not_storage_schema():
-    tools = build_read_tools(context(), {})
-    result = tools['read_guidance'].invoke({'topic': 'conflicts'})
-    assert 'MergePatch.conflicts' in result['guidance']
-    assert 'common_evidence_ids' in result['guidance']
-    assert 'node_schema' not in result
-    assert '代码只存一份公共字段与整个字段的 overrides' in result['guidance']

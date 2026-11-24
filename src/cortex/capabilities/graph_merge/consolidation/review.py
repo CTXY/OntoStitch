@@ -4,8 +4,8 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
-from cortex.capabilities.graph_merge.inputs import PHYSICAL
-from cortex.capabilities.graph_merge.graph.edit_contract import Model
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
+from cortex.capabilities.graph_merge.models import Model
 from cortex.schema.relation_contracts import effective_schema
 
 

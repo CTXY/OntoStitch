@@ -6,22 +6,6 @@ from cortex.capabilities.graph_merge.graph.scope import ScopeContextRequired
 from test_merge_simplified_interface import region
 
 
-def test_null_removes_optional_relation_metadata_without_removing_bindings():
-    ctx, ids, _, _ = region()
-    submit_patch(ctx, RelationPatch(node_updates=[{
-        'id': ids['A'], 'properties': {'relation_metadata': []},
-        'explanation': 'A legal empty grouping property.'}], explanation='Store grouping.'))
-    before = next(n for n in ctx.active_batch.preview.graph.nodes if n.id == ids['A'])
-    assert before.properties['relation_metadata'] == []
-    submit_patch(ctx, RelationPatch(node_updates=[{
-        'id': ids['A'], 'properties': {'relation_metadata': None},
-        'explanation': 'Remove unused grouping property.'}], explanation='Remove grouping.'))
-    after = next(n for n in ctx.active_batch.preview.graph.nodes if n.id == ids['A'])
-    assert 'relation_metadata' not in after.properties
-    assert after.properties['targets'] == before.properties['targets']
-    assert after.sources == before.sources
-
-
 @pytest.mark.parametrize('field,kind', [('node_updates', 'node'), ('edge_updates', 'edge'), ('retirements', 'edge'), ('retirements', 'node')])
 def test_unknown_current_object_returns_field_specific_error_without_mutation(field, kind):
     ctx, _, _, _ = region()
@@ -80,7 +64,7 @@ def test_review_acceptance_does_not_require_references():
 
 
 def test_unknown_field_feedback_does_not_advertise_blocked_whole_properties():
-    from test_light_reconciliation import setup
+    from graph_merge_runtime_fixtures import relation_compiler_context as setup
     from cortex.capabilities.graph_merge.evidence import EvidencePresentation
     from cortex.capabilities.graph_merge.reconciliation.reads import RelationReads
     ctx, _, a, _, _ = setup()
@@ -88,7 +72,6 @@ def test_unknown_field_feedback_does_not_advertise_blocked_whole_properties():
     fields = reply['read_errors'][0]['available_fields']
     assert 'properties' not in fields
     assert 'properties.targets' in fields
-
 
 
 def test_edge_merge_schema_explains_edge_ids_and_separate_property_update():

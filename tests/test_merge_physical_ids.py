@@ -1,3 +1,4 @@
+from graph_merge_fixtures import aligned_preview
 """Physical identity survives batching, publication, and legacy graph export."""
 
 import importlib.util
@@ -6,16 +7,12 @@ from pathlib import Path
 import pytest
 
 from cortex.application.retrieval import ColumnSemanticContext
-from cortex.capabilities.graph_merge.inputs import (
-    IntegrationContext,
-    remap_node,
-)
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.operations import remap_node
 from cortex.capabilities.graph_merge.graph.publication import (
     commit_result,
-    compile_proposal,
 )
 from cortex.capabilities.graph_merge.graph.edit_contract import (
-    IdentityDecision,
     IntegrationProposal,
 )
 from cortex.capabilities.retrieve_db.retrieval.index import RepresentationIndex
@@ -31,7 +28,7 @@ from cortex.schema import (
     SourceReference,
     load_root_schema,
 )
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 
 
 def test_composition_shares_physical_nodes_and_maps_each_case():
@@ -68,7 +65,7 @@ def test_empty_base_publishes_canonical_physical_ids():
         GraphState(graph=composition.catalog), composition.state, load_root_schema()
     )
     proposal = IntegrationProposal()
-    preview = compile_proposal(context, IdentityDecision(), proposal)
+    preview = aligned_preview(context)
     result = commit_result(context, proposal, preview, run_id="physical-ids")
     audit_physical_ids(result.state)
     assert {"table.objects", "column.objects.a"} <= {

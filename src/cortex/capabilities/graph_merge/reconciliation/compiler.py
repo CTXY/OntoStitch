@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
-from cortex.capabilities.graph_merge.inputs import PHYSICAL
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 from cortex.capabilities.graph_merge.evidence import EvidencePresentation, evidence_sources
 from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element, IntegrationProposal
 from cortex.capabilities.graph_merge.consolidation.compiler import CompiledPatch

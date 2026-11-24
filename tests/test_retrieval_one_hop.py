@@ -1,5 +1,5 @@
 """Business traversal stops at one hop without truncating executable references."""
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 from cortex.schema import GraphNode
 from cortex.capabilities.retrieve_db.graph.context import expand_context, build_retrieved_graph_state
 
@@ -32,11 +32,11 @@ def test_metric_reference_chain_is_retained_beyond_business_hop():
     assert len(build_retrieved_graph_state(graph, refs).graph.nodes) == len(refs)
 
 
-def test_public_contract_accepts_only_exact_relation_group_projection():
+def test_public_contract_accepts_only_exact_current_node_projection():
     import pytest
     from cortex.application.retrieve_db import RetrieveDbResult, RetrieveDbError, _validate_result
     from cortex.schema import load_root_schema
-    b=concept('owner','b').model_copy(update={'properties':{'targets':[['b']], 'relation_metadata':[{'id':'group','edges':['two','three'],'description':'These categories can overlap.'}]}})
+    b=concept('owner','b').model_copy(update={'properties':{'targets':[['b']], 'definition':'These evidenced categories can overlap.'}})
     original=state([*catalog(),concept('root','a'),b,concept('left','c'),concept('right','a')],
                    [edge('one','root','owner','has_feature'),edge('two','owner','left','has_feature'),edge('three','owner','right','has_feature')])
     projected=build_retrieved_graph_state(original,expand_context(original,{'root'}))

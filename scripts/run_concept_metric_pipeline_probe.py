@@ -12,8 +12,10 @@ from pathlib import Path
 import re
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.graph.publication import Preview, deduplicate_edges
-from cortex.capabilities.graph_merge.inputs import IntegrationContext, remap_node
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.operations import remap_node
 from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
@@ -24,7 +26,7 @@ from cortex.capabilities.graph_merge.consolidation.presentation import build_nod
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.infrastructure.artifacts.graph_merge_trace import FileSystemGraphMergeTraceSink
 from cortex.schema import GraphSpace, GraphState, load_root_schema, validate_graph_state
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from reconciliation_probe_fixtures import digest, write
 from run_node_consolidation_smoke import project_case, trace_summary
 from run_relation_reconciliation_v2_smoke import model_for

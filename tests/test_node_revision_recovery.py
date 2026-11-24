@@ -1,5 +1,5 @@
 import pytest
-from test_graph_integration import catalog, concept, state
+from graph_merge_fixtures import catalog, concept, state
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
@@ -7,7 +7,7 @@ from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import TaskState
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.incremental import NodeReview
+from cortex.capabilities.graph_merge.consolidation.review import Review as NodeReview
 from cortex.schema import GraphState, load_root_schema
 
 

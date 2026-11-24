@@ -1,7 +1,7 @@
 """Exact source movement, safe alternatives and atomic local compilation."""
 from types import SimpleNamespace
 import pytest
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.reconciliation.compiler import compile_draft

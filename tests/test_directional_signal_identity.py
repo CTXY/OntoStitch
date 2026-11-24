@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_graph_integration import catalog, concept, edge, state
+from graph_merge_fixtures import catalog, concept, edge, state
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.reconciliation.ledger import make_receipt, validate_receipt_ledger
 from cortex.capabilities.graph_merge.reconciliation.premises import normalize_signal, signal_premise

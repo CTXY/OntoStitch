@@ -1,13 +1,11 @@
 """Canonical draft presentation must preserve diagnostics and their bindings."""
 import json
 from copy import deepcopy
-from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage
 
 from cortex.capabilities.graph_merge.llm.packets import TaskDialogue
-from legacy_merge_task_tools import build_read_tools
 
 DRAFT = {'explanation': 'A complete current draft', 'node_updates': []}
 OLD = {'code': 'compiler', 'error': 'Old diagnostic'}
@@ -80,34 +78,6 @@ def test_semantic_findings_have_one_presentation_before_and_after_draft_read():
     assert str(dialogue.messages()).count('Preserve the alternative boundary') == 1
 
 
-def tool_context(*, errors_binding='D7'):
-    return SimpleNamespace(evidence=(), active_draft=deepcopy(DRAFT), task_draft_id='D7',
-                           task_draft_errors=(OLD,), task_draft_errors_draft_id=errors_binding)
-
-
-def test_draft_tool_projection_inherits_full_identity_and_explicit_error_binding():
-    ctx = tool_context()
-    tool = build_read_tools(ctx, {})['inspect_draft']
-    value = tool.invoke({'sections': ['explanation']})
-    assert value['draft'] == {'explanation': DRAFT['explanation']}
-    assert value['draft_id'] == value['issues_draft_id'] == 'D7'
-    assert value['projection']['sections'] == ['explanation']
-    assert value['issues'] == [OLD]
-
-
-def test_draft_tool_must_not_rebind_explicit_none_error_binding():
-    value = build_read_tools(tool_context(errors_binding=None), {})['inspect_draft'].invoke({})
-    assert value['draft_id'] == 'D7' and value['issues'] == [OLD]
-    assert value['issues_draft_id'] is None
-
-
-def test_draft_tool_explicitly_reports_diagnostic_clear():
-    ctx = tool_context()
-    ctx.task_draft_errors = ()
-    value = build_read_tools(ctx, {})['inspect_draft'].invoke({})
-    assert value['issues'] == [] and value['draft_id'] == 'D7'
-
-
 def cached_dialogue():
     dialogue = initial()
     projected = {'status': 'draft', 'draft': {'explanation': DRAFT['explanation']}, 'draft_id': 'D7',
@@ -156,33 +126,6 @@ def test_restoring_new_authoritative_draft_does_not_restore_old_draft_projection
     assert not any(call['name'] == 'inspect_draft' for msg in restored.messages()
                    if isinstance(msg, AIMessage) for call in msg.tool_calls)
     assert 'Newly acquired exact fact' in str(restored.messages())
-
-
-def test_agent_read_does_not_rebind_legacy_none_diagnostics():
-    from test_graph_integration import state
-    from test_incremental_agent import Chat
-
-    from cortex.capabilities.graph_merge.inputs import IntegrationContext
-    from cortex.capabilities.graph_merge.llm.agent import (
-        IncrementalIntegrationAgent,
-    )
-    from cortex.schema import load_root_schema
-
-    ctx = IntegrationContext(state(), state(), load_root_schema())
-    ctx.candidate = ctx.union_state()
-    ctx.active_draft = deepcopy(DRAFT)
-    ctx.task_draft_id = 'D7'
-    ctx.task_draft_errors = [OLD]
-    ctx.task_draft_errors_draft_id = None
-    ctx.compile_task_patch = lambda patch: object()
-    query = AIMessage(content='', tool_calls=[{'name': 'inspect_graph',
-        'args': {'mode': 'items', 'ids': ['missing'], 'view': 'candidate'}, 'id': 'read'}])
-    result = AIMessage(content='', tool_calls=[{'name': 'submit_patch', 'args': {'explanation': 'valid'}, 'id': 'result'}])
-    model = Chat([query, result])
-    IncrementalIntegrationAgent(model).invoke('reconcile', ctx,
-        {'draft': DRAFT, 'draft_id': 'D7', 'issues': [OLD], 'issues_draft_id': None})
-    value = json.loads(model.requests[1][1].content)
-    assert value['issues_draft_id'] is None and value['issues_binding'] == 'unbound_historical'
 
 
 def test_malformed_saved_read_cannot_partially_mutate_canonical_state():
