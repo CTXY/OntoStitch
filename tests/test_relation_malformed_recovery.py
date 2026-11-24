@@ -18,7 +18,7 @@ def malformed(ident='broken'):
                                AIMessage(content='{"explanation": "Removed plain Patch fallback"}')])
 def test_malformed_action_repairs_to_current_edit_draft_without_saving_invalid_raw(tmp_path, bad):
     def valid(model, messages):
-        rt = model.engine.session.inputs.reconciliation_runtime
+        rt = model.engine.execution.context.reconciliation_runtime
         assert rt.draft.version == 0 and not rt.draft.changes
         assert rt.feedback['protocol_error']
         assert len(messages) == 3
@@ -41,7 +41,7 @@ def test_invalid_action_batch_is_atomic_before_any_read_or_draft_side_effect(tmp
     else:
         response = AIMessage(content='', tool_calls=[*valid.tool_calls, {**valid.tool_calls[0], 'id': 'another'}])
     def after(model, messages):
-        rt = model.engine.session.inputs.reconciliation_runtime
+        rt = model.engine.execution.context.reconciliation_runtime
         assert not rt._journal and rt.draft.version == 0 and not rt.draft.changes
         assert rt.feedback['protocol_error']
         return call('edit_draft', {})

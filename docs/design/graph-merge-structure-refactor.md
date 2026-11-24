@@ -194,3 +194,26 @@ diff checks pass.
 Task execution still uses the existing shared context at this checkpoint. Task
 forks and removal of nested dictionary save/restore are the next D2 checkpoint,
 not claimed as completed here.
+
+## Stage D2 — isolated task and nested-repair contexts
+
+`TaskExecution` now owns the exact task/before/context/state/compiled/payload.
+Each task forks fixed session inputs and initializes its own read sets, journals,
+permissions, callbacks, feedback and model runtime. Nested coordination receives
+an explicit parent context and creates a separate child frame; it never replaces
+the outer `engine.execution` or writes a child candidate into the accepted session.
+The shared-context dictionary save/clear/update machinery has been removed.
+
+Parent persistence callbacks update the parent's durable state while child
+progress is deep-copied under its draft-bound recovery prefix. A task is marked
+committed in its execution object only after the commit write succeeds; failures
+retain the ready state and restore the accepted Session boundary. Single-graph
+entry reuses Session construction/recovery while preserving its original baseline.
+
+The frozen 103-file related suite passed 1,123 tests (only the existing self-JOIN
+case deselected). Six new direct-fork/isolation regressions cover sibling state,
+source-index immutability, real permission/evidence journals, child isolation,
+no premature publication, new-run reset and the initial Writer decision. The
+final hook/default and actual recovery group passed 25 tests. Model-visible
+snapshot remains byte-identical. Independent review approved after auditing
+None/default callback semantics, rollback, budget sharing and recovery order.

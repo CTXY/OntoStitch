@@ -42,7 +42,7 @@ class CanonicalChat:
     def invoke(self, messages, config=None):
         self.requests.append((deepcopy(messages), deepcopy(self.tools)))
         assert len(messages)==3
-        rt=self.engine.session.inputs.reconciliation_runtime
+        rt=self.engine.execution.context.reconciliation_runtime
         if self.writer:
             if self.edit_edge and not rt.draft.changes: return call('edit_draft', edit())
             return call('edit_draft', {})
@@ -77,7 +77,7 @@ def test_assessment_feedback_returns_to_same_writer_and_is_rechecked(tmp_path):
     class FeedbackChat(CanonicalChat):
         reviews=0
         def invoke(self,messages,config=None):
-            rt=self.engine.session.inputs.reconciliation_runtime
+            rt=self.engine.execution.context.reconciliation_runtime
             if not self.writer and self.reviews==0:
                 self.reviews+=1; self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 return AIMessage(content=json.dumps({'explanation':'The preserved relationship needs a clearer definition.',
@@ -101,7 +101,7 @@ def test_malformed_assessment_is_repaired_by_assessment_only(tmp_path):
             if not self.writer and not self.sent:
                 self.sent=True;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 return AIMessage(content='{"explanation":"ok","feedback":[],"verdict":"accept"}')
-            if not self.writer: assert self.engine.session.inputs.reconciliation_runtime.feedback['assessment_output_error']
+            if not self.writer: assert self.engine.execution.context.reconciliation_runtime.feedback['assessment_output_error']
             return super().invoke(messages,config)
     chat=Bad();engine,task=fixture(tmp_path,chat);engine._run_task(task,'format')
     assert len(chat.requests)==3 and len(engine.session.history)==1
@@ -115,7 +115,7 @@ def test_mixed_actions_do_not_apply_any_edit(tmp_path):
                 self.sent=True;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 return AIMessage(content='',tool_calls=[{'name':'edit_draft','id':'a','args':edit()},
                     {'name':'edit_draft','id':'b','args':{}}])
-            if self.writer: assert self.engine.session.inputs.reconciliation_runtime.draft.version==0
+            if self.writer: assert self.engine.execution.context.reconciliation_runtime.draft.version==0
             return super().invoke(messages,config)
     chat=Mixed();engine,task=fixture(tmp_path,chat);engine._run_task(task,'mixed')
     assert len(chat.requests)==3
@@ -141,7 +141,7 @@ def test_compiler_failure_saved_then_fixed_and_error_cleared(tmp_path):
     class Repair(CanonicalChat):
         edits=0
         def invoke(self,messages,config=None):
-            rt=self.engine.session.inputs.reconciliation_runtime
+            rt=self.engine.execution.context.reconciliation_runtime
             if self.writer and self.edits<2:
                 self.edits+=1;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 if self.edits==2:
@@ -169,7 +169,7 @@ def test_schema_error_does_not_save_draft_and_returns_complete_feedback(tmp_path
                 self.sent=True;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                 return call('edit_draft',bad)
             if self.writer:
-                rt=self.engine.session.inputs.reconciliation_runtime
+                rt=self.engine.execution.context.reconciliation_runtime
                 assert rt.draft.version==0 and not rt.draft.changes
                 assert rt.feedback['latest_receipt']['draft_saved'] is False
                 assert rt.feedback['latest_receipt']['errors']

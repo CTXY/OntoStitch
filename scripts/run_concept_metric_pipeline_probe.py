@@ -210,7 +210,6 @@ def run(args):
             engine=make_engine(args,folder,state,evidence,budget)
             members=[f'case{case}::{kind}' for case in ('266','204')]
             group={'owner_id':members[0],'member_ids':members}
-            engine.session.inputs.task_identity_groups=[group]
             write(folder/'writer.packet.initial.json',build_node_packet(engine.session.inputs, {'group':group,'task_id':name},before=state))
             task=LocalTask(name,'consolidate',set(members),groups=[{'members':members,
                 'meaning':'The same carcinogenic molecule identity.' if number==1 else 'The same count of carcinogenic molecules in a requested population.',

@@ -44,16 +44,13 @@ def reconcile_current_graph(agent,graph,schema,evidence,task,workspace):
         raise ValueError('Current graph or evidence differs from the checkpoint')
     if saved and restored.stage=='committed':return accepted
     engine=IncrementalGraphIntegrationEngine(agent,max_rounds=3)
-    engine.session.inputs,engine.session.current,engine.session.lineage=ctx,graph,LineageIndex(ctx)
-    engine.session.history,engine.session.reviewed_sources,engine.session.revision=[],{},0
-    engine.session.identity_decision,engine.session.open_tasks={},[]
-    engine.workspace_path,engine.session.storage_revision=workspace,None
-    engine.session.pending_relation_work=engine.session.pending_review=None
-    engine.session.contract_versions=versions
+    from cortex.capabilities.graph_merge.runtime.session import MergeSession
+    engine.session = MergeSession.start(ctx, versions=versions, current=graph, lineage=LineageIndex(ctx))
+    engine.session.identity_decision = {}
+    engine.workspace_path = workspace
     if saved:
-        engine.session.current=accepted
-        engine.session.lineage=LineageIndex.restore(ctx,saved['lineage'])
-        engine.session.history=saved['history'];engine.session.revision=saved['accepted_revision']
-        engine.session.storage_revision=saved['revision'];engine.session.task_state=restored
+        # A single-graph task resumes its exact baseline, without performing a
+        # separate merge-level canonicalization transaction.
+        engine.session.restore(saved, versions=versions, storage_revision=saved['revision'], normalize_current=False)
     engine._run_task(task,run_id)
     return engine.session.current

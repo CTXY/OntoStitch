@@ -47,7 +47,7 @@ class MergeSession:
                                                    initial_edge_map=edges),
                    contract_versions=versions)
 
-    def restore(self, snapshot, *, versions, storage_revision=None):
+    def restore(self, snapshot, *, versions, storage_revision=None, normalize_current=True):
         validate_checkpoint_contract(snapshot, versions)
         inputs = self.inputs
         if snapshot.get('input_fingerprint') != input_fingerprint(inputs):
@@ -85,7 +85,7 @@ class MergeSession:
         if snapshot.get('task_state'):
             task = TaskState.from_dict(snapshot['task_state'])
             self.task_state = task if task.stage != 'committed' else None
-        normalized, edge_aliases = alias_view(self.current, {})
+        normalized, edge_aliases = alias_view(self.current, {}) if normalize_current else (self.current, {})
         if normalized != self.current:
             self.lineage.observe(self.current, normalized, edge_aliases=edge_aliases,
                                  explanation='Canonicalize duplicate assertions using declared physical JOIN identity')

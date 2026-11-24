@@ -192,11 +192,11 @@ class IntegrationContext:
             text = " ".join([other.name, *other.aliases])
             words = _tokens(text + " " + (other.description or ""))
             anchors = refs & decision_references(
-                other, self.nodes, self.adjacency[other.id]
+                other, self.nodes, self.adjacency.get(other.id, ())
             )
             other_roles = {
                 (e.edge_type, e.from_node_id == other.id)
-                for e in self.adjacency[other.id]
+                for e in self.adjacency.get(other.id, ())
             }
             signals = []
             if anchors:
@@ -235,7 +235,7 @@ class IntegrationContext:
             "type": n.node_type,
             "name": n.name,
             "description": n.description,
-            "relation_count": len(self.adjacency[n.id]),
+            "relation_count": len(self.adjacency.get(n.id, ())),
         }
 
     def payload(self, phase):

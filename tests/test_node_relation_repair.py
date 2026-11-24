@@ -73,9 +73,12 @@ def test_real_relation_compile_and_independent_assessment_restore_outer_context(
     agent=Agent();engine,base,error,snapshots,save=setup(agent)
     before=dict(engine.session.inputs.__dict__)
     result,record=coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,
-        save_record=save,run_id='bounded-test')
+        save_record=save,run_id='bounded-test', parent_context=engine.session.inputs)
     assert agent.calls==['reconcile','graph_assess']
-    assert engine.session.inputs.__dict__==before and engine.session.current==base
+    # Parent persistence callbacks may refresh the parent's own diagnostics;
+    # no child runtime, draft, candidate or permission is copied back.
+    assert engine.session.inputs.__dict__=={**before, 'task_draft_errors': ('outer error',)}
+    assert engine.session.current==base
     assert next(e for e in result.state.graph.edges if e.id=='operand').to_node_id=='b'
     assert result.integrated==error.integrated_state
     assert record['stage']=='accepted' and record['review']['verdict']=='accept'
@@ -86,11 +89,11 @@ def test_real_relation_compile_and_independent_assessment_restore_outer_context(
 
 def test_saved_accepted_patch_recompiles_without_either_model_call():
     agent=Agent();engine,base,error,_,save=setup(agent)
-    result,record=coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save)
+    result,record=coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save, parent_context=engine.session.inputs)
     class NoCalls:
         def invoke(self,*args):raise AssertionError('Completed nested model work must not rerun')
     engine.agent=NoCalls()
-    restored,_=coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,saved=record,save_record=save)
+    restored,_=coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,saved=record,save_record=save, parent_context=engine.session.inputs)
     assert restored.state==result.state
 
 
@@ -98,34 +101,34 @@ def test_network_interruption_retains_patch_and_resume_calls_only_assessment():
     engine,base,error,snapshots,save=setup(Agent(interrupt=True))
     before=dict(engine.session.inputs.__dict__)
     with pytest.raises(ConnectionError):
-        coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save)
-    assert engine.session.inputs.__dict__==before
+        coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save, parent_context=engine.session.inputs)
+    assert engine.session.inputs.__dict__=={**before, 'task_draft_errors': ('outer error',)}
     saved=snapshots[-1]
     assert saved['patch'] and saved['stage']=='assessing' and 'review' not in saved
     next_agent=Agent();engine.agent=next_agent
-    _,record=coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,saved=saved,save_record=save)
+    _,record=coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,saved=saved,save_record=save, parent_context=engine.session.inputs)
     assert next_agent.calls==['graph_assess'] and record['stage']=='accepted'
 
 
 def test_repeated_unchanged_feedback_stops_and_saved_rejection_is_not_replayed():
     engine,base,error,snapshots,save=setup(Agent(review='revise'))
     with pytest.raises(IntegrationIncomplete,match='checkpoint retained'):
-        coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save)
+        coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save, parent_context=engine.session.inputs)
     assert engine.agent.calls==['reconcile','graph_assess','reconcile','graph_assess']
     saved=snapshots[-1]
     assert saved['stage']=='assessment_rejected' and saved['review']['verdict']=='revise'
     engine.agent=SimpleNamespace(invoke=lambda *args:pytest.fail('Rejected identical saved candidate must not repeat model work'))
     with pytest.raises(IntegrationIncomplete):
-        coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,saved=saved,save_record=save)
+        coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,saved=saved,save_record=save, parent_context=engine.session.inputs)
 
 
 def test_saved_binding_and_candidate_hash_are_verified_before_reuse():
     engine,base,error,_,save=setup(Agent())
-    _,record=coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save)
+    _,record=coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save, parent_context=engine.session.inputs)
     for field in ('draft_id','intermediate_hash','candidate_hash','patch_hash','review_candidate_hash'):
         altered={**record,field:'wrong'}
         with pytest.raises(ValueError):
-            coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,saved=altered,save_record=save)
+            coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,saved=altered,save_record=save, parent_context=engine.session.inputs)
 
 
 def test_recovery_callback_persists_nested_scope_without_overwriting_local_draft():
@@ -147,7 +150,7 @@ def test_recovery_callback_persists_nested_scope_without_overwriting_local_draft
                 assert ctx.load_task_recovery('round')=={'preserved':True}
             return original_agent.invoke(phase,ctx,payload)
     engine.agent=RecoveryAgent()
-    coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save)
+    coordinate_node_relations(engine,engine.session.inputs.active_task,base,error,save_record=save, parent_context=engine.session.inputs)
     assert list(records)==['node-relation:node-draft:round']
     assert engine.session.inputs.record_task_recovery is persist_recovery
 
@@ -195,7 +198,7 @@ def test_incoming_target_versions_reach_relation_agents_and_noop_review_keeps_fo
     ctx.task_draft_id='node-draft';ctx.active_task=LocalTask('node','consolidate',{'owner'})
     engine=SimpleNamespace(session=MergeSession(inputs=ctx,current=base),agent=NoopAgent())
     records=[]
-    result,_=coordinate_node_relations(engine,ctx.active_task,base,error,save_record=lambda record:records.append(deepcopy(record)))
+    result,_=coordinate_node_relations(engine,ctx.active_task,base,error,save_record=lambda record:records.append(deepcopy(record)), parent_context=engine.session.inputs)
     assert calls==['reconcile','graph_assess'] and result.state==intermediate
     assert records[-1]['stage']=='accepted'
 
@@ -232,7 +235,7 @@ def test_retired_identity_edge_map_uses_disposition_not_alias_to_absent_edge():
     ctx=IntegrationContext(base,state(),load_root_schema())
     ctx.task_draft_id='real-retirement-draft';ctx.active_task=LocalTask('node','consolidate',{owner,other})
     engine=SimpleNamespace(session=MergeSession(inputs=ctx,current=base),agent=RetirementAgent())
-    result,saved=coordinate_node_relations(engine,ctx.active_task,base,error,save_record=lambda record:None)
+    result,saved=coordinate_node_relations(engine,ctx.active_task,base,error,save_record=lambda record:None, parent_context=engine.session.inputs)
     assert old not in result.coupled_relation_edge_aliases
     assert result.final_edge_aliases[old]==survivor
     lineage=LineageIndex(ctx)
@@ -244,7 +247,7 @@ def test_retired_identity_edge_map_uses_disposition_not_alias_to_absent_edge():
     class NoCalls:
         def invoke(self,*args):pytest.fail('Accepted saved relation work must not be repeated')
     engine.agent=NoCalls()
-    restored,_=coordinate_node_relations(engine,ctx.active_task,base,error,saved=saved,save_record=lambda record:None)
+    restored,_=coordinate_node_relations(engine,ctx.active_task,base,error,saved=saved,save_record=lambda record:None, parent_context=engine.session.inputs)
     assert restored.state==result.state
 
 
@@ -277,7 +280,7 @@ def test_real_saved_toxicology_retirement_record_preserves_lineage_and_sources()
         def invoke(self,*args):pytest.fail('The exact accepted real relation Patch and Review must be reused')
     engine=SimpleNamespace(session=MergeSession(inputs=ctx,current=base),agent=NoCalls())
     task=LocalTask('real-toxicology-retirement','consolidate',set(group['member_ids']))
-    result,record=coordinate_node_relations(engine,task,base,caught.value,saved=fixture['coupled_record'],save_record=lambda record:None)
+    result,record=coordinate_node_relations(engine,task,base,caught.value,saved=fixture['coupled_record'],save_record=lambda record:None, parent_context=engine.session.inputs)
     lineage=LineageIndex(ctx)
     lineage.observe(base,result.integrated,result.integration_changes,
         node_aliases=result.node_aliases,edge_aliases=result.edge_aliases)

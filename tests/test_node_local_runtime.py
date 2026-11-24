@@ -12,7 +12,7 @@ from graph_merge_runtime_fixtures import engine_for
 from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.reconciliation.followups import drain_relation_followups
 from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
-from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash
+from cortex.capabilities.graph_merge.runtime.state import TaskState
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 
@@ -71,7 +71,16 @@ class NodeChat:
 def fixture(tmp_path, chat):
     base = state([*catalog(), concept('A', 'a'), concept('B', 'b')],
                  [edge('e-A', 'A', 'a'), edge('e-B', 'B', 'b')])
-    engine, _ = engine_for(base, IncrementalIntegrationAgent(chat, max_calls=5), tmp_path / 'local.sqlite')
+    class ObservedAgent(IncrementalIntegrationAgent):
+        def invoke(self, phase, context, payload):
+            previous = getattr(chat, 'active_context', None)
+            chat.active_context = context
+            try:
+                return super().invoke(phase, context, payload)
+            finally:
+                chat.active_context = previous
+
+    engine, _ = engine_for(base, ObservedAgent(chat, max_calls=5), tmp_path / 'local.sqlite')
     chat.engine = engine
     task = LocalTask('one-group', 'consolidate', {'A', 'B'}, groups=[{'members': ['A', 'B'], 'reason': 'Confirmed same business object'}])
     return engine, task
@@ -236,7 +245,7 @@ def test_nested_real_controller_feedback_repairs_same_writer_without_node_replay
             local='node integration Writer' in messages[0].content or 'independent node Assessment' in messages[0].content
             if not local:
                 names={tool['function']['name'] for tool in self.tools}
-                rt=self.engine.session.inputs.reconciliation_runtime
+                rt=self.active_context.reconciliation_runtime
                 if 'edit_draft' not in names and not self.reported:
                     self.reported=True;self.requests.append((deepcopy(messages),deepcopy(self.tools)))
                     return AIMessage(content=json.dumps({'explanation':'The retained relation description needs a precise business role.',
@@ -255,10 +264,10 @@ def test_nested_real_controller_feedback_repairs_same_writer_without_node_replay
     assert len(engine.session.history)==1
     assert sum('node integration Writer' in request[0].content for request,_ in chat.requests)==1
     assert next(e for e in engine.session.current.graph.edges if e.id=='e-A').properties['description'].startswith('The accepted object')
-    assert engine.session.inputs.task_before==before
-    assert engine.session.inputs.active_task is task
-    assert 'integrate_groups' in engine.session.inputs.active_draft
-    assert 'changes' not in engine.session.inputs.active_draft
+    assert engine.execution.context.task_before==before
+    assert engine.execution.context.active_task is task
+    assert 'integrate_groups' in engine.execution.context.active_draft
+    assert 'changes' not in engine.execution.context.active_draft
 
 
 @pytest.mark.parametrize('window',['action_saved','compiled'])

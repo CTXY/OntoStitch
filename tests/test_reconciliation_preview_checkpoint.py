@@ -94,7 +94,7 @@ def test_failed_compile_restart_keeps_draft_and_error_feedback(tmp_path):
         def invoke(self,messages,config=None):
             if self.writer:
                 self.requests.append((deepcopy(messages),deepcopy(self.tools)))
-                rt=self.engine.session.inputs.reconciliation_runtime
+                rt=self.engine.execution.context.reconciliation_runtime
                 assert rt.draft.version==1
                 assert 'missing-endpoint' in str(rt.feedback['latest_receipt']['errors'])
                 replacement=edit();replacement['put_changes'][0]['change_id']='corrected'

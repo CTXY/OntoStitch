@@ -362,7 +362,7 @@ def test_node_assessment_context_retry_supplies_version_bound_facts_to_all_slice
     engine.max_rounds = 0
     engine._run_task(LocalTask('local', 'consolidate', {'A'}), 'context-retry')
     assert [phase for phase, _ in calls] == ['consolidate', *['node_assess'] * 4]
-    final_packets = engine.session.inputs.task_assessment_premises
+    final_packets = engine.execution.context.task_assessment_premises
     assert len(final_packets) == 2 and len(engine.session.history) == 1
     for actual in final_packets:
         packet = actual['payload']

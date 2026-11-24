@@ -41,14 +41,14 @@ def _compose(error, repair):
 
 
 def coordinate_node_relations(engine, task, base, error, *, saved=None,
-                              save_record, run_id=''):
+                              save_record, parent_context, run_id=''):
     """Repair and independently assess a node draft's necessary relations.
 
     No accepted graph, outer node draft or node recovery binding is overwritten.
     A saved valid relation Patch is recompiled and hash checked, never regenerated.
     Rejected assessments feed back to the same local Writer; every draft remains checkpointed.
     """
-    ctx = engine.session.inputs
+    ctx = parent_context
     canonical_relation = getattr(engine.agent, 'reconciliation_contract', False)
     from cortex.capabilities.graph_merge.reconciliation.contract import DraftDocument, AssessmentRecord
     draft_model = DraftDocument if canonical_relation else MergePatch
@@ -70,9 +70,8 @@ def coordinate_node_relations(engine, task, base, error, *, saved=None,
         record = deepcopy(saved)
     else:
         record = {**binding, 'stage': 'writing', 'run_id': run_id}
-    original = dict(ctx.__dict__)
-    recovery_load = original.get('load_task_recovery')
-    recovery_store = original.get('record_task_recovery')
+    recovery_load = getattr(parent_context, 'load_task_recovery', None)
+    recovery_store = getattr(parent_context, 'record_task_recovery', None)
     prefix = 'node-relation:' + node_draft_id + ':'
     related = set(error.owner_ids)
     original_edges = {edge.id: edge for edge in base.graph.edges}
@@ -120,18 +119,17 @@ def coordinate_node_relations(engine, task, base, error, *, saved=None,
     relation_task = LocalTask(task.id + '-node-relations-' + node_draft_id[:12],
         'reconcile', related, checks=checks)
 
-    def preserving_local(callback, *args):
-        # The outer callback persists TaskState and calls sync_draft_context.
-        # Keep that durable state change, but restore this nested model context.
-        local = dict(ctx.__dict__)
-        try:
-            return callback(*args)
-        finally:
-            ctx.__dict__.clear()
-            ctx.__dict__.update(local)
+    from cortex.capabilities.graph_merge.runtime.context import TaskExecution, fork_task_context
+    execution = TaskExecution(
+        task=relation_task, before=intermediate,
+        context=fork_task_context(engine.session.inputs, before=intermediate, task=relation_task,
+                                  read_ids=parent_context.read_ids),
+        state=record,
+    )
+    ctx = execution.context
 
     def save():
-        preserving_local(save_record, deepcopy(record))
+        save_record(deepcopy(execution.state))
 
     def draft_context(raw):
         ctx.active_draft = deepcopy(raw)
@@ -142,12 +140,12 @@ def coordinate_node_relations(engine, task, base, error, *, saved=None,
 
     def record_draft(raw):
         draft_context(raw)
-        if record.get('attempted_patch') != raw:
+        if execution.state.get('attempted_patch') != raw:
             for key in ('preview', 'patch', 'patch_hash', 'candidate_hash', 'review', 'review_candidate_hash'):
-                record.pop(key, None)
-            record['stage'] = 'writing'
-        record['attempted_patch'] = deepcopy(raw)
-        record['relation_draft_id'] = ctx.task_draft_id
+                execution.state.pop(key, None)
+            execution.state['stage'] = 'writing'
+        execution.state['attempted_patch'] = deepcopy(raw)
+        execution.state['relation_draft_id'] = ctx.task_draft_id
         save()
 
     def record_error(failure):
@@ -155,7 +153,7 @@ def coordinate_node_relations(engine, task, base, error, *, saved=None,
         feedback = failure_feedback(failure)
         ctx.task_draft_errors = (feedback,)
         ctx.task_draft_errors_draft_id = ctx.task_draft_id
-        record['compile_issues'] = [feedback]
+        execution.state['compile_issues'] = [feedback]
         save()
 
     def compile_value(value, *, persist=True):
@@ -166,20 +164,20 @@ def coordinate_node_relations(engine, task, base, error, *, saved=None,
         if canonical_relation:
             from cortex.capabilities.graph_merge.reconciliation.agent import prepare_runtime
             from cortex.capabilities.graph_merge.reconciliation.compiler import compile_draft
-            prepare_runtime(engine.agent, 'reconcile', ctx, payload, draft=value)
-            repair = compile_draft(ctx, intermediate, value, targets=related, payload=payload)
+            prepare_runtime(engine.agent, 'reconcile', ctx, execution.payload, draft=value)
+            execution.compiled = compile_draft(ctx, intermediate, value, targets=related, payload=execution.payload)
         else:
-            repair = compile_patch(ctx, intermediate, value, targets=related, payload=payload)
-        GraphManager(ctx.schema).validate_state(repair.state)
-        ctx.candidate = repair.state
-        ctx.last_compiled_patch = repair
+            execution.compiled = compile_patch(ctx, intermediate, value, targets=related, payload=execution.payload)
+        GraphManager(ctx.schema).validate_state(execution.compiled.state)
+        ctx.candidate = execution.compiled.state
+        ctx.last_compiled_patch = execution.compiled
         ctx.task_candidate_draft_id = ctx.task_draft_id
         if persist:
-            record.update({'patch': raw, 'patch_hash': canonical_hash(raw),
-                'candidate_hash': canonical_hash(repair.state), 'stage': 'assessing'})
-            record.pop('compile_issues', None)
+            execution.state.update({'patch': raw, 'patch_hash': canonical_hash(raw),
+                'candidate_hash': canonical_hash(execution.compiled.state), 'stage': 'assessing'})
+            execution.state.pop('compile_issues', None)
             save()
-        return repair
+        return execution.compiled
 
     compiled_cache = {}
 
@@ -192,176 +190,171 @@ def coordinate_node_relations(engine, task, base, error, *, saved=None,
     def cached_preview(value):
         value=draft_model.model_validate(value)
         key=preview_binding(value)
-        saved_preview=record.get('preview')
+        saved_preview=execution.state.get('preview')
         if saved_preview is None or saved_preview['binding']!=key:
             return None
         if key not in compiled_cache:
-            repair=compile_value(value,persist=False)
-            if canonical_hash(repair.state)!=saved_preview['candidate_hash']:
+            execution.compiled=compile_value(value,persist=False)
+            if canonical_hash(execution.compiled.state)!=saved_preview['candidate_hash']:
                 raise ValueError('Saved relation preview no longer compiles to the exact candidate')
-            compiled_cache[key]=repair
+            compiled_cache[key]=execution.compiled
         return compiled_cache[key]
 
     def preview_draft(value):
         value=draft_model.model_validate(value)
-        repair=cached_preview(value)
-        if repair is None:
+        execution.compiled=cached_preview(value)
+        if execution.compiled is None:
             try:
-                repair=compile_value(value,persist=False)
+                execution.compiled=compile_value(value,persist=False)
             except (ValueError,TypeError,KeyError) as failure:
                 record_error(failure)
                 raise
             key=preview_binding(value)
-            compiled_cache[key]=repair
+            compiled_cache[key]=execution.compiled
             raw=value.model_dump(mode='json',exclude_unset=True)
-            record.update(attempted_patch=raw,preview={'binding':key,'candidate_hash':canonical_hash(repair.state)},
+            execution.state.update(attempted_patch=raw,preview={'binding':key,'candidate_hash':canonical_hash(execution.compiled.state)},
                 stage='compiled_unsubmitted')
-            record.pop('compile_issues',None)
+            execution.state.pop('compile_issues',None)
             save()
-        ctx.candidate,ctx.last_compiled_patch=repair.state,repair
-        return repair
+        ctx.candidate,ctx.last_compiled_patch=execution.compiled.state,execution.compiled
+        return execution.compiled
 
     def record_complete_draft_action(raw):
         # Save draft and completion intent together, including an empty version zero.
         draft_context(raw)
-        if record.get('attempted_patch') != raw:
+        if execution.state.get('attempted_patch') != raw:
             for key in ('preview','patch','patch_hash','candidate_hash','review','review_candidate_hash'):
-                record.pop(key,None)
-        record.update(attempted_patch=deepcopy(raw), relation_draft_id=ctx.task_draft_id,
+                execution.state.pop(key,None)
+        execution.state.update(attempted_patch=deepcopy(raw), relation_draft_id=ctx.task_draft_id,
             complete_draft_action=canonical_hash(raw))
         save()
 
     def has_pending_draft_action(value):
-        return record.get('complete_draft_action')==canonical_hash(value.model_dump(mode='json',exclude_unset=True))
+        return execution.state.get('complete_draft_action')==canonical_hash(value.model_dump(mode='json',exclude_unset=True))
 
     def accept_compiled_draft(value):
         value=draft_model.model_validate(value)
-        repair=cached_preview(value)
-        if repair is None:
+        execution.compiled=cached_preview(value)
+        if execution.compiled is None:
             raise ValueError('DRAFT_NOT_COMPILED: compile the exact local draft before submission')
         raw=value.model_dump(mode='json',exclude_unset=True)
-        record.update(patch=raw,patch_hash=canonical_hash(raw),candidate_hash=canonical_hash(repair.state),stage='assessing')
-        record.pop('complete_draft_action',None)
+        execution.state.update(patch=raw,patch_hash=canonical_hash(raw),candidate_hash=canonical_hash(execution.compiled.state),stage='assessing')
+        execution.state.pop('complete_draft_action',None)
         save()
-        return repair
+        return execution.compiled
 
-    try:
-        ctx.task_before = intermediate
-        ctx.task_identity_groups = []
-        ctx.node_local_compile = False
-        ctx.active_task = relation_task
-        ctx.task_visible_ids = set(related)
-        ctx.read_ids = set(original.get('read_ids', ()))
-        ctx.task_relevant_facts = ()
-        ctx.task_semantic_issues = ()
-        ctx.task_semantic_issue_basis = ()
-        ctx.task_required_context = ()
-        ctx.task_draft_errors = ()
-        ctx.task_draft_errors_draft_id = None
-        ctx.task_candidate_draft_id = None
-        ctx.task_draft_id = None
-        ctx.active_draft = None
+    ctx.task_before = intermediate
+    ctx.task_identity_groups = []
+    ctx.node_local_compile = False
+    ctx.active_task = relation_task
+    ctx.task_visible_ids = set(related)
+    ctx.task_relevant_facts = ()
+    ctx.task_semantic_issues = ()
+    ctx.task_semantic_issue_basis = ()
+    ctx.task_required_context = ()
+    ctx.task_draft_errors = ()
+    ctx.task_draft_errors_draft_id = None
+    ctx.task_candidate_draft_id = None
+    ctx.task_draft_id = None
+    ctx.active_draft = None
 
-        ctx.record_task_draft, ctx.record_task_error = record_draft, record_error
-        if recovery_load:
-            ctx.load_task_recovery = lambda key: preserving_local(recovery_load, prefix + key)
-        if recovery_store:
-            ctx.record_task_recovery = lambda key, value: preserving_local(recovery_store, prefix + key, value)
-        if getattr(engine.agent, 'relation_merger_contract', False):
-            from cortex.capabilities.graph_merge.reconciliation.relation_merger import consolidate_relations, relation_groups
-            groups = relation_groups(intermediate, focus_ids=related)
-            if groups:
-                def save_merger(checkpoint):
-                    record['relation_merger'] = checkpoint
-                    save()
-                preview = consolidate_relations(engine.agent, ctx, intermediate,
-                    checkpoint=record.get('relation_merger'), save=save_merger,
-                    batch_size=getattr(engine.agent, 'relation_merger_batch_size', 10),
-                    validate=False, focus_ids=related)
-                proposed = [{**group, 'description': preview.checkpoint['results'][group['group_id']]}
-                            for group in groups]
-                checks.append({'id': 'node-relation-content:' + canonical_hash(proposed)[:20],
-                    'kind': 'node_relation_followup', 'mode': 'required',
-                    'node_ids': sorted({ident for group in groups for ident in (group['from_node_id'], group['to_node_id'])}),
-                    'edge_ids': sorted({ident for group in groups for ident in group['member_edge_ids']}),
-                    'observed': {'proposed_relation_merges': proposed},
-                    'required_outcome': 'Apply the normalized relation descriptions and consolidation in this same transaction while preserving all supported business knowledge and fixed branch scopes.'})
-        payload = relation_context(ctx, intermediate, relation_task)
-        payload['node_relation_obligations'] = {key:value for key,value in obligations.items() if key not in {'original_edges','original_targets'}}
-        ctx.compile_task_patch = compile_value
-        if canonical_relation:
-            ctx.preview_task_draft,ctx.accept_compiled_draft=preview_draft,accept_compiled_draft
-            ctx.record_complete_draft_action=record_complete_draft_action
-            ctx.has_pending_draft_action=has_pending_draft_action
-            ctx.get_task_compilation=cached_preview
-        ctx.output_validator = compile_value
-        save()
-        for _ in range(8):
-            ctx.active_task=relation_task
-            ctx.task_semantic_issues=tuple(record.get('semantic_issues',()))
-            if record.get('semantic_issues'):
-                payload['semantic_issues']=record['semantic_issues']
-            if record.get('patch') is not None:
-                raw=record['patch']
-                if record.get('patch_hash')!=canonical_hash(raw):
-                    raise ValueError('Saved relation draft hash mismatch')
-                repair=compile_value(draft_model.model_validate(raw),persist=False)
-                if record.get('candidate_hash')!=canonical_hash(repair.state):
-                    raise ValueError('Saved relation draft no longer compiles to its candidate')
-            else:
-                if record.get('attempted_patch') is not None:
-                    payload['draft']=record['attempted_patch']
-                    payload['draft_id']=record.get('relation_draft_id')
-                    if record.get('compile_issues'):
-                        payload['issues']=record['compile_issues']
-                value=engine.agent.invoke('reconcile',ctx,payload)
-                raw=value.model_dump(mode='json',exclude_unset=True)
-                if record.get('patch')!=raw:
-                    repair=compile_value(value)
-                else:
-                    repair=ctx.last_compiled_patch
-            candidate_hash=canonical_hash(repair.state)
-            review_task=LocalTask(relation_task.id+'-review','graph_assess',related,
-                checks=checks,feedback=[{'kind':'node_relation_obligations'}])
-            ctx.active_task=review_task
-            review_payload=relation_context(ctx,repair.state,review_task,before=intermediate,assessment=True)
-            review_payload['node_relation_obligations']={key:value for key,value in obligations.items() if key not in {'original_edges','original_targets'}}
-            if canonical_relation:
-                from cortex.capabilities.graph_merge.reconciliation.agent import prepare_runtime
-                prepare_runtime(engine.agent,'graph_assess',ctx,review_payload,fresh=True)
-            if record.get('review') is not None:
-                if record.get('review_candidate_hash')!=candidate_hash:
-                    raise ValueError('Saved relation assessment addresses another candidate')
-                review=validate_review(review_model.model_validate(record['review']),ctx,before=intermediate,candidate=repair.state)
-            else:
-                ctx.output_validator=lambda review:validate_review(review,ctx,before=intermediate,candidate=repair.state)
-                review=engine.agent.invoke('graph_assess',ctx,review_payload)
-                review=validate_review(review,ctx,before=intermediate,candidate=repair.state)
-                record.update(review=review.model_dump(mode='json'),review_candidate_hash=candidate_hash,
-                    stage='accepted' if review.verdict=='accept' else 'assessment_rejected')
+    ctx.record_task_draft, ctx.record_task_error = record_draft, record_error
+    if recovery_load:
+        ctx.load_task_recovery = lambda key: recovery_load(prefix + key)
+    if recovery_store:
+        ctx.record_task_recovery = lambda key, value: recovery_store(prefix + key, value)
+    if getattr(engine.agent, 'relation_merger_contract', False):
+        from cortex.capabilities.graph_merge.reconciliation.relation_merger import consolidate_relations, relation_groups
+        groups = relation_groups(intermediate, focus_ids=related)
+        if groups:
+            def save_merger(checkpoint):
+                execution.state['relation_merger'] = checkpoint
                 save()
-            if review.verdict=='accept':
-                break
-            # Keep feedback inside this unpublished transaction. No stage routing
-            # and no loss of the old candidate or diagnostics in the checkpoint.
-            signature=canonical_hash({'candidate':candidate_hash,'review':review.model_dump(mode='json')})
-            previous=record.get('feedback_gate',{})
-            repeats=previous.get('occurrences',0)+1 if previous.get('signature')==signature else 1
-            record['feedback_gate']={'signature':signature,'occurrences':repeats}
-            record.setdefault('assessment_history',[]).append(deepcopy(record['review']))
-            record['semantic_issues']=[issue.model_dump(mode='json') for issue in review.issues]
-            if repeats>=2:
-                save()
-                raise IntegrationIncomplete('Unchanged local relation candidate and feedback repeated; checkpoint retained')
-            for key in ('patch','patch_hash','review','review_candidate_hash'):
-                record.pop(key,None)
-            record['stage']='writing'
-            save()
+            preview = consolidate_relations(engine.agent, ctx, intermediate,
+                checkpoint=execution.state.get('relation_merger'), save=save_merger,
+                batch_size=getattr(engine.agent, 'relation_merger_batch_size', 10),
+                validate=False, focus_ids=related)
+            proposed = [{**group, 'description': preview.checkpoint['results'][group['group_id']]}
+                        for group in groups]
+            checks.append({'id': 'node-relation-content:' + canonical_hash(proposed)[:20],
+                'kind': 'node_relation_followup', 'mode': 'required',
+                'node_ids': sorted({ident for group in groups for ident in (group['from_node_id'], group['to_node_id'])}),
+                'edge_ids': sorted({ident for group in groups for ident in group['member_edge_ids']}),
+                'observed': {'proposed_relation_merges': proposed},
+                'required_outcome': 'Apply the normalized relation descriptions and consolidation in this same transaction while preserving all supported business knowledge and fixed branch scopes.'})
+    execution.payload = relation_context(ctx, intermediate, relation_task)
+    execution.payload['node_relation_obligations'] = {key:value for key,value in obligations.items() if key not in {'original_edges','original_targets'}}
+    ctx.compile_task_patch = compile_value
+    if canonical_relation:
+        ctx.preview_task_draft,ctx.accept_compiled_draft=preview_draft,accept_compiled_draft
+        ctx.record_complete_draft_action=record_complete_draft_action
+        ctx.has_pending_draft_action=has_pending_draft_action
+        ctx.get_task_compilation=cached_preview
+    ctx.output_validator = compile_value
+    save()
+    for _ in range(8):
+        ctx.active_task=relation_task
+        ctx.task_semantic_issues=tuple(execution.state.get('semantic_issues',()))
+        if execution.state.get('semantic_issues'):
+            execution.payload['semantic_issues']=execution.state['semantic_issues']
+        if execution.state.get('patch') is not None:
+            raw=execution.state['patch']
+            if execution.state.get('patch_hash')!=canonical_hash(raw):
+                raise ValueError('Saved relation draft hash mismatch')
+            execution.compiled=compile_value(draft_model.model_validate(raw),persist=False)
+            if execution.state.get('candidate_hash')!=canonical_hash(execution.compiled.state):
+                raise ValueError('Saved relation draft no longer compiles to its candidate')
         else:
-            raise IntegrationIncomplete('Local relation feedback exceeded eight revisions; checkpoint retained')
-        record['stage'] = 'accepted'
+            if execution.state.get('attempted_patch') is not None:
+                execution.payload['draft']=execution.state['attempted_patch']
+                execution.payload['draft_id']=execution.state.get('relation_draft_id')
+                if execution.state.get('compile_issues'):
+                    execution.payload['issues']=execution.state['compile_issues']
+            value=engine.agent.invoke('reconcile',ctx,execution.payload)
+            raw=value.model_dump(mode='json',exclude_unset=True)
+            if execution.state.get('patch')!=raw:
+                execution.compiled=compile_value(value)
+            else:
+                execution.compiled=ctx.last_compiled_patch
+        candidate_hash=canonical_hash(execution.compiled.state)
+        review_task=LocalTask(relation_task.id+'-review','graph_assess',related,
+            checks=checks,feedback=[{'kind':'node_relation_obligations'}])
+        ctx.active_task=review_task
+        review_payload=relation_context(ctx,execution.compiled.state,review_task,before=intermediate,assessment=True)
+        review_payload['node_relation_obligations']={key:value for key,value in obligations.items() if key not in {'original_edges','original_targets'}}
+        if canonical_relation:
+            from cortex.capabilities.graph_merge.reconciliation.agent import prepare_runtime
+            prepare_runtime(engine.agent,'graph_assess',ctx,review_payload,fresh=True)
+        if execution.state.get('review') is not None:
+            if execution.state.get('review_candidate_hash')!=candidate_hash:
+                raise ValueError('Saved relation assessment addresses another candidate')
+            review=validate_review(review_model.model_validate(execution.state['review']),ctx,before=intermediate,candidate=execution.compiled.state)
+        else:
+            ctx.output_validator=lambda review:validate_review(review,ctx,before=intermediate,candidate=execution.compiled.state)
+            review=engine.agent.invoke('graph_assess',ctx,review_payload)
+            review=validate_review(review,ctx,before=intermediate,candidate=execution.compiled.state)
+            execution.state.update(review=review.model_dump(mode='json'),review_candidate_hash=candidate_hash,
+                stage='accepted' if review.verdict=='accept' else 'assessment_rejected')
+            save()
+        if review.verdict=='accept':
+            break
+        # Keep feedback inside this unpublished transaction. No stage routing
+        # and no loss of the old candidate or diagnostics in the checkpoint.
+        signature=canonical_hash({'candidate':candidate_hash,'review':review.model_dump(mode='json')})
+        previous=execution.state.get('feedback_gate',{})
+        repeats=previous.get('occurrences',0)+1 if previous.get('signature')==signature else 1
+        execution.state['feedback_gate']={'signature':signature,'occurrences':repeats}
+        execution.state.setdefault('assessment_history',[]).append(deepcopy(execution.state['review']))
+        execution.state['semantic_issues']=[issue.model_dump(mode='json') for issue in review.issues]
+        if repeats>=2:
+            save()
+            raise IntegrationIncomplete('Unchanged local relation candidate and feedback repeated; checkpoint retained')
+        for key in ('patch','patch_hash','review','review_candidate_hash'):
+            execution.state.pop(key,None)
+        execution.state['stage']='writing'
         save()
-        return _compose(error, repair), deepcopy(record)
-    finally:
-        ctx.__dict__.clear()
-        ctx.__dict__.update(original)
+    else:
+        raise IntegrationIncomplete('Local relation feedback exceeded eight revisions; checkpoint retained')
+    execution.state['stage'] = 'accepted'
+    save()
+    return _compose(error, execution.compiled), deepcopy(execution.state)
