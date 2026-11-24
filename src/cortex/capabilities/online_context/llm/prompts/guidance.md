@@ -51,10 +51,12 @@ or use one included Rule to justify another conflicting Rule. Check included
 Rules together as well as individually; incompatible actions cannot both become
 instructions. Explain the concrete mismatch in the exclusion reason.
 
-For an included Rule, copy its original `action` unchanged into `instruction`.
-Keep generic actions generic. Do not fill placeholders, specialize a formula,
-substitute task literals, or combine Rules into a new action. If it cannot be
-used as written, exclude it with a short reason and an empty instruction.
+For each Rule, return only its supplied short `rule_id`, `include` and `reason`.
+The Controller restores the real ID and copies the original `action` unchanged
+into the downstream instruction for an included Rule. Do not emit `instruction`
+or a rewritten action. Keep generic actions generic. Do not fill placeholders,
+specialize a formula, substitute task literals, or combine Rules into a new
+action. If a Rule cannot be used as written, exclude it with a short reason.
 Exclusion is task-local; it does not declare the stored Rule invalid.
 
 # Preserve scope
