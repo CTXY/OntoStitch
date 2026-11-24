@@ -9,7 +9,7 @@ from graph_merge_runtime_fixtures import engine_for
 from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
 from cortex.capabilities.graph_merge.consolidation.review import Review
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import (
     ContractVersions,
     TaskState,

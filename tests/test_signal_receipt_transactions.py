@@ -9,7 +9,7 @@ from graph_merge_chat import ScriptedModel
 from graph_merge_runtime_fixtures import engine_for
 
 from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
@@ -49,7 +49,7 @@ def test_noop_accept_saves_per_check_receipts_in_graph_commit(tmp_path):
     assert len(saved['signal_receipts'])==2
     assert len(saved['history'])==1
     assert all(row['candidate_hash']==saved['history'][0]['candidate_hash'] for row in saved['signal_receipts'])
-    assert is_accepted(engine,check('A')) and is_accepted(engine,check('B'))
+    assert is_accepted((engine).session,check('A')) and is_accepted((engine).session,check('B'))
 
 
 def test_same_check_id_cannot_silently_overwrite_different_obligation(tmp_path):
@@ -76,7 +76,7 @@ def test_failed_commit_rolls_back_receipts_and_resumes_without_model_calls(tmp_p
     # Scripted replies have already been exhausted: replaying either model fails.
     run(engine)
     assert len(engine.session.history)==1 and len(engine.session.signal_receipts)==1
-    assert is_accepted(engine,check())
+    assert is_accepted((engine).session,check())
 
 
 def test_process_restart_after_commit_needs_no_scheduler_coverage_save(tmp_path,monkeypatch):
@@ -111,18 +111,18 @@ def test_regrouping_filters_accepted_check_before_creating_new_task(tmp_path,mon
     assert len(observed)==1
     assert observed[0].checks==[check('B')]
     assert observed[0].id.startswith('structure-')
-    assert is_accepted(engine,check('A')) and is_accepted(engine,check('B'))
+    assert is_accepted((engine).session,check('A')) and is_accepted((engine).session,check('B'))
 
 
 def test_changed_premise_and_changed_required_outcome_are_not_suppressed(tmp_path):
     engine=make_engine(tmp_path)
     run(engine)
     changed=deepcopy(check());changed['observed']['required_outcome']='A new explicit obligation'
-    assert not is_accepted(engine,changed)
+    assert not is_accepted((engine).session,changed)
     original=engine.session.current
     engine.session.current=original.model_copy(update={'graph':original.graph.model_copy(update={'nodes':tuple(
         n.model_copy(update={'description':'A new relevant condition'}) if n.id=='A' else n for n in original.graph.nodes)})})
-    assert not is_accepted(engine,check())
+    assert not is_accepted((engine).session,check())
 
 
 def test_changed_premise_really_runs_writer_and_assessment_again(tmp_path,monkeypatch):
@@ -142,7 +142,7 @@ def test_changed_premise_really_runs_writer_and_assessment_again(tmp_path,monkey
     engine._run_task=capture
     engine._reconcile('run',initial_targets={'A'})
     assert len(observed)==1 and observed[0].checks==[check()]
-    assert len(engine.session.signal_receipts)==2 and is_accepted(engine,check())
+    assert len(engine.session.signal_receipts)==2 and is_accepted((engine).session,check())
 
 
 def test_signal_closed_by_previous_queued_task_is_not_sent_to_models(tmp_path,monkeypatch):
@@ -158,8 +158,8 @@ def test_signal_closed_by_previous_queued_task_is_not_sent_to_models(tmp_path,mo
     monkeypatch.setattr('cortex.capabilities.graph_merge.engine.review_batches',
         lambda current,checks,**kwargs:[(set(c['node_ids']),[c]) for c in checks])
     engine._reconcile('run',initial_targets={'A','B'})
-    assert len(engine.session.history)==1 and is_accepted(engine,check('A'))
-    assert not is_accepted(engine,check('B'))
+    assert len(engine.session.history)==1 and is_accepted((engine).session,check('A'))
+    assert not is_accepted((engine).session,check('B'))
 
 
 def test_acceptance_is_bound_to_after_not_fixed_before(tmp_path):
@@ -171,9 +171,9 @@ def test_acceptance_is_bound_to_after_not_fixed_before(tmp_path):
     before=engine.session.current
     run(engine)
     after=engine.session.current
-    assert after!=before and is_accepted(engine,check())
+    assert after!=before and is_accepted((engine).session,check())
     engine.session.current=before
-    assert not is_accepted(engine,check())
+    assert not is_accepted((engine).session,check())
     engine.session.current=after
 
 
@@ -198,7 +198,7 @@ def test_legacy_absence_is_not_fabricated_from_old_batch_coverage(tmp_path):
     legacy=store.load('run')
     assert 'signal_receipts' not in legacy
     engine.session.signal_receipts=[]
-    assert not is_accepted(engine,check())
+    assert not is_accepted((engine).session,check())
 
 
 def test_new_checkpoint_cannot_silently_lose_entire_ledger(tmp_path):

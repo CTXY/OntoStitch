@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.schema import GraphEdge, GraphNode, GraphSpace, GraphState, load_root_schema

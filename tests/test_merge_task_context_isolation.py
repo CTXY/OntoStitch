@@ -5,7 +5,7 @@ import pytest
 
 from graph_merge_fixtures import catalog, concept, edge, state
 from graph_merge_runtime_fixtures import prepare
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.context import fork_task_context
 from cortex.capabilities.graph_merge.reconciliation.permissions import ReconciliationRuntime
 

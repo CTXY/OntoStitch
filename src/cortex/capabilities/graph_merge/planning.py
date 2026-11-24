@@ -1,9 +1,12 @@
 """Plan complete node groups and indivisible local relation checks."""
+
 from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 
+
 def _nodes(state):
     return {n.id: n for n in state.graph.nodes}
+
 
 def active_identity_projection(current, aliases, lineage):
     """Project live members only; retain recorded earlier structural rewrites.
@@ -29,6 +32,7 @@ def active_identity_projection(current, aliases, lineage):
                 f"Matched member {source} is absent without a recorded rewrite to {target}"
             )
     return active
+
 
 def identity_task_projection(current, aliases, lineage):
     """Keep ordinary aliases; route rewritten groups to explicit Agent review.
@@ -68,18 +72,23 @@ def identity_task_projection(current, aliases, lineage):
         ]
         return {}, set().union(*(set(v) for v in locations.values())), feedback
 
+
 def _signal_targets(check, state):
     edges = {e.id: e for e in state.graph.edges}
-    keys = set(check.get('node_ids', ())) | set(check.get('edge_ids', ()))
-    keys |= {x.get('concept') for x in check.get('members', ())}
-    for eid in check.get('edge_ids', ()):
+    keys = set(check.get("node_ids", ())) | set(check.get("edge_ids", ()))
+    keys |= {x.get("concept") for x in check.get("members", ())}
+    for eid in check.get("edge_ids", ()):
         if eid in edges:
             keys.update((edges[eid].from_node_id, edges[eid].to_node_id))
-    if check.get('kind') == 'source_selection_variants':
-        operands = set(check.get('node_ids', ()))
-        keys.update(e.from_node_id for e in edges.values()
-                    if e.edge_type == 'applies_to' and e.to_node_id in operands)
+    if check.get("kind") == "source_selection_variants":
+        operands = set(check.get("node_ids", ()))
+        keys.update(
+            e.from_node_id
+            for e in edges.values()
+            if e.edge_type == "applies_to" and e.to_node_id in operands
+        )
     return {k for k in keys if k in _nodes(state) or k in edges}
+
 
 def review_batches(state, *, targets=None, checks=(), budget=14000, signals_only=False):
     """Bound root definitions, keeping each supplied inspection indivisible.

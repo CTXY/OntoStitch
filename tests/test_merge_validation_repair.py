@@ -54,7 +54,7 @@ def test_noop_contract_repair_stops_without_repeating_model_tasks():
 
 def test_grounding_deletion_assessment_shows_the_remaining_canonical_owner():
     from cortex.capabilities.graph_merge.reconciliation.context import relation_context
-    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+    from cortex.capabilities.graph_merge.models import LocalTask
     engine = engine_with_contested_binding()
     before = engine.session.current
     after = before.model_copy(update={"graph": before.graph.model_copy(update={

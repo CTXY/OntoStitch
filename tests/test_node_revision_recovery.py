@@ -3,7 +3,7 @@ from graph_merge_fixtures import catalog, concept, state
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import TaskState
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore

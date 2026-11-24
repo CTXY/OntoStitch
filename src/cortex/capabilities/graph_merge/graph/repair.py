@@ -23,7 +23,7 @@ def validation_targets(state, issues):
         collect(issue.details)
         for prefix, objects in (("nodes.", nodes), ("edges.", edges)):
             if issue.path.startswith(prefix):
-                path = issue.path[len(prefix):]
+                path = issue.path[len(prefix) :]
                 matches = [k for k in objects if path == k or path.startswith(k + ".")]
                 if matches:
                     targets.add(max(matches, key=len))

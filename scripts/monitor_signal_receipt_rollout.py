@@ -38,7 +38,7 @@ def refresh(report, roots):
         rows[plan['database']]={'status':status['status'],'batch':batch,
             'merged_cases':status.get('merged_cases'),'total_cases':status.get('total_cases'),
             'accepted_tasks':len(cp['history']),'pending_task':task.get('task_id'),
-            'stage':task.get('stage'),'accepted_receipts':len(receipts),'scope_compatibility_proofs':len(cp.get('signal_scope_migrations',[])),
+            'stage':task.get('stage'),'accepted_receipts':len(receipts),
             'distinct_receipt_checks':len({r['check_key'] for r in receipts}),
             'credential_pool':status.get('credential_pool'),
             'active_key_slot':(status.get('used_anonymous_key_slots') or [None])[-1],

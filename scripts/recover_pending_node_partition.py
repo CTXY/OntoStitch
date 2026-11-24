@@ -91,7 +91,7 @@ def repair(source, destination, *, run_id):
     revised['task_state'] = TaskState.from_dict(task).to_dict()
     revised['pending_review'] = revised['pending_relation_work'] = None
     revised['final'] = False
-    for key in ('current', 'history', 'lineage', 'signal_receipts', 'signal_scope_migrations', 'reviewed_sources', 'input_fingerprint', 'accepted_revision'):
+    for key in ('current', 'history', 'lineage', 'signal_receipts', 'reviewed_sources', 'input_fingerprint', 'accepted_revision'):
         if revised.get(key) != original.get(key):
             raise ValueError('Recovery changed accepted progress: ' + key)
     destination.parent.mkdir(parents=True, exist_ok=True)

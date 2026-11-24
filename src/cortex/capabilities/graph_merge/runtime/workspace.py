@@ -45,23 +45,38 @@ def _normalize(payload):
         if not isinstance(value, (list, tuple)):
             raise TypeError(f"Workspace {key} must be a list")
         normalized[key] = list(value)
-    if 'signal_receipts' in payload:
-        from cortex.capabilities.graph_merge.reconciliation.ledger import validate_receipt_ledger
-        normalized['signal_receipts'] = validate_receipt_ledger(
-            payload['signal_receipts'], history=normalized['history'], current=normalized['current'])
-    elif any('reconciliation_receipt_policy_hash' in h for h in normalized['history']):
-        raise ValueError('Missing receipt ledger for a workspace with accepted reconciliation receipts')
+    if "signal_receipts" in payload:
+        from cortex.capabilities.graph_merge.reconciliation.receipts import (
+            validate_receipt_ledger,
+        )
+
+        normalized["signal_receipts"] = validate_receipt_ledger(
+            payload["signal_receipts"],
+            history=normalized["history"],
+            current=normalized["current"],
+        )
+    elif any("reconciliation_receipt_policy_hash" in h for h in normalized["history"]):
+        raise ValueError(
+            "Missing receipt ledger for a workspace with accepted reconciliation receipts"
+        )
 
     if payload.get("task_state") is not None:
-        from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash
+        from cortex.capabilities.graph_merge.runtime.state import (
+            TaskState,
+            canonical_hash,
+        )
 
         task = TaskState.from_dict(payload["task_state"])
         normalized["task_state"] = task.to_dict()
         if payload.get("contract_versions") != task.versions.to_dict():
             raise ValueError("Task and workspace contracts differ")
-        expected_graph = task.candidate_hash if task.stage == "committed" else task.base_hash
+        expected_graph = (
+            task.candidate_hash if task.stage == "committed" else task.base_hash
+        )
         if canonical_hash(normalized["current"]) != expected_graph:
-            raise ValueError("Task state does not belong to the accepted workspace graph")
+            raise ValueError(
+                "Task state does not belong to the accepted workspace graph"
+            )
     return normalized
 
 

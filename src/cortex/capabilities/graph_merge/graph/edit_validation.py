@@ -1,8 +1,10 @@
 """Validate complete graph edit payloads before applying a local transaction."""
+
 from cortex.application.ontology_graph import GraphManager
 from cortex.schema import GraphEdge, GraphNode
 from cortex.schema.semantic_validation import validate_semantic_properties
 from cortex.schema.validation import _validate_properties
+
 
 def edit_key(edit):
     kind = (
@@ -69,4 +71,3 @@ def content_errors(edits, schema):
                 }
             )
     return errors
-

@@ -3,6 +3,7 @@
 
 class SourceCoverageError(ValueError):
     """Preserve the existing error text and expose actionable source/owner data."""
+
     def __init__(self, message, *, before, after, missing):
         super().__init__(message)
         self.before = before
@@ -14,7 +15,12 @@ def element_sources(obj, alternative_id=None):
     alternatives = getattr(obj, "alternatives", ())
     if alternative_id:
         from cortex.schema.graph import alternative_sources
-        return set(alternative_sources(obj, next(a for a in alternatives if a.alternative_id == alternative_id)))
+
+        return set(
+            alternative_sources(
+                obj, next(a for a in alternatives if a.alternative_id == alternative_id)
+            )
+        )
     return set(obj.sources) | {s for a in alternatives for s in a.sources}
 
 
@@ -43,8 +49,11 @@ def validate_rewrite_sources(context, proposal, preview):
         retained = set(getattr(obj, "common_sources", ()))
         dropped = set()
         for alternative in getattr(obj, "alternatives", ()):
-            (dropped if alternative.alternative_id in removed else retained).update(alternative.sources)
+            (dropped if alternative.alternative_id in removed else retained).update(
+                alternative.sources
+            )
         return refs - (dropped - retained)
+
     rewritten = {(ref.kind, ref.id) for c in proposal.changes for ref in c.before}
     for kind, originals, results, aliases in (
         ("node", context.raw_nodes, nodes, preview.node_map),
@@ -57,10 +66,12 @@ def validate_rewrite_sources(context, proposal, preview):
             missing = required_sources(original) - element_sources(results[target])
             if missing:
                 from cortex.capabilities.graph_merge.graph.edit_contract import Element
+
                 raise SourceCoverageError(
                     f"Direct {kind} mapping {key} loses exact SourceReferences; preserve them or record an explicit source disposition.",
                     before=(Element(kind=kind, id=key),),
-                    after=(Element(kind=kind, id=target),), missing=missing,
+                    after=(Element(kind=kind, id=target),),
+                    missing=missing,
                 )
     for index, change in enumerate(proposal.changes):
         if not change.after:
@@ -85,5 +96,7 @@ def validate_rewrite_sources(context, proposal, preview):
                 f"{[s.model_dump(mode='json') for s in sorted(missing, key=lambda s: s.model_dump_json())]}. "
                 "Name the actual surviving assertions and preserve their relevant sources; "
                 "do not propagate sources to unrelated facts.",
-                before=change.before, after=change.after, missing=missing,
+                before=change.before,
+                after=change.after,
+                missing=missing,
             )

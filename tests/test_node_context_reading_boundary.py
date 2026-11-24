@@ -4,7 +4,8 @@ from graph_merge_fixtures import catalog, concept, state
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.consolidation.context import compact_task_context
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask, build_task_context
+from cortex.capabilities.graph_merge.models import LocalTask
+from cortex.capabilities.graph_merge.consolidation.task_context import build_task_context
 from cortex.schema import load_root_schema
 
 

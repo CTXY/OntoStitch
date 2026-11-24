@@ -84,7 +84,7 @@ def test_assessment_sees_self_edge_and_cannot_accept_it_before_writer_repairs(tm
     from graph_merge_runtime_fixtures import engine_for
     from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
     from cortex.capabilities.graph_merge.consolidation.review import Review
-    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+    from cortex.capabilities.graph_merge.models import LocalTask
     from cortex.capabilities.graph_merge.runtime.state import TaskState
     from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
     from cortex.capabilities.graph_merge.consolidation.presentation import build_node_packet

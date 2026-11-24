@@ -52,12 +52,11 @@ def inspection_signals(context, preview, *, origins=None):
 
     def add(kind, keys, *, ordered=False, **details):
         from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+
         # Ordered paths/pairs are directional identities. Hash structured data,
         # so legal IDs containing commas cannot alias a different path.
-        identity = canonical_hash(list(keys)) if ordered else ','.join(sorted(keys))
-        signals.append(
-            {"id": kind + ":" + identity, "kind": kind, **details}
-        )
+        identity = canonical_hash(list(keys)) if ordered else ",".join(sorted(keys))
+        signals.append({"id": kind + ":" + identity, "kind": kind, **details})
 
     owners = defaultdict(set)
     for edge in preview.state.graph.edges:
@@ -80,9 +79,13 @@ def inspection_signals(context, preview, *, origins=None):
                 [endpoint],
                 node_ids=sorted(claimants),
                 physical_id=endpoint,
-                edge_ids=sorted(e.id for e in preview.state.graph.edges
-                    if e.edge_type == "grounded_on" and e.to_node_id == endpoint
-                    and e.from_node_id in claimants),
+                edge_ids=sorted(
+                    e.id
+                    for e in preview.state.graph.edges
+                    if e.edge_type == "grounded_on"
+                    and e.to_node_id == endpoint
+                    and e.from_node_id in claimants
+                ),
             )
     pairs = defaultdict(list)
     neighbors = defaultdict(list)
@@ -98,11 +101,11 @@ def inspection_signals(context, preview, *, origins=None):
         # do not compete with each other.
         related = set()
         for index, left in enumerate(group):
-            for right in group[index + 1:]:
+            for right in group[index + 1 :]:
                 if left.edge_type != right.edge_type:
                     continue
-                ls = set(left.properties.get('alternative_ids', ()))
-                rs = set(right.properties.get('alternative_ids', ()))
+                ls = set(left.properties.get("alternative_ids", ()))
+                rs = set(right.properties.get("alternative_ids", ()))
                 if ls and rs and not ls & rs:
                     continue
                 related.update((left.id, right.id))
@@ -119,7 +122,13 @@ def inspection_signals(context, preview, *, origins=None):
                     [e.id, second.id, *[d.id for d in direct]]
                 )
     for chain, ids in sorted(triangles.items()):
-        add("triangle", list(chain), ordered=True, node_ids=list(chain), edge_ids=sorted(ids))
+        add(
+            "triangle",
+            list(chain),
+            ordered=True,
+            node_ids=list(chain),
+            edge_ids=sorted(ids),
+        )
     for (owner, predicate), group in sorted(neighbors.items()):
         if (
             nodes[owner].node_type in {"concept", "event"}
@@ -149,16 +158,28 @@ def inspection_signals(context, preview, *, origins=None):
             )
     # Evidence differences are derived from the current graph alone. No
     # archived source-node graph, alias projection or historical target is read.
-    choices=defaultdict(dict)
+    choices = defaultdict(dict)
     for evidence in context.evidence:
-        selected=projected_columns(evidence.content.get('sql',''),nodes,getattr(context,'sql_dialect',None))
-        if not selected:continue
+        selected = projected_columns(
+            evidence.content.get("sql", ""),
+            nodes,
+            getattr(context, "sql_dialect", None),
+        )
+        if not selected:
+            continue
         for node in nodes.values():
-            if node.node_type!='concept' or evidence.source not in node.sources:continue
-            refs={ref for group in node.properties.get('targets',[]) for ref in group}
-            chosen=selected & refs
-            if chosen:choices[node.id][evidence.id]={'node_id':node.id,
-                'selected_physical_inputs':sorted(chosen),'evidence_id':evidence.id}
+            if node.node_type != "concept" or evidence.source not in node.sources:
+                continue
+            refs = {
+                ref for group in node.properties.get("targets", []) for ref in group
+            }
+            chosen = selected & refs
+            if chosen:
+                choices[node.id][evidence.id] = {
+                    "node_id": node.id,
+                    "selected_physical_inputs": sorted(chosen),
+                    "evidence_id": evidence.id,
+                }
     for canonical, variants in sorted(choices.items()):
         if len({tuple(v["selected_physical_inputs"]) for v in variants.values()}) > 1:
             add(

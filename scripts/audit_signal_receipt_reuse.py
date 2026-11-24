@@ -48,7 +48,6 @@ def audit(root, *, batch=None):
     engine.session.inputs=context;engine.session.current=GraphState.model_validate(cp['current'])
     engine.session.contract_versions=ContractVersions.from_dict(cp['contract_versions'])
     engine.session.signal_receipts=deepcopy(cp.get('signal_receipts',[]))
-    engine.signal_scope_migrations=deepcopy(cp.get('signal_scope_migrations',[]))
     engine.session.history=deepcopy(cp['history']);engine.session.lineage=LineageIndex.restore(context,cp['lineage'])
     engine.session.task_state=None;engine.session.relation_followups=[];engine.session.open_tasks=[]
     latest={row['check_key']:row for row in engine.session.signal_receipts}
@@ -59,16 +58,15 @@ def audit(root, *, batch=None):
     for row in latest.values():
         original=row['check'];current=detected.get(original.get('id'))
         if original['kind'] in SIGNALS and current is not None:
-            if is_accepted(engine,current):checks.append(current)
-            elif is_accepted(engine,original):stale.append(original.get('id'))
+            if is_accepted((engine).session,current):checks.append(current)
+            elif is_accepted((engine).session,original):stale.append(original.get('id'))
             else:changed.append(original.get('id'))
-        elif is_accepted(engine,original):
+        elif is_accepted((engine).session,original):
             checks.append(original);closed.append(original.get('id'))
     result={'audit_protocol':2,'checked_at':datetime.now(timezone.utc).isoformat(),'database':plan['database'],
         'batch':index,'accepted_receipts':len(engine.session.signal_receipts),'matching_current_checks':len(checks),
         'check_ids':[c.get('id') for c in checks],'snapshot_revision':cp['revision'],
         'live_checkpoint_mutated':False,'provider_calls':0,
-        'scope_compatibility_proofs':len(engine.signal_scope_migrations),
         'stale_accepted_manifests':stale,'changed_premises_recheck_expected':changed,
         'closed_or_explicit_obligation_receipts':closed}
     if stale:
@@ -100,7 +98,7 @@ def audit(root, *, batch=None):
     extra=GraphNode(id='receipt.audit.unrelated',node_type='concept',name='Read-only audit control',
         properties={'definition':'An isolated control outside every check.'})
     engine.session.current=original.model_copy(update={'graph':original.graph.model_copy(update={'nodes':(*original.graph.nodes,extra)})})
-    assert all(is_accepted(engine,c) for c in checks)
+    assert all(is_accepted((engine).session,c) for c in checks)
     engine.session.current=original
     c=checks[0]
     anchors=_signal_targets(c,original)
@@ -108,7 +106,7 @@ def audit(root, *, batch=None):
     changed=selected.model_copy(update={'description':(selected.description or '')+' [Detached relevant-condition control] '})
     engine.session.current=original.model_copy(update={'graph':original.graph.model_copy(update={'nodes':tuple(
         changed if n.id==selected.id else n for n in original.graph.nodes)})})
-    assert not is_accepted(engine,c)
+    assert not is_accepted((engine).session,c)
     result.update(status='passed',regrouping_scheduler_task_calls=len(calls),
         accepted_history_unchanged=True,unrelated_change_reused=True,relevant_change_invalidated=True)
     return result

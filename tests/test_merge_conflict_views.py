@@ -4,7 +4,8 @@ from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask, build_task_context
+from cortex.capabilities.graph_merge.models import LocalTask
+from cortex.capabilities.graph_merge.consolidation.task_context import build_task_context
 from cortex.capabilities.graph_merge.llm.packets import compact_node_packet
 from cortex.schema import GraphSpace, GraphState, load_root_schema
 

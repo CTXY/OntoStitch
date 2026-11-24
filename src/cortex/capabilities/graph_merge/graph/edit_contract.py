@@ -10,14 +10,6 @@ from cortex.schema import NodeContent, SourceReference
 from cortex.schema.models import EdgeType
 
 
-
-
-
-
-
-
-
-
 class Element(Model):
     kind: Literal["node", "edge"]
     id: str
@@ -196,4 +188,7 @@ class CompleteAlternative(Model):
     alternative_id: str
     content: NodeContent
     sources: SkipJsonSchema[tuple[SourceReference, ...]] = ()
-    evidence_ids: tuple[str, ...] = Field(default=(), description="Existing alternative IDs retain exact sources when omitted. For new alternatives or additional support cite displayed evidence IDs, never reconstruct SourceReference objects.")
+    evidence_ids: tuple[str, ...] = Field(
+        default=(),
+        description="Existing alternative IDs retain exact sources when omitted. For new alternatives or additional support cite displayed evidence IDs, never reconstruct SourceReference objects.",
+    )

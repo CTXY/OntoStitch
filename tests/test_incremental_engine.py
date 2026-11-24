@@ -94,7 +94,7 @@ def test_no_edit_decision_judgment_skips_independent_assessment():
 
     from cortex.capabilities.graph_merge.inputs import IntegrationContext
     from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
-    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+    from cortex.capabilities.graph_merge.models import LocalTask
     from cortex.schema import GraphNode
 
     rules = [
@@ -175,7 +175,7 @@ def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
     from cortex.capabilities.graph_merge.inputs import IntegrationContext
     from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
     from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
-    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+    from cortex.capabilities.graph_merge.models import LocalTask
     from cortex.schema import GraphNode
 
     rule = GraphNode(

@@ -1,4 +1,5 @@
 """Publish one accepted graph with stable public IDs and exact provenance mappings."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,10 +7,20 @@ from dataclasses import dataclass
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 
-from cortex.application.merge_graph import CanonicalIdMapping, GraphMergeResult, MergeElementRef, StructuralRewrite
+from cortex.application.merge_graph import (
+    CanonicalIdMapping,
+    GraphMergeResult,
+    MergeElementRef,
+    StructuralRewrite,
+)
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, remap_node, remap_edge
+from cortex.capabilities.graph_merge.graph.operations import (
+    PHYSICAL,
+    remap_edge,
+    remap_node,
+)
 from cortex.schema import GraphState
+
 
 def assessed_semantic_content(state):
     """Compare effective assertions, preserving every partial branch scope."""
@@ -23,12 +34,17 @@ def assessed_semantic_content(state):
         alternatives = {a.alternative_id for a in nodes[edge.from_node_id].alternatives}
         # In this immutable snapshot, unscoped and explicitly all current
         # alternatives mean the same assertion. A subset is never erased.
-        if scope is not None and (not scope or alternatives and set(scope) == alternatives):
+        if scope is not None and (
+            not scope or alternatives and set(scope) == alternatives
+        ):
             data["properties"].pop("alternative_ids")
         assertions[edge.id] = data
     return (
-        {n.id: n.model_dump(mode="json", exclude={"sources"})
-         for n in state.graph.nodes if n.node_type not in PHYSICAL},
+        {
+            n.id: n.model_dump(mode="json", exclude={"sources"})
+            for n in state.graph.nodes
+            if n.node_type not in PHYSICAL
+        },
         assertions,
     )
 
@@ -107,7 +123,10 @@ def apply_merge_state(manager: GraphManager, state: GraphState, *, request_id: s
                 }
             )
             changed_owners.add(owner)
-    if not operations and state.graph.relation_contracts == before.graph.relation_contracts:
+    if (
+        not operations
+        and state.graph.relation_contracts == before.graph.relation_contracts
+    ):
         manager.validate_state(state)
         return before
     result = manager.apply(

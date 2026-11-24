@@ -1,4 +1,4 @@
-"""Exact presentation aliases preserve native receipts and checkpoint bindings."""
+"""Explicit presentation modes preserve exact graph identity without global mutation."""
 from copy import deepcopy
 from importlib.resources import files
 from types import SimpleNamespace
@@ -53,7 +53,7 @@ def test_aliases_only_group_ids_and_resumes_saved_result_without_model_call():
         invoke_relation_merger(agent, SimpleNamespace(evidence=()), original, checkpoint=saved[-1])
 
 
-def legacy(packet, *, result=False):
+def native_checkpoint(packet, *, result=False):
     system = files('cortex.capabilities.graph_merge.llm.prompts').joinpath('relation_merger/writer.en.md').read_text()
     cp = {'binding': canonical_hash({'system': system, 'packet': packet, 'schema': RelationResults.model_json_schema()}),
           'requests': 16, 'evidence': {}, 'feedback': {'error': 'Repeated long identifier typo'}}
@@ -63,16 +63,15 @@ def legacy(packet, *, result=False):
     return cp
 
 
-def test_failed_long_id_request_is_archived_but_completed_legacy_result_is_reused():
-    original = packet(); old = legacy(original); before = deepcopy(old)
+@pytest.mark.parametrize('completed', [False, True])
+def test_native_checkpoint_cannot_be_reinterpreted_as_local_ids(completed):
+    original = packet(); checkpoint = native_checkpoint(original, result=completed)
+    before = deepcopy(checkpoint)
     chat = Chat(); agent = SimpleNamespace(llm=chat, max_calls=3, request_max_characters=210000)
-    invoke = make_adapter(invoke_relation_merger); saved = []
-    invoke(agent, SimpleNamespace(evidence=()), original, checkpoint=old, save=saved.append)
-    assert old == before and saved[-1]['legacy_request_checkpoint'] == before
-    assert saved[-1]['requests'] == 1 and saved[-1]['legacy_request_checkpoint']['requests'] == 16
-    count = chat.calls
-    result = invoke(agent, SimpleNamespace(evidence=()), original, checkpoint=legacy(original, result=True))
-    assert chat.calls == count and result.results[0].description == 'Already accepted model output.'
+    with pytest.raises(ValueError, match='protocol or immutable manifest changed'):
+        make_adapter(invoke_relation_merger)(agent, SimpleNamespace(evidence=()), original,
+                                             checkpoint=checkpoint)
+    assert checkpoint == before and chat.calls == 0
 
 
 def test_manifest_changes_and_forged_original_hash_rejected_before_call():
@@ -96,11 +95,69 @@ def test_no_fuzzy_correction_of_unknown_local_result_id():
         make_adapter(wrong)(None, None, packet())
 
 
-def test_install_is_idempotent(monkeypatch):
-    from cortex.capabilities.graph_merge.llm import relation_merger
-    from cortex.capabilities.graph_merge.llm.relation_merger_ids import install
-    monkeypatch.setattr(relation_merger, 'invoke_relation_merger', lambda *a, **kw: None)
-    install()
-    first = relation_merger.invoke_relation_merger
-    install()
-    assert relation_merger.invoke_relation_merger is first
+def test_service_modes_are_explicit_isolated_and_preserve_sources_on_resume():
+    from test_relation_merger import fixture
+    from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
+    from cortex.capabilities.graph_merge.llm import relation_merger as native_module
+    from cortex.capabilities.graph_merge.reconciliation.relation_merger import consolidate_relations
+
+    graph, context = fixture()
+    original = graph.model_dump(mode='json')
+    native_function = native_module.invoke_relation_merger
+    local_chat, native_chat = Chat(), Chat()
+    local_agent = IncrementalIntegrationAgent(local_chat, relation_id_mode='local')
+    native_agent = IncrementalIntegrationAgent(native_chat)
+    assert native_agent.relation_id_mode == 'native'
+    saved = []
+    local = consolidate_relations(local_agent, context, graph, save=saved.append)
+    assert native_module.invoke_relation_merger is native_function
+    assert [group['group_id'] for group in local_chat.seen['groups']] == ['G1']
+    # The output and persisted service manifest always retain the original IDs.
+    assert all(key.startswith('relation-group:') for key in local.checkpoint['results'])
+    assert next(iter(local.checkpoint['batches'].values()))['local_id_protocol']['id_map']['G1'].startswith('relation-group:')
+    assert {source.source_id for edge in local.state.graph.edges for source in edge.sources} == {'first', 'second'}
+    resumed = consolidate_relations(local_agent, context, graph, checkpoint=saved[-1])
+    assert resumed.state == local.state and local_chat.calls == 1
+    native = consolidate_relations(native_agent, context, graph)
+    assert all(group['group_id'].startswith('relation-group:') for group in native_chat.seen['groups'])
+    assert native_module.invoke_relation_merger is native_function
+    assert not any('local_id_protocol' in cp for cp in native.checkpoint['batches'].values())
+    assert {source.source_id for edge in native.state.graph.edges for source in edge.sources} == {'first', 'second'}
+    assert graph.model_dump(mode='json') == original
+    with pytest.raises(ValueError, match='policy differs'):
+        consolidate_relations(native_agent, context, graph, checkpoint=local.checkpoint)
+    with pytest.raises(ValueError, match='policy differs'):
+        consolidate_relations(local_agent, context, graph, checkpoint=native.checkpoint)
+    assert local_chat.calls == native_chat.calls == 1
+
+
+def test_agent_rejects_unknown_relation_presentation_mode_before_model_call():
+    from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
+    with pytest.raises(ValueError, match='relation_id_mode must be native or local'):
+        IncrementalIntegrationAgent(Chat(), relation_id_mode='guess')
+
+
+def test_interrupted_local_request_resumes_bound_aliases_with_a_fresh_agent():
+    from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
+
+    class Interrupted(Chat):
+        def invoke(self, messages, config=None):
+            self.calls += 1
+            raise RuntimeError('Stopped after the request checkpoint was saved')
+
+    original = packet()
+    saved = []
+    first = IncrementalIntegrationAgent(Interrupted(), relation_id_mode='local')
+    invoke = make_adapter(invoke_relation_merger)
+    with pytest.raises(RuntimeError, match='request checkpoint was saved'):
+        invoke(first, SimpleNamespace(evidence=()), original, save=saved.append)
+    interrupted = deepcopy(saved[-1])
+    assert interrupted['requests'] == 1 and 'result' not in interrupted
+    resumed_chat = Chat()
+    resumed = IncrementalIntegrationAgent(resumed_chat, relation_id_mode='local')
+    result = invoke(resumed, SimpleNamespace(evidence=()), original,
+                    checkpoint=interrupted, save=saved.append)
+    assert saved[-1]['requests'] == 2 and resumed_chat.calls == 1
+    assert [row.group_id for row in result.results] == [group['group_id'] for group in original['groups']]
+    assert [group['group_id'] for group in resumed_chat.seen['groups']] == ['G1', 'G2']
+    assert interrupted['requests'] == 1 and 'result' not in interrupted

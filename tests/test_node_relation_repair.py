@@ -11,7 +11,7 @@ from cortex.capabilities.graph_merge.consolidation.coordination import coordinat
 from cortex.capabilities.graph_merge.consolidation.relations import NodeRelationCoordinationRequired
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
 from cortex.capabilities.graph_merge.consolidation.review import Review
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.schema import GraphNode, load_root_schema
 from graph_merge_fixtures import catalog, edge, state

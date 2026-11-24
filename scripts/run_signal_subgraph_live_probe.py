@@ -78,7 +78,7 @@ def verify_completed_probe(folder, fixture):
         saved = json.loads(connection.execute('select payload from merge_workspaces').fetchone()[0])
     context, _ = setup(fixture)
     engine = SimpleNamespace(session=MergeSession(inputs=context, current=GraphState.model_validate(saved['current']), contract_versions=ContractVersions.from_dict(saved['contract_versions']), signal_receipts=saved['signal_receipts']))
-    reusable = [is_accepted(engine, row['check']) for row in saved['signal_receipts']]
+    reusable = [is_accepted((engine).session, row['check']) for row in saved['signal_receipts']]
     inputs = read(folder / 'public_requests.json')
     roles = {}
     for body in inputs:

@@ -1,4 +1,5 @@
 """Identity decisions and exact physical keys; no graph mutation or LLM calls."""
+
 from __future__ import annotations
 
 import json
@@ -6,9 +7,10 @@ from typing import Any
 
 from pydantic import Field
 
-from cortex.capabilities.graph_merge.models import Model
 from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
+from cortex.capabilities.graph_merge.models import Model
 from cortex.schema import GraphNode, IdentityPolicy, NodeContent
+
 
 class IdentityGroup(Model):
     members: tuple[str, ...] = Field(min_length=2)
@@ -94,4 +96,3 @@ def identity_map(context, decision):
                 f"Explicit identity decision needed for binding contest: {a}, {b}"
             )
     return mappings
-

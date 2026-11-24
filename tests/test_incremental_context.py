@@ -9,7 +9,8 @@ from cortex.capabilities.graph_merge.graph.batch import alias_view
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.graph.edit_contract import Element
 from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask, build_task_context
+from cortex.capabilities.graph_merge.models import LocalTask
+from cortex.capabilities.graph_merge.consolidation.task_context import build_task_context
 from cortex.capabilities.graph_merge.graph.impact import affected_query_roots, semantic_review_targets
 from cortex.schema import (
     ConflictAlternative,

@@ -1,12 +1,13 @@
 """Independent execution frames over shared, read-only source graph indexes."""
+
 from __future__ import annotations
 
 from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import TaskState
 from cortex.schema import GraphState
 
@@ -34,7 +35,7 @@ def fork_task_context(inputs, *, before, task, read_ids=None):
     context.task_draft_errors = ()
     context.task_draft_errors_draft_id = None
     context.task_candidate_draft_id = None
-    context.task_failure_stage = 'patch_compile'
+    context.task_failure_stage = "patch_compile"
     context.task_semantic_issues = ()
     context.task_semantic_issue_basis = ()
     context.task_required_context = ()

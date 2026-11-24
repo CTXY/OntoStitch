@@ -26,7 +26,7 @@ from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
 from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
 from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash
 from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
 from cortex.capabilities.graph_merge.consolidation.presentation import NodeTaskDialogue, build_node_packet

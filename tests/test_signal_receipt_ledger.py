@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from cortex.capabilities.graph_merge.reconciliation.ledger import (
+from cortex.capabilities.graph_merge.reconciliation.receipts import (
     check_key,
     has_receipt,
     latest_receipt,

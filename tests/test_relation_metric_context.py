@@ -3,7 +3,7 @@ from graph_merge_fixtures import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.reconciliation.context import relation_context
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.schema import GraphNode, GraphSpace, GraphState, load_root_schema
 
 

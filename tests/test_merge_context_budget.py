@@ -8,7 +8,7 @@ from cortex.capabilities.graph_merge.consolidation.assessment import (
     ReviewInputTooLarge,
     review_packets,
 )
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.config.models import GraphMergeConfig
 from cortex.schema import load_root_schema
 

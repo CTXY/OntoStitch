@@ -6,8 +6,8 @@ import pytest
 
 from graph_merge_fixtures import catalog, concept, edge, state
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.reconciliation.ledger import make_receipt, validate_receipt_ledger
-from cortex.capabilities.graph_merge.reconciliation.premises import normalize_signal, signal_premise
+from cortex.capabilities.graph_merge.reconciliation.receipts import make_receipt, validate_receipt_ledger
+from cortex.capabilities.graph_merge.reconciliation.scope import normalize_signal, signal_premise
 from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.reconciliation.permissions import ReconciliationRuntime

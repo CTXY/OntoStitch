@@ -1,7 +1,8 @@
 from copy import deepcopy
 from types import SimpleNamespace
 from graph_merge_fixtures import catalog, concept, state
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask, _pending_identity_consolidations
+from cortex.capabilities.graph_merge.models import LocalTask
+from cortex.capabilities.graph_merge.consolidation.task_context import _pending_identity_consolidations
 from cortex.capabilities.graph_merge.llm.packets import compact_node_packet
 
 

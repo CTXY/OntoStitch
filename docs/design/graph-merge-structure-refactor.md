@@ -217,3 +217,76 @@ no premature publication, new-run reset and the initial Writer decision. The
 final hook/default and actual recovery group passed 25 tests. Model-visible
 snapshot remains byte-identical. Independent review approved after auditing
 None/default callback semantics, rollback, budget sharing and recovery order.
+
+## Stage E — consolidate domain modules and finish cleanup
+
+Merged `reconciliation/premises.py` into `scope.py`, `ledger.py` into
+`receipts.py`, and `projection.py` into `presentation.py`. These three owners
+now contain scope/dependency premises, accepted receipts/dependency invalidation,
+and public model presentation respectively. Receipt functions receive the
+accepted `MergeSession` directly. `LocalTask` lives with the shared task models;
+signal/obligation constants live in the reconciliation domain contract.
+
+The private consolidation compiler packet remains separate from compression and
+public presentation. Those transformations enforce different visibility and
+permission rules; combining them would obscure the boundary. Defensive handling
+of existing metadata in graph impact/scope/permissions also remains: removing
+it would change current query shapes and validation, rather than remove an old
+engine. Only obsolete metadata-authoring guidance and retired scope-migration
+statistics were removed.
+
+Optional relation group-ID presentation is selected per Agent with
+`relation_id_mode="native"` (default) or `"local"`. The local adapter binds its
+own manifest and recovery checkpoint without replacing a process-global model
+function. Switching modes rejects incompatible checkpoints; migration of old
+native checkpoints into local-ID checkpoints has been removed. Tests cover
+independent Agents, interrupted recovery on a fresh Agent, completed reuse and
+mode mismatch before another model call.
+
+Production Graph Merge formatting and import/undefined-symbol lint pass. The
+package has 76 Python files versus 99 at the starting commit; static explicit
+imports, including function-local imports, have no strongly connected cycles.
+This is an organizational improvement, not a claim that fewer source lines by
+itself proves quality: expanded formatting offsets much of the deleted code.
+
+Three independent reviewers approved the scope, receipt, presentation and
+adapter changes. The final small documentation/script/guidance cleanup received
+a further read-only review with no blockers. Stage E core tests: 277 passed,
+3 optional-data skips; independent reviewer suites also passed (overlapping
+sets, not additive totals).
+
+## Final verification and delivery
+
+Final full repository run: **2,110 passed, 22 failed, 3 skipped**. Every failing
+node ID exists in the Stage A baseline; there are no newly failing node IDs.
+The remaining failures are one unavailable optional output-data fixture, one
+pre-existing shared self-JOIN assertion, and 20 online/rule-guidance cases.
+They have not been hidden, weakened or counted as passing. The original user
+workspace's unrelated online-context changes are outside this isolated branch.
+
+All repository Python files parse. Graph Merge F/I lint and formatting checks
+pass. The schemas, role prompts, actual node packet and reconciliation messages
+in the 402 KB deterministic snapshot are byte-identical to the Stage A snapshot
+(which includes the separately documented Stage A prompt factual correction).
+No live LLM quality claim is inferred from this deterministic comparison.
+
+A wheel was built and installed into an independent temporary target. Against
+the installed package, all role prompt resources and policy bindings load;
+native/local modes remain distinct; current bootstrap plus an offline end-to-end
+merge completes final publication. No source checkout is needed for those
+resource lookups. Validation did not call a live model or run GitHub CI.
+
+Reviewed rollback checkpoints on `codex/graph-merge-structure`:
+
+| Stage | Commit |
+| --- | --- |
+| A: current-contract baseline | `6c020c661` |
+| B: module migration | `7a1efac5c` |
+| C: retired-path removal | `e42beb341` |
+| D1: accepted session | `1fb330ba3` |
+| D2: task/nested-context isolation | `9d3d63044` |
+| E: final consolidation | Commit containing this final verification record |
+
+Each implementation stage has its own reviewed commit and remote checkpoint.
+The refactor is isolated from the original dirty workspace and has not been
+merged into the main branch.

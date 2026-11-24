@@ -8,43 +8,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
 from typing import Any
 
+from cortex.capabilities.graph_merge.graph.impact import (
+    _CORE_DEPENDENCIES,
+    _indexes,
+    _metadata_edges,
+    content_consumers,
+)
 from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, references
-from cortex.capabilities.graph_merge.graph.impact import _CORE_DEPENDENCIES, content_consumers, _indexes, _metadata_edges
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.schema import GraphNode, GraphState
 from cortex.schema.relation_contracts import effective_schema
-
-
-
-
-@dataclass
-class LocalTask:
-    id: str
-    phase: str
-    targets: set[str]
-    checks: list[dict] = field(default_factory=list)
-    groups: list[dict] = field(default_factory=list)
-    feedback: list[dict | str] = field(default_factory=list)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _source_refs(origins, kind, key):
@@ -354,12 +329,20 @@ def _pending_identity_consolidations(context, current, payload, task):
     supplied = {n["id"] for n in payload.get("candidate_nodes", [])}
     rows = []
     for group in decision.get("groups", []):
-        group = group.model_dump(mode="json") if hasattr(group, "model_dump") else dict(group)
+        group = (
+            group.model_dump(mode="json")
+            if hasattr(group, "model_dump")
+            else dict(group)
+        )
         members = set(group["members"])
         # Require the exact live input handles. Rewritten/retired descendants
         # need the ordinary explicit identity projection and review instead.
-        if (len(members) > 1 and members <= live and members & supplied
-                and frozenset(members) not in active):
+        if (
+            len(members) > 1
+            and members <= live
+            and members & supplied
+            and frozenset(members) not in active
+        ):
             rows.append(group)
     if rows:
         payload["pending_identity_consolidations"] = rows
@@ -378,8 +361,9 @@ def build_task_context(
     """Build complete local objects without read-history or unrestricted adjacency.
 
     ``origins`` may be the session lineage object exposing origin_refs/node_map/
-    edge_map, or a mapping from current IDs to original references. Full graph
-    state is retained by code; only this task packet is sent to the model.
+    edge_map, or a mapping from current IDs to original references. This is the private
+    compiler packet. Node requests pass through compact_task_context and the
+    separate group-local public projection in consolidation.presentation.
     """
     context.candidate = current
     context.phase = task.phase
@@ -428,10 +412,16 @@ def build_task_context(
     consumer_rows = content_consumers(nodes.values(), root_nodes | root_edges)
     selected_nodes.update(row["consumer"] for row in consumer_rows)
     required_edges = root_edges | {
-        key for key in selected_edges if edges[key].edge_type in _CORE_DEPENDENCIES
+        key
+        for key in selected_edges
+        if edges[key].edge_type in _CORE_DEPENDENCIES
         and (task.phase != "node_assess" or edges[key].from_node_id in root_nodes)
     }
-    required_nodes = root_nodes | ({row["consumer"] for row in consumer_rows} if task.phase != "node_assess" else set())
+    required_nodes = root_nodes | (
+        {row["consumer"] for row in consumer_rows}
+        if task.phase != "node_assess"
+        else set()
+    )
     required_nodes.update(
         key
         for eid in root_edges
@@ -509,10 +499,19 @@ def build_task_context(
                 for e in edges.values()
                 if e.edge_type == "grounded_on" and e.to_node_id == endpoint
             )
-            contests.append({"physical_id": endpoint, "owners": sorted(owners),
-                "edge_ids": sorted(e.id for e in edges.values()
-                    if e.edge_type == "grounded_on" and e.to_node_id == endpoint
-                    and e.from_node_id in owners)})
+            contests.append(
+                {
+                    "physical_id": endpoint,
+                    "owners": sorted(owners),
+                    "edge_ids": sorted(
+                        e.id
+                        for e in edges.values()
+                        if e.edge_type == "grounded_on"
+                        and e.to_node_id == endpoint
+                        and e.from_node_id in owners
+                    ),
+                }
+            )
     required_nodes.update(k for k in selected_nodes if nodes[k].alternatives)
     required_nodes.update(
         key
@@ -791,12 +790,22 @@ def build_task_context(
         ],
     }
     payload["source_presence"] = {
-        "archived_only_node_ids": sorted({row["id"] for row in payload["nodes"]} - nodes.keys()),
-        "archived_only_edge_ids": sorted({row["id"] for row in payload["relations"]} - edges.keys()),
-        "same_id_modified_nodes": sorted(row["id"] for row in payload["nodes"]
-            if row["id"] in nodes and row != nodes[row["id"]].model_dump(mode="json")),
-        "same_id_modified_edges": sorted(row["id"] for row in payload["relations"]
-            if row["id"] in edges and row != edges[row["id"]].model_dump(mode="json")),
+        "archived_only_node_ids": sorted(
+            {row["id"] for row in payload["nodes"]} - nodes.keys()
+        ),
+        "archived_only_edge_ids": sorted(
+            {row["id"] for row in payload["relations"]} - edges.keys()
+        ),
+        "same_id_modified_nodes": sorted(
+            row["id"]
+            for row in payload["nodes"]
+            if row["id"] in nodes and row != nodes[row["id"]].model_dump(mode="json")
+        ),
+        "same_id_modified_edges": sorted(
+            row["id"]
+            for row in payload["relations"]
+            if row["id"] in edges and row != edges[row["id"]].model_dump(mode="json")
+        ),
     }
     payload["conflict_semantics"] = {
         "owner_contents": "Alternatives are possible resolved contents of one owner, evaluated one selected alternative at a time.",
@@ -810,16 +819,21 @@ def build_task_context(
                 {
                     "alternative_id": alternative.alternative_id,
                     "active_outgoing_edge_ids": sorted(
-                        edge.id for edge in edges.values()
-                        if edge.from_node_id == key and
-                        (not edge.properties.get("alternative_ids") or
-                         alternative.alternative_id in edge.properties["alternative_ids"])
+                        edge.id
+                        for edge in edges.values()
+                        if edge.from_node_id == key
+                        and (
+                            not edge.properties.get("alternative_ids")
+                            or alternative.alternative_id
+                            in edge.properties["alternative_ids"]
+                        )
                     ),
                 }
                 for alternative in nodes[key].alternatives
             ],
         }
-        for key in sorted(required_nodes & nodes.keys()) if nodes[key].alternatives
+        for key in sorted(required_nodes & nodes.keys())
+        if nodes[key].alternatives
     ]
     if task.groups:
         payload["matched_groups"] = list(task.groups)

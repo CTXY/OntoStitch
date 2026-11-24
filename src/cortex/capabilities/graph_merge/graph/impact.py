@@ -1,4 +1,5 @@
 """Necessary semantic impact of actual edits, separate from signal selection."""
+
 from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, references
 from cortex.schema import GraphState
 
@@ -10,21 +11,32 @@ def modification_scope(before, candidate):
     new_nodes = {n.id: n for n in candidate.graph.nodes}
     old_edges = {e.id: e for e in before.graph.edges}
     new_edges = {e.id: e for e in candidate.graph.edges}
-    changed_nodes = {key for key in old_nodes.keys() | new_nodes.keys()
-                     if old_nodes.get(key) != new_nodes.get(key)}
-    changed_edges = {key for key in old_edges.keys() | new_edges.keys()
-                     if old_edges.get(key) != new_edges.get(key)}
+    changed_nodes = {
+        key
+        for key in old_nodes.keys() | new_nodes.keys()
+        if old_nodes.get(key) != new_nodes.get(key)
+    }
+    changed_edges = {
+        key
+        for key in old_edges.keys() | new_edges.keys()
+        if old_edges.get(key) != new_edges.get(key)
+    }
+
     def meaning(node):
         if node is None:
             return None
-        row = node.model_dump(mode='json', exclude={'sources', 'reference_origin'})
-        row['properties'].pop('relation_metadata', None)
+        row = node.model_dump(mode="json", exclude={"sources", "reference_origin"})
+        row["properties"].pop("relation_metadata", None)
         return row
-    changed_meanings = {key for key in changed_nodes
-                        if meaning(old_nodes.get(key)) != meaning(new_nodes.get(key))}
+
+    changed_meanings = {
+        key
+        for key in changed_nodes
+        if meaning(old_nodes.get(key)) != meaning(new_nodes.get(key))
+    }
     selected_nodes = set(changed_nodes)
     selected_edges = changed_edges | _contract_affected_edges(before, candidate)
-    consumers = set(semantic_review_targets(before, candidate, ())['targets'])
+    consumers = set(semantic_review_targets(before, candidate, ())["targets"])
     for nodes, edges in ((old_nodes, old_edges), (new_nodes, new_edges)):
         # A changed endpoint does not turn every incident edge into a premise.
         # Direct consumers and complete affected metadata groups do matter.
@@ -39,22 +51,35 @@ def modification_scope(before, candidate):
             if node is None:
                 continue
             selected_nodes.update(references(node))
-            if node.node_type == 'metric':
-                selected_edges.update(e.id for e in edges.values()
-                                      if e.from_node_id == ident and e.edge_type in {'depends_on', 'grounded_on'})
+            if node.node_type == "metric":
+                selected_edges.update(
+                    e.id
+                    for e in edges.values()
+                    if e.from_node_id == ident
+                    and e.edge_type in {"depends_on", "grounded_on"}
+                )
         for edge in edges.values():
-            if edge.from_node_id in changed_meanings or edge.to_node_id in changed_meanings:
+            if (
+                edge.from_node_id in changed_meanings
+                or edge.to_node_id in changed_meanings
+            ):
                 selected_edges.add(edge.id)
-            if edge.edge_type in {'depends_on', 'applies_to'} and edge.to_node_id in changed_nodes:
+            if (
+                edge.edge_type in {"depends_on", "applies_to"}
+                and edge.to_node_id in changed_nodes
+            ):
                 selected_edges.add(edge.id)
             if edge.id in selected_edges:
                 selected_nodes.update((edge.from_node_id, edge.to_node_id))
         # A changed binding must expose all actual competing owners of that
         # exact physical target, not the claimants' unrelated relationships.
-        physical = {edges[key].to_node_id for key in changed_edges & edges.keys()
-                    if edges[key].edge_type == 'grounded_on'}
+        physical = {
+            edges[key].to_node_id
+            for key in changed_edges & edges.keys()
+            if edges[key].edge_type == "grounded_on"
+        }
         for edge in edges.values():
-            if edge.edge_type == 'grounded_on' and edge.to_node_id in physical:
+            if edge.edge_type == "grounded_on" and edge.to_node_id in physical:
                 selected_edges.add(edge.id)
                 selected_nodes.update((edge.from_node_id, edge.to_node_id))
     return selected_nodes, selected_edges
@@ -87,15 +112,18 @@ def content_consumers(nodes, ids):
 def _indexes(state):
     return ({n.id: n for n in state.graph.nodes}, {e.id: e for e in state.graph.edges})
 
+
 def _semantic(obj):
     # Branch sources change the justification of a competing version and remain
     # semantic. Only ordinary object-level provenance is excluded here.
     return obj.model_dump(mode="json", exclude={"sources", "reference_origin"})
 
+
 def _changed(before, after):
     return {
         key for key in before.keys() | after.keys() if before.get(key) != after.get(key)
     }
+
 
 def _semantic_changes(before, after):
     return {
@@ -105,6 +133,7 @@ def _semantic_changes(before, after):
         or key not in after
         or _semantic(before[key]) != _semantic(after[key])
     }
+
 
 def _metadata_edges(node):
     props = [node.properties] + [
@@ -122,6 +151,7 @@ def _metadata_edges(node):
         for edge in group["edges"]
     }
 
+
 def _contract_affected_edges(before, after):
     old = {c.id: c for c in before.graph.relation_contracts}
     new = {c.id: c for c in after.graph.relation_contracts}
@@ -138,6 +168,7 @@ def _contract_affected_edges(before, after):
         for e in (*before.graph.edges, *after.graph.edges)
         if e.edge_type in changed
     }
+
 
 def affected_query_roots(before: GraphState, after: GraphState) -> set[str]:
     """Changed definitions and both endpoints of added/removed semantic edges.
@@ -157,6 +188,7 @@ def affected_query_roots(before: GraphState, after: GraphState) -> set[str]:
                 result.update((edge.from_node_id, edge.to_node_id))
     return result
 
+
 def _core_dependency(predicate, state):
     contracts = {c.id: c for c in state.graph.relation_contracts}
     seen = set()
@@ -167,6 +199,7 @@ def _core_dependency(predicate, state):
         contract = contracts.get(predicate)
         predicate = contract.extends if contract else None
     return False
+
 
 def semantic_review_targets(
     before: GraphState, after: GraphState, task_targets, *, evidence_changed=False

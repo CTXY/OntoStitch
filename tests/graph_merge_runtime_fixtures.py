@@ -4,7 +4,7 @@ from cortex.capabilities.graph_merge.graph.batch import ActiveBatch
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.runtime.state import TaskState
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.schema import load_root_schema
 from graph_merge_fixtures import catalog, concept, edge, state
 from cortex.capabilities.graph_merge.evidence import EvidenceItem

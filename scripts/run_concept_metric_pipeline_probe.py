@@ -21,7 +21,7 @@ from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEn
 from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 from cortex.capabilities.graph_merge.reconciliation.relation_merger import consolidate_relations, relation_groups
 from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.consolidation.presentation import build_node_packet
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.infrastructure.artifacts.graph_merge_trace import FileSystemGraphMergeTraceSink

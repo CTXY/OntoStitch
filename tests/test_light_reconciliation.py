@@ -13,7 +13,7 @@ from cortex.capabilities.graph_merge.graph.edits import (
     RelationPatch,
     submit_patch,
 )
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.schema import load_root_schema
 
 

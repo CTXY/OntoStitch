@@ -10,22 +10,21 @@ import re
 from collections import defaultdict
 from difflib import SequenceMatcher
 
-from cortex.capabilities.graph_merge.identity.contract import exact_identity_key, node_content
 from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
+from cortex.capabilities.graph_merge.graph.operations import (
+    PHYSICAL,
+    decision_references,
+    references,
+    remap_edge,
+    remap_node,
+    semantic_relations_first,
+)
+from cortex.capabilities.graph_merge.identity.contract import (
+    exact_identity_key,
+    node_content,
+)
 from cortex.capabilities.graph_merge.llm.packing import bounded_items
 from cortex.schema import GraphSpace, GraphState
-
-from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, semantic_relations_first, remap_node, remap_edge, references, decision_references
-
-
-
-
-
-
-
-
-
-
 
 
 def _tokens(value):

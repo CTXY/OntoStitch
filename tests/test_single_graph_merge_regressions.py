@@ -78,7 +78,7 @@ def test_existing_binding_contest_can_be_repaired_incrementally_but_never_expand
 def test_single_graph_checkpoint_resumes_assessment_and_skips_completed_models(tmp_path):
     from langchain_core.messages import AIMessage
     from cortex.capabilities.graph_merge.reconciliation.single_graph import reconcile_current_graph
-    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+    from cortex.capabilities.graph_merge.models import LocalTask
     from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
     from graph_merge_fixtures import state
     class BoundChat:

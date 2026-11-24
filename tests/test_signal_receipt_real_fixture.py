@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cortex.capabilities.graph_merge.reconciliation.premises import signal_key, signal_premise
+from cortex.capabilities.graph_merge.reconciliation.scope import signal_key, signal_premise
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import GraphNode, GraphState, SourceReference, load_root_schema

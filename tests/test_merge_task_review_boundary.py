@@ -13,7 +13,7 @@ from cortex.capabilities.graph_merge.graph.batch import ActiveBatch
 from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch
 from cortex.capabilities.graph_merge.consolidation.review import Review
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.schema import GraphNode, SourceReference

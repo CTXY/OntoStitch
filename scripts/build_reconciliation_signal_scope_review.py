@@ -10,7 +10,7 @@ from build_reconciliation_simplified_report import head, box, prompt_box, one
 from run_relation_reconciliation_v2_smoke import fixtures
 from run_node_consolidation_smoke import resolve_input_root
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.reconciliation.context import relation_context
 from cortex.capabilities.graph_merge.reconciliation.permissions import ReconciliationRuntime
 from cortex.capabilities.graph_merge.reconciliation.policy import reconciliation_system

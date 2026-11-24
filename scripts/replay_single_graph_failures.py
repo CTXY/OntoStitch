@@ -7,7 +7,7 @@ from graph_merge_archive import migrate_relation_notes
 from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.reconciliation.relation_merger import relation_groups,consolidate_relations,policy_fingerprint
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.reconciliation.context import relation_context
 from cortex.capabilities.graph_merge.reconciliation.permissions import ReconciliationRuntime
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository,SqlTrainingGraphMergeEvidenceResolver

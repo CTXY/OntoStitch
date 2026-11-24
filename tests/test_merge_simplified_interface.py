@@ -17,7 +17,7 @@ from cortex.capabilities.graph_merge.graph.scope import (
 from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
 )
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.graph_merge.consolidation.review import Review as NodeReview
 from cortex.capabilities.graph_merge.evidence import EvidenceItem

@@ -1,7 +1,7 @@
 """Exact signal sets replace generic one-hop graph expansion."""
 from test_signal_premises import add, check, edge, node, setup
 
-from cortex.capabilities.graph_merge.reconciliation.premises import signal_premise
+from cortex.capabilities.graph_merge.reconciliation.scope import signal_premise
 from cortex.capabilities.graph_merge.reconciliation.scope import signal_scope
 
 

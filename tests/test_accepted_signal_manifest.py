@@ -15,7 +15,7 @@ from graph_merge_runtime_fixtures import engine_for
 from cortex.capabilities.graph_merge.graph.publication import Preview
 from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted, premise_hash, policy_hash, record_acceptance
 from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.task import accepted_signal_checks
 from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
@@ -43,7 +43,7 @@ def test_actual_duplicate_is_only_stale_trigger_membership(real,index):
     historical = ['be1eceb8c238abb30186bd1d92b10247c33e2f0fce189c50f232dec0d5a66985',
                   '13de56c38c82f2918e5e0ede6a7a920d3108dc612bd818dc92da5d82e342d274']
     assert pair['original']['premise_hash'] == historical[index]
-    assert premise_hash(engine,pair['original']['check']) != premise_hash(engine,pair['detected_later'])
+    assert premise_hash((engine).session,pair['original']['check']) != premise_hash((engine).session,pair['detected_later'])
     assert all(not ids for h in data['later_history'] for kind in h['delta'].values() for ids in kind.values())
 
 
@@ -55,10 +55,10 @@ def test_record_actual_after_check_then_same_next_scan_reuses(real,index):
     assert checks==[pair['detected_later']]
     task=LocalTask('controlled-real-replay','reconcile',set(checks[0]['node_ids']),checks=checks)
     history={'task_id':task.id,'phase':'reconcile','revision':1,'assessment':'graph_assess',
-        'candidate_hash':canonical_hash(graph),'reconciliation_receipt_policy_hash':policy_hash(engine),
+        'candidate_hash':canonical_hash(graph),'reconciliation_receipt_policy_hash':policy_hash((engine).session),
         'reconciliation_check_hashes':[canonical_hash(c) for c in checks]}
-    record_acceptance(engine,task,SimpleNamespace(agent_recovery={}),history)
-    assert is_accepted(engine,pair['detected_later'])
+    record_acceptance((engine).session,task,SimpleNamespace(agent_recovery={}),history)
+    assert is_accepted((engine).session,pair['detected_later'])
 
 
 def test_refresh_does_not_remove_explicit_requirement_or_rewrite_obligation(real):
@@ -73,11 +73,11 @@ def test_refresh_does_not_remove_explicit_requirement_or_rewrite_obligation(real
 
 def test_real_changed_meaning_still_invalidates_after_refresh(real):
     data,graph,ctx=real;check=data['pairs'][0]['detected_later']
-    original=premise_hash(SimpleNamespace(session=MergeSession(inputs=ctx, current=graph)),check)
+    original=premise_hash((SimpleNamespace(session=MergeSession(inputs=ctx, current=graph))).session,check)
     ident=check['node_ids'][0]
     changed=graph.model_copy(update={'graph':graph.graph.model_copy(update={'nodes':tuple(
         n.model_copy(update={'description':(n.description or '')+' A new substantive condition.'}) if n.id==ident else n for n in graph.graph.nodes)})})
-    assert premise_hash(SimpleNamespace(session=MergeSession(inputs=ctx, current=changed)),check)!=original
+    assert premise_hash((SimpleNamespace(session=MergeSession(inputs=ctx, current=changed))).session,check)!=original
 
 
 def test_real_commit_with_edge_replacement_does_not_reprocess_surviving_triangle(tmp_path,monkeypatch):
@@ -97,7 +97,7 @@ def test_real_commit_with_edge_replacement_does_not_reprocess_surviving_triangle
     engine._run_task(LocalTask('repair','reconcile',{'A','B','C'},checks=checks),'run')
     current=[s for s in inspection_signals(engine.session.inputs,Preview(engine.session.current,{}, {},[])) if s['kind']=='triangle']
     assert 'old' not in current[0]['edge_ids']
-    assert engine.session.signal_receipts[0]['check']==current[0] and is_accepted(engine,current[0])
+    assert engine.session.signal_receipts[0]['check']==current[0] and is_accepted((engine).session,current[0])
     assert engine.session.history[-1]['reconciliation_trigger_check_hashes']!=engine.session.history[-1]['reconciliation_check_hashes']
     monkeypatch.setattr('cortex.capabilities.graph_merge.engine.inspection_signals',lambda *a,**k:current)
     engine.agent=IncrementalIntegrationAgent(ScriptedModel([]))

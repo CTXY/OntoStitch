@@ -1,4 +1,5 @@
 """Exact graph operations that preserve source attribution and declared references."""
+
 from __future__ import annotations
 
 import json
@@ -6,6 +7,7 @@ import re
 from typing import Any
 
 PHYSICAL = frozenset({"table", "column", "dimension_value"})
+
 
 def unique(values):
     return tuple(dict.fromkeys(values))
@@ -36,10 +38,14 @@ def deduplicate_edges(edges):
                 edge.properties.get("description", ""),
             )
         ):
-            edge = edge.model_copy(update={"properties": {
-                **edge.properties,
-                "description": f"{edge.from_node_id} {edge.edge_type} its catalog owner {edge.to_node_id}.",
-            }})
+            edge = edge.model_copy(
+                update={
+                    "properties": {
+                        **edge.properties,
+                        "description": f"{edge.from_node_id} {edge.edge_type} its catalog owner {edge.to_node_id}.",
+                    }
+                }
+            )
         if edge.edge_type == "joins_with":
             signature = (edge.edge_type, join_edge_key(edge))
             previous = by_signature.get(signature)
@@ -65,24 +71,24 @@ def deduplicate_edges(edges):
     return {e.id: e for e in by_signature.values()}, mappings
 
 
-
 from cortex.schema.references import property_reference_ids, remap_references
+
 
 def semantic_relations_first(edges, nodes):
     """Stable pagination: show business topology before physical grounding."""
     return sorted(
         edges,
         key=lambda e: any(
-            nodes[key].node_type in PHYSICAL
-            for key in (e.from_node_id, e.to_node_id)
+            nodes[key].node_type in PHYSICAL for key in (e.from_node_id, e.to_node_id)
         ),
     )
+
 
 def remap_node(node, node_map, edge_map=None):
     """Only declared reference slots; never replace prose or SQL literals."""
 
     def properties(value):
-        return remap_references(value,node_map)
+        return remap_references(value, node_map)
 
     return node.model_copy(
         update={
@@ -112,6 +118,7 @@ def remap_node(node, node_map, edge_map=None):
         }
     )
 
+
 def remap_edge(edge, node_map, edge_map=None):
     return edge.model_copy(
         update={
@@ -121,6 +128,7 @@ def remap_edge(edge, node_map, edge_map=None):
             "properties": remap_references(edge.properties, node_map),
         }
     )
+
 
 def references(node):
     result = property_reference_ids(node.properties)
@@ -132,6 +140,7 @@ def references(node):
         }
         result |= property_reference_ids(props)
     return result
+
 
 def decision_references(node, nodes, adjacent):
     """Recall through explicit Rule operands; never infer SQL or business identity."""

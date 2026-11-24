@@ -25,14 +25,14 @@ from cortex.capabilities.graph_merge.reconciliation.contract import (
 from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
 )
-from cortex.capabilities.graph_merge.reconciliation.premises import signal_premise
-from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.reconciliation.scope import signal_premise
+from cortex.capabilities.graph_merge.models import LocalTask
 from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.reconciliation.agent import DESCRIPTIONS
 from cortex.capabilities.graph_merge.reconciliation.permissions import (
     ReconciliationRuntime,
 )
-from cortex.capabilities.graph_merge.reconciliation.projection import (
+from cortex.capabilities.graph_merge.reconciliation.presentation import (
     edge_record,
     node_record,
 )

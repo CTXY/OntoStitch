@@ -251,12 +251,13 @@ def compose_batch(root, plan, case_ids, current, folder):
 def run(root):
     plan = read(root / 'plan.json')
     limits = runtime_limits(root)
+    relation_id_mode = 'native'
     if (root / 'relation_id_protocol.json').exists():
-        from cortex.capabilities.graph_merge.llm.relation_merger_ids import adapter_hash, install
+        from cortex.capabilities.graph_merge.llm.relation_merger_ids import adapter_hash
         protocol = read(root / 'relation_id_protocol.json')
         if protocol['adapter_hash'] != adapter_hash():
             raise ValueError('Relation local-ID adapter changed; retain checkpoints and review migration')
-        install()
+        relation_id_mode = 'local'
     schema = load_root_schema()
     if plan['contracts'] != build_contract_versions(schema).to_dict():
         raise ValueError('Runtime contracts changed; explicit checkpoint migration is required')
@@ -293,6 +294,7 @@ def run(root):
                 continue
             for window in range(3):
                 agent = OperatorAgent(model_for(folder, selected[-1]), max_calls=16,
+                    relation_id_mode=relation_id_mode,
                     request_max_characters=limits['local_request_max_characters'],
                     identity_request_max_characters=limits['identity_request_max_characters'],
                     trace_sink=FileSystemGraphMergeTraceSink(folder / 'agents.jsonl'))

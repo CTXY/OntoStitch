@@ -4,9 +4,12 @@ import json
 
 from langchain_core.tools import tool
 
-from cortex.capabilities.graph_merge.identity.catalog import select_catalog_nodes
-from cortex.capabilities.graph_merge.graph.operations import PHYSICAL, semantic_relations_first
 from cortex.capabilities.graph_merge.graph.impact import content_consumers
+from cortex.capabilities.graph_merge.graph.operations import (
+    PHYSICAL,
+    semantic_relations_first,
+)
+from cortex.capabilities.graph_merge.identity.catalog import select_catalog_nodes
 from cortex.capabilities.sql_training.llm.prompts.asset_contract import (
     render_ontology_asset_contract,
 )
@@ -143,7 +146,10 @@ def build_tools(context, *, visible_source_ids=()):
                     else context.union_state().graph
                 )
                 contracts = effective_schema(context.schema, graph).edge_types
-                from cortex.capabilities.graph_merge.llm.prompt_language import english_contract
+                from cortex.capabilities.graph_merge.llm.prompt_language import (
+                    english_contract,
+                )
+
                 items = [
                     english_contract(c.model_dump(mode="json"))
                     for c in contracts
@@ -242,7 +248,6 @@ def build_tools(context, *, visible_source_ids=()):
 
             result = {
                 "guidance": RELATION_SCOPE_RULE,
-                "relation_metadata": "Optional Concept groups: id, edges, description; at least two adjacent edges of the same predicate and direction. No implicit inference or expansion.",
             }
         elif topic in {"concept", "metric", "event", "generation_rule"}:
             result = {
@@ -259,13 +264,20 @@ def build_tools(context, *, visible_source_ids=()):
         return context.log("read_guidance", {"topic": topic}, result)
 
     @tool
-    def lookup_catalog(table: str, columns: list[str] | None = None,
-                       view: str = "candidate", offset: int = 0, limit: int = 30) -> dict:
+    def lookup_catalog(
+        table: str,
+        columns: list[str] | None = None,
+        view: str = "candidate",
+        offset: int = 0,
+        limit: int = 30,
+    ) -> dict:
         """Locate physical IDs by exact table/column names, including current owners."""
         from cortex.capabilities.graph_merge.evidence import EvidencePresentation
         from cortex.capabilities.graph_merge.reconciliation.reads import RelationReads
+
         return RelationReads(context, EvidencePresentation(context)).lookup_catalog(
-            table, columns, view=view, offset=offset, limit=limit)
+            table, columns, view=view, offset=offset, limit=limit
+        )
 
     tools = [inspect_graph, lookup_catalog, read_evidence, read_guidance]
     return tools

@@ -11,9 +11,6 @@ from typing import Any
 from cortex.capabilities.graph_merge.models import RelationFollowup
 from cortex.schema import GraphState
 
-
-
-
 TASK_STATE_VERSION = 4
 TOOL_CONTRACT_VERSION = "single-graph-reconciliation-v6"
 REVIEW_POLICY_VERSION = "local-graph-preservation-v7-direct-result"
@@ -26,18 +23,27 @@ class CheckpointContractMismatch(ValueError):
 def canonical_hash(value: Any) -> str:
     if hasattr(value, "model_dump"):
         value = value.model_dump(mode="json")
-    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
     return sha256(encoded.encode()).hexdigest()
 
 
 def _detached(value):
     """Validate JSON before storage and return a detached value."""
+
     def encode(item):
         if hasattr(item, "model_dump"):
             return item.model_dump(mode="json")
         raise TypeError(f"Task value is not JSON serializable: {type(item).__name__}")
 
-    return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False, default=encode))
+    return json.loads(
+        json.dumps(value, ensure_ascii=False, allow_nan=False, default=encode)
+    )
 
 
 @dataclass(frozen=True)
@@ -55,24 +61,36 @@ class ContractVersions:
     def from_dict(cls, value):
         result = cls(**value)
         if result.task_state != TASK_STATE_VERSION:
-            raise CheckpointContractMismatch(f"Unsupported task-state version {result.task_state}")
-        if not all(isinstance(getattr(result, name), str) and getattr(result, name)
-                   for name in ("schema", "tools", "prompts", "review_policy")):
-            raise CheckpointContractMismatch("Checkpoint contract versions must be nonempty strings")
+            raise CheckpointContractMismatch(
+                f"Unsupported task-state version {result.task_state}"
+            )
+        if not all(
+            isinstance(getattr(result, name), str) and getattr(result, name)
+            for name in ("schema", "tools", "prompts", "review_policy")
+        ):
+            raise CheckpointContractMismatch(
+                "Checkpoint contract versions must be nonempty strings"
+            )
         return result
-
-
 
 
 def validate_checkpoint_contract(snapshot, expected: ContractVersions):
     """Legacy state is not silently interpreted using new draft semantics."""
     actual = snapshot.get("contract_versions")
     if actual is None:
-        raise CheckpointContractMismatch("Legacy merge checkpoint requires explicit migration to a new output directory")
+        raise CheckpointContractMismatch(
+            "Legacy merge checkpoint requires explicit migration to a new output directory"
+        )
     parsed = ContractVersions.from_dict(actual)
-    differences = [name for name, value in expected.to_dict().items() if parsed.to_dict().get(name) != value]
+    differences = [
+        name
+        for name, value in expected.to_dict().items()
+        if parsed.to_dict().get(name) != value
+    ]
     if differences:
-        raise CheckpointContractMismatch("Merge checkpoint contract mismatch: " + ", ".join(differences))
+        raise CheckpointContractMismatch(
+            "Merge checkpoint contract mismatch: " + ", ".join(differences)
+        )
     task = snapshot.get("task_state")
     if task is not None:
         restored = TaskState.from_dict(task)
@@ -111,7 +129,13 @@ class TaskState:
     @classmethod
     def capture(cls, base, *, task_id, phase, versions):
         graph = GraphState.model_validate(base).model_dump(mode="json")
-        return cls(task_id=task_id, phase=phase, base=graph, base_hash=canonical_hash(graph), versions=versions)
+        return cls(
+            task_id=task_id,
+            phase=phase,
+            base=graph,
+            base_hash=canonical_hash(graph),
+            versions=versions,
+        )
 
     def with_draft(self, draft):
         if hasattr(draft, "model_dump"):
@@ -123,34 +147,62 @@ class TaskState:
             return self
         revision = self.draft_revision + 1
         token = canonical_hash([self.task_id, self.base_hash, revision, draft])
-        return replace(self, draft=draft, draft_id=token, draft_revision=revision,
-                       stage="validating", issues=(), issues_draft_id=None, review=None, recovery=None,
-                       relation_followups=(), coupled_relation=None,
-                       compilation_binding=None)
+        return replace(
+            self,
+            draft=draft,
+            draft_id=token,
+            draft_revision=revision,
+            stage="validating",
+            issues=(),
+            issues_draft_id=None,
+            review=None,
+            recovery=None,
+            relation_followups=(),
+            coupled_relation=None,
+            compilation_binding=None,
+        )
 
     def with_candidate(self, candidate, *, submitted=True, compilation_binding=None):
         if self.draft_id is None:
             raise ValueError("A candidate requires a current task draft")
         graph = GraphState.model_validate(candidate).model_dump(mode="json")
-        return replace(self, last_valid_candidate=graph, candidate_hash=canonical_hash(graph),
-                       candidate_draft_id=self.draft_id,
-                       compilation_binding=compilation_binding,
-                       stage="assessing" if submitted else "compiled_unsubmitted", issues=(),
-                       issues_draft_id=None, review=None, recovery=None)
+        return replace(
+            self,
+            last_valid_candidate=graph,
+            candidate_hash=canonical_hash(graph),
+            candidate_draft_id=self.draft_id,
+            compilation_binding=compilation_binding,
+            stage="assessing" if submitted else "compiled_unsubmitted",
+            issues=(),
+            issues_draft_id=None,
+            review=None,
+            recovery=None,
+        )
 
     def with_assessment_handoff(self):
         """Bind the exact compiled Writer action to independent Assessment."""
-        if (self.stage not in {'compiled_unsubmitted', 'assessing'}
-                or self.candidate_hash is None or self.last_valid_candidate is None
-                or self.draft_id is None or self.candidate_draft_id != self.draft_id
-                or not self.compilation_binding):
-            raise ValueError('DRAFT_NOT_COMPILED: Assessment requires the exact current compiled draft')
-        return replace(self, stage='assessing')
+        if (
+            self.stage not in {"compiled_unsubmitted", "assessing"}
+            or self.candidate_hash is None
+            or self.last_valid_candidate is None
+            or self.draft_id is None
+            or self.candidate_draft_id != self.draft_id
+            or not self.compilation_binding
+        ):
+            raise ValueError(
+                "DRAFT_NOT_COMPILED: Assessment requires the exact current compiled draft"
+            )
+        return replace(self, stage="assessing")
 
     def with_issues(self, issues, *, stage="revising"):
         issues = tuple(_detached(list(issues)))
-        return replace(self, issues=issues, issues_draft_id=self.draft_id if issues else None,
-                       stage=stage, review=None)
+        return replace(
+            self,
+            issues=issues,
+            issues_draft_id=self.draft_id if issues else None,
+            stage=stage,
+            review=None,
+        )
 
     def with_agent_recovery(self, key, value):
         if not isinstance(key, str) or not key:
@@ -165,33 +217,55 @@ class TaskState:
         return replace(self, agent_recovery=records)
 
     def with_review(self, review, *, candidate_hash):
-        if (self.stage != "assessing" or not self.candidate_hash or candidate_hash != self.candidate_hash
-                or self.candidate_draft_id is None or self.candidate_draft_id != self.draft_id):
+        if (
+            self.stage != "assessing"
+            or not self.candidate_hash
+            or candidate_hash != self.candidate_hash
+            or self.candidate_draft_id is None
+            or self.candidate_draft_id != self.draft_id
+        ):
             raise ValueError("Review does not address the current candidate")
-        review = _detached(review.model_dump(mode="json") if hasattr(review, "model_dump") else review)
+        review = _detached(
+            review.model_dump(mode="json") if hasattr(review, "model_dump") else review
+        )
         verdict = review.get("verdict")
         if verdict not in {"accept", "revise", "needs_context", "revisit_identity"}:
             raise ValueError("Unknown task review verdict")
         issues = tuple(review.get("issues", ()))
         if verdict == "accept" and issues:
             raise ValueError("An accepted review cannot retain issues")
-        return replace(self, review={**review, "candidate_hash": candidate_hash},
-                       issues=tuple(_detached(list(issues))),
-                       issues_draft_id=self.draft_id if issues else None,
-                       semantic_issues=(() if verdict == 'accept' else self.semantic_issues
-                                        if verdict == 'needs_context' else tuple(_detached(list(issues)))),
-                       semantic_issue_basis=(() if verdict == 'accept' else self.semantic_issue_basis),
-                       stage=("ready_to_commit" if verdict == "accept" else
-                              "assessing" if verdict == 'needs_context' else "revising"))
+        return replace(
+            self,
+            review={**review, "candidate_hash": candidate_hash},
+            issues=tuple(_detached(list(issues))),
+            issues_draft_id=self.draft_id if issues else None,
+            semantic_issues=(
+                ()
+                if verdict == "accept"
+                else self.semantic_issues
+                if verdict == "needs_context"
+                else tuple(_detached(list(issues)))
+            ),
+            semantic_issue_basis=(
+                () if verdict == "accept" else self.semantic_issue_basis
+            ),
+            stage=(
+                "ready_to_commit"
+                if verdict == "accept"
+                else "assessing"
+                if verdict == "needs_context"
+                else "revising"
+            ),
+        )
 
     def to_dict(self):
         result = asdict(self)
         result["versions"] = self.versions.to_dict()
         result["issues"] = list(self.issues)
-        result['semantic_issues'] = list(self.semantic_issues)
-        result['semantic_issue_basis'] = list(self.semantic_issue_basis)
-        result['required_context'] = list(self.required_context)
-        result['relation_followups'] = list(self.relation_followups)
+        result["semantic_issues"] = list(self.semantic_issues)
+        result["semantic_issue_basis"] = list(self.semantic_issue_basis)
+        result["required_context"] = list(self.required_context)
+        result["relation_followups"] = list(self.relation_followups)
         return _detached(result)
 
     @classmethod
@@ -201,14 +275,23 @@ class TaskState:
             raise CheckpointContractMismatch("Unsupported task-state payload version")
         value["versions"] = ContractVersions.from_dict(value["versions"])
         value["issues"] = tuple(value.get("issues", ()))
-        value['semantic_issues'] = tuple(value.get('semantic_issues', ()))
-        value['semantic_issue_basis'] = tuple(value.get('semantic_issue_basis', ()))
-        value['required_context'] = tuple(value.get('required_context', ()))
-        value['relation_followups'] = tuple(value.get('relation_followups', ()))
+        value["semantic_issues"] = tuple(value.get("semantic_issues", ()))
+        value["semantic_issue_basis"] = tuple(value.get("semantic_issue_basis", ()))
+        value["required_context"] = tuple(value.get("required_context", ()))
+        value["relation_followups"] = tuple(value.get("relation_followups", ()))
         result = cls(**value)
         if not result.task_id or not result.phase:
             raise ValueError("Task identity and phase are required")
-        if result.stage not in {"writing", "validating", "compiled_unsubmitted", "assessing", "revising", "blocked", "ready_to_commit", "committed"}:
+        if result.stage not in {
+            "writing",
+            "validating",
+            "compiled_unsubmitted",
+            "assessing",
+            "revising",
+            "blocked",
+            "ready_to_commit",
+            "committed",
+        }:
             raise ValueError("Unknown task stage")
         if not isinstance(result.draft_revision, int) or result.draft_revision < 0:
             raise ValueError("Invalid task draft revision")
@@ -227,39 +310,64 @@ class TaskState:
         if result.candidate_draft_id is not None and not result.candidate_hash:
             raise ValueError("Candidate draft binding has no candidate")
         if result.draft is not None:
-            expected = canonical_hash([result.task_id, result.base_hash, result.draft_revision, result.draft])
+            expected = canonical_hash(
+                [result.task_id, result.base_hash, result.draft_revision, result.draft]
+            )
             if result.draft_id != expected:
                 raise ValueError("Task draft hash mismatch")
         elif result.draft_id is not None:
             raise ValueError("Draft id has no draft")
-        if (result.candidate_draft_id is not None
-                and result.stage in {"compiled_unsubmitted", "assessing", "ready_to_commit", "committed"}
-                and result.candidate_draft_id != result.draft_id):
+        if (
+            result.candidate_draft_id is not None
+            and result.stage
+            in {"compiled_unsubmitted", "assessing", "ready_to_commit", "committed"}
+            and result.candidate_draft_id != result.draft_id
+        ):
             raise ValueError("Candidate does not compile the current task draft")
-        if result.stage == 'compiled_unsubmitted' and (result.candidate_draft_id is None
-                or result.candidate_hash is None or result.last_valid_candidate is None
-                or not result.compilation_binding):
-            raise ValueError('Compiled preview requires an exact current candidate binding')
-        if result.compilation_binding is not None and (not isinstance(result.compilation_binding, str)
-                or not result.compilation_binding):
-            raise ValueError('Compilation input binding must be a nonempty string')
+        if result.stage == "compiled_unsubmitted" and (
+            result.candidate_draft_id is None
+            or result.candidate_hash is None
+            or result.last_valid_candidate is None
+            or not result.compilation_binding
+        ):
+            raise ValueError(
+                "Compiled preview requires an exact current candidate binding"
+            )
+        if result.compilation_binding is not None and (
+            not isinstance(result.compilation_binding, str)
+            or not result.compilation_binding
+        ):
+            raise ValueError("Compilation input binding must be a nonempty string")
         if result.issues_draft_id is not None and (
             not result.issues or result.issues_draft_id != result.draft_id
         ):
             raise ValueError("Task issues address a different draft")
-        if (not isinstance(result.agent_recovery, dict)
-                or any(not isinstance(key, str) or not key or not isinstance(record, dict)
-                       for key, record in result.agent_recovery.items())):
+        if not isinstance(result.agent_recovery, dict) or any(
+            not isinstance(key, str) or not key or not isinstance(record, dict)
+            for key, record in result.agent_recovery.items()
+        ):
             raise ValueError("Agent recovery must contain named object records")
         for row in result.relation_followups:
             RelationFollowup.model_validate(row)
         if result.coupled_relation is not None:
-            if not isinstance(result.coupled_relation, dict) or result.coupled_relation.get('draft_id') != result.draft_id:
-                raise ValueError('Coupled relation repair addresses a different node draft')
-        if result.review is not None and result.review.get("candidate_hash") != result.candidate_hash:
+            if (
+                not isinstance(result.coupled_relation, dict)
+                or result.coupled_relation.get("draft_id") != result.draft_id
+            ):
+                raise ValueError(
+                    "Coupled relation repair addresses a different node draft"
+                )
+        if (
+            result.review is not None
+            and result.review.get("candidate_hash") != result.candidate_hash
+        ):
             raise ValueError("Stored review addresses a different candidate")
         if result.stage in {"ready_to_commit", "committed"} and (
-            not result.candidate_hash or not result.review or result.review.get("verdict") != "accept" or result.issues or result.semantic_issues
+            not result.candidate_hash
+            or not result.review
+            or result.review.get("verdict") != "accept"
+            or result.issues
+            or result.semantic_issues
         ):
             raise ValueError("A committed task requires an accepted current review")
         _detached(result.to_dict())

@@ -7,36 +7,25 @@ workspace; final IDs, repository normalization and export happen exactly once.
 from uuid import uuid4
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.graph.publication import Preview, commit_result
-from cortex.capabilities.graph_merge.identity.contract import identity_map
-from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
-from cortex.capabilities.graph_merge.inputs import IntegrationContext
-from cortex.capabilities.graph_merge.runtime.session import MergeSession
-from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
 from cortex.capabilities.graph_merge.graph.edit_contract import IntegrationProposal
+from cortex.capabilities.graph_merge.graph.operations import PHYSICAL
 from cortex.capabilities.graph_merge.graph.provenance import (
     validate_rewrite_sources,
 )
-from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
-from cortex.capabilities.graph_merge.consolidation.task_context import (
-    LocalTask,
+from cortex.capabilities.graph_merge.graph.publication import Preview, commit_result
+from cortex.capabilities.graph_merge.identity.contract import identity_map
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.models import LocalTask
+from cortex.capabilities.graph_merge.planning import (
+    _nodes,
+    _signal_targets,
+    identity_task_projection,
+    review_batches,
 )
-from cortex.capabilities.graph_merge.planning import _nodes, _signal_targets, identity_task_projection, review_batches
+from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
+from cortex.capabilities.graph_merge.runtime.errors import IntegrationIncomplete
+from cortex.capabilities.graph_merge.runtime.session import MergeSession
 from cortex.schema.relation_vocabulary import require_concrete_relation
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 class IncrementalGraphIntegrationEngine:
@@ -93,11 +82,18 @@ class IncrementalGraphIntegrationEngine:
             )
         ctx.sql_dialect = self.sql_dialect
         if hasattr(self.agent, "max_calls"):
-            self.agent.call_budget = (None if self.model_call_budget is None else {
-                "used": 0,
-                "limit": self.model_call_budget,
-            })
-        from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+            self.agent.call_budget = (
+                None
+                if self.model_call_budget is None
+                else {
+                    "used": 0,
+                    "limit": self.model_call_budget,
+                }
+            )
+        from cortex.capabilities.graph_merge.runtime.contracts import (
+            build_contract_versions,
+        )
+
         versions = build_contract_versions(schema)
         self.session = MergeSession.start(ctx, versions=versions)
         self.execution = None
@@ -105,10 +101,15 @@ class IncrementalGraphIntegrationEngine:
         if resume:
             storage_revision = None
             if self.workspace_path:
-                from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+                from cortex.capabilities.graph_merge.runtime.workspace import (
+                    WorkspaceStore,
+                )
+
                 if WorkspaceStore(self.workspace_path).load(run_id) is not None:
                     storage_revision = resume["revision"]
-            self.session.restore(resume, versions=versions, storage_revision=storage_revision)
+            self.session.restore(
+                resume, versions=versions, storage_revision=storage_revision
+            )
         self._persist(run_id)
         if resume and getattr(self, "external_feedback", None):
             # A reviewed graph needs a local feedback transaction, not another
@@ -125,7 +126,9 @@ class IncrementalGraphIntegrationEngine:
                 )
             phase = getattr(self, "feedback_phase", "reconcile")
             if phase not in {"consolidate", "reconcile"}:
-                raise ValueError("Local feedback phase must be consolidate or reconcile")
+                raise ValueError(
+                    "Local feedback phase must be consolidate or reconcile"
+                )
             impacts = self._run_task(
                 LocalTask(
                     "external-review",
@@ -143,9 +146,13 @@ class IncrementalGraphIntegrationEngine:
             payload = ctx.payload("identity")
             ctx.output_validator = lambda d: identity_map(ctx, d)
             if resume and self.session.identity_decision:
-                from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
+                from cortex.capabilities.graph_merge.identity.contract import (
+                    IdentityDecision,
+                )
 
-                decision = IdentityDecision.model_validate(self.session.identity_decision)
+                decision = IdentityDecision.model_validate(
+                    self.session.identity_decision
+                )
             else:
                 decision = self.agent.invoke("identity", ctx, payload)
             self.session.identity_decision = decision.model_dump(mode="json")
@@ -158,21 +165,30 @@ class IncrementalGraphIntegrationEngine:
                 self.session.content_plan = [[group] for group in groups]
                 self._persist(run_id)
             if any(len(groups) != 1 for groups in self.session.content_plan):
-                raise ValueError('Saved multi-group content plan requires explicit migration; completed task IDs were preserved')
+                raise ValueError(
+                    "Saved multi-group content plan requires explicit migration; completed task IDs were preserved"
+                )
             for index, groups in enumerate(self.session.content_plan):
-                if any(h["task_id"] == f"content-{index}" for h in self.session.history):
+                if any(
+                    h["task_id"] == f"content-{index}" for h in self.session.history
+                ):
                     continue
                 group_aliases, targets, rewrite_feedback = {}, set(), []
                 for group in groups:
                     projection, live_targets, feedback = identity_task_projection(
-                        self.session.current, {k: aliases[k] for k in group["members"]}, self.session.lineage
+                        self.session.current,
+                        {k: aliases[k] for k in group["members"]},
+                        self.session.lineage,
                     )
                     group_aliases.update(projection)
                     targets.update(live_targets)
                     rewrite_feedback.extend(feedback)
                 self._run_task(
                     LocalTask(
-                        f"content-{index}", "consolidate", targets, groups=groups,
+                        f"content-{index}",
+                        "consolidate",
+                        targets,
+                        groups=groups,
                         feedback=rewrite_feedback,
                     ),
                     run_id,
@@ -180,8 +196,14 @@ class IncrementalGraphIntegrationEngine:
                 )
             # First structural pass covers ALL new/unchecked semantic knowledge,
             # not only topology signals. Later passes reopen actual impacts.
-            if (not (resume and resume.get("reconciliation_complete")) or self.session.relation_followups
-                    or (self.session.task_state is not None and self.session.task_state.phase == 'reconcile')):
+            if (
+                not (resume and resume.get("reconciliation_complete"))
+                or self.session.relation_followups
+                or (
+                    self.session.task_state is not None
+                    and self.session.task_state.phase == "reconcile"
+                )
+            ):
                 self._reconcile(run_id, first=True)
                 self.session.reconciliation_complete = True
                 self._persist(run_id)
@@ -190,7 +212,10 @@ class IncrementalGraphIntegrationEngine:
             changes=self.session.lineage.source_changes(self.session.current)
         )
         preview = Preview(
-            self.session.current, self.session.lineage.node_map, self.session.lineage.edge_map, []
+            self.session.current,
+            self.session.lineage.node_map,
+            self.session.lineage.edge_map,
+            [],
         )
         validate_rewrite_sources(ctx, proposal, preview)
         result = commit_result(ctx, proposal, preview, run_id=run_id)
@@ -207,27 +232,54 @@ class IncrementalGraphIntegrationEngine:
 
     def _run_task(self, task, run_id, *, aliases=None):
         from cortex.capabilities.graph_merge.runtime.task import run_task
+
         return run_task(self, task, run_id, aliases=aliases)
 
     def _reconcile(self, run_id, *, first=False, initial_targets=None):
-        from cortex.capabilities.graph_merge.reconciliation.followups import drain_relation_followups
-        from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted, stable_task_id
-        canonical = getattr(self.agent, 'reconciliation_contract', False)
+        from cortex.capabilities.graph_merge.reconciliation.followups import (
+            drain_relation_followups,
+        )
+        from cortex.capabilities.graph_merge.reconciliation.receipts import (
+            is_accepted,
+            stable_task_id,
+        )
+
+        canonical = getattr(self.agent, "reconciliation_contract", False)
         reviewed = set()
-        saved_task = getattr(self.session, 'task_state', None)
-        if saved_task is not None and saved_task.phase == 'reconcile':
-            definitions = [r for r in self.session.open_tasks if r['id'] == saved_task.task_id]
+        saved_task = getattr(self.session, "task_state", None)
+        if saved_task is not None and saved_task.phase == "reconcile":
+            definitions = [
+                r for r in self.session.open_tasks if r["id"] == saved_task.task_id
+            ]
             if len(definitions) != 1:
-                raise ValueError('Unfinished relation task has no exact saved definition')
+                raise ValueError(
+                    "Unfinished relation task has no exact saved definition"
+                )
             row = definitions[0]
-            resumed_task = LocalTask(row['id'], row['phase'], set(row['targets']),
-                groups=row.get('groups', []), checks=row.get('checks', []), feedback=row.get('feedback', []))
+            resumed_task = LocalTask(
+                row["id"],
+                row["phase"],
+                set(row["targets"]),
+                groups=row.get("groups", []),
+                checks=row.get("checks", []),
+                feedback=row.get("feedback", []),
+            )
             self._run_task(resumed_task, run_id)
-            from cortex.capabilities.graph_merge.reconciliation.context import relation_signature
+            from cortex.capabilities.graph_merge.reconciliation.context import (
+                relation_signature,
+            )
+
             if not canonical:
-                self.session.relation_coverage.add(relation_signature(self.session.inputs, self.session.current, resumed_task))
+                self.session.relation_coverage.add(
+                    relation_signature(
+                        self.session.inputs, self.session.current, resumed_task
+                    )
+                )
             self._persist(run_id)
-        from cortex.capabilities.graph_merge.runtime.relation_stage import run_relation_merger
+        from cortex.capabilities.graph_merge.runtime.relation_stage import (
+            run_relation_merger,
+        )
+
         run_relation_merger(self, run_id)
         drain_relation_followups(self, run_id)
         incoming_roots = {
@@ -248,53 +300,95 @@ class IncrementalGraphIntegrationEngine:
         pending = initial_targets
         for cycle in range(self.max_rounds + 1):
             preview = Preview(
-                self.session.current, self.session.lineage.node_map, self.session.lineage.edge_map, []
+                self.session.current,
+                self.session.lineage.node_map,
+                self.session.lineage.edge_map,
+                [],
             )
-            signals = inspection_signals(self.session.inputs, preview, origins=self.session.lineage)
+            signals = inspection_signals(
+                self.session.inputs, preview, origins=self.session.lineage
+            )
             targets = incoming_roots if cycle == 0 and first else (pending or set())
             checks = [
                 s
                 for s in signals
-                if (not is_accepted(self, s) if canonical else s["id"] not in reviewed)
+                if (
+                    not is_accepted((self).session, s)
+                    if canonical
+                    else s["id"] not in reviewed
+                )
                 and _signal_targets(s, self.session.current) & targets
             ]
-            tasks = review_batches(self.session.current, targets=targets, checks=checks,
-                signals_only=getattr(self.agent, 'reconciliation_contract', False))
+            tasks = review_batches(
+                self.session.current,
+                targets=targets,
+                checks=checks,
+                signals_only=getattr(self.agent, "reconciliation_contract", False),
+            )
             if not tasks:
                 return
             impacts = set()
             checks_graph = self.session.current
-            live_checks = {s['id']: s for s in signals}
+            live_checks = {s["id"]: s for s in signals}
             for index, (ids, cs) in enumerate(tasks):
                 if canonical:
                     # A preceding accepted task can close or change a queued
                     # signal. Refresh only after the graph actually changes.
                     if self.session.current != checks_graph:
-                        live_checks = {s['id']: s for s in inspection_signals(self.session.inputs,
-                            Preview(self.session.current, self.session.lineage.node_map, self.session.lineage.edge_map, []),
-                            origins=self.session.lineage)}
+                        live_checks = {
+                            s["id"]: s
+                            for s in inspection_signals(
+                                self.session.inputs,
+                                Preview(
+                                    self.session.current,
+                                    self.session.lineage.node_map,
+                                    self.session.lineage.edge_map,
+                                    [],
+                                ),
+                                origins=self.session.lineage,
+                            )
+                        }
                         checks_graph = self.session.current
-                    cs = [live_checks[c['id']] for c in cs if c['id'] in live_checks]
+                    cs = [live_checks[c["id"]] for c in cs if c["id"] in live_checks]
                     # Earlier tasks may have accepted a shared check or changed
                     # its premises after this batch list was constructed.
-                    cs = [c for c in cs if not is_accepted(self, c)]
+                    cs = [c for c in cs if not is_accepted((self).session, c)]
                     if not cs:
                         continue
-                    ids = set().union(*(_signal_targets(c, self.session.current) for c in cs))
+                    ids = set().union(
+                        *(_signal_targets(c, self.session.current) for c in cs)
+                    )
                 task = LocalTask(
-                    stable_task_id(self, cs) if canonical else f"structure-{cycle}-{index}", "reconcile", ids, checks=cs
+                    stable_task_id((self).session, cs)
+                    if canonical
+                    else f"structure-{cycle}-{index}",
+                    "reconcile",
+                    ids,
+                    checks=cs,
                 )
                 from cortex.capabilities.graph_merge.reconciliation.context import (
                     relation_signature,
                 )
 
-                signature = None if canonical else relation_signature(self.session.inputs, self.session.current, task)
-                if not canonical and signature in getattr(self.session, 'relation_coverage', set()):
+                signature = (
+                    None
+                    if canonical
+                    else relation_signature(
+                        self.session.inputs, self.session.current, task
+                    )
+                )
+                if not canonical and signature in getattr(
+                    self.session, "relation_coverage", set()
+                ):
                     reviewed.update(c["id"] for c in cs)
                     continue
                 impacts |= self._run_task(task, run_id)
                 if not canonical:
-                    self.session.relation_coverage.add(relation_signature(self.session.inputs, self.session.current, task))
+                    self.session.relation_coverage.add(
+                        relation_signature(
+                            self.session.inputs, self.session.current, task
+                        )
+                    )
                 self._persist(run_id)
                 reviewed.update(c["id"] for c in cs)
             # A newly introduced pattern still needs an explicit conclusion,
@@ -302,11 +396,20 @@ class IncrementalGraphIntegrationEngine:
             scope = incoming_roots | set().union(*(ids for ids, _ in tasks))
             for signal in inspection_signals(
                 self.session.inputs,
-                Preview(self.session.current, self.session.lineage.node_map, self.session.lineage.edge_map, []),
+                Preview(
+                    self.session.current,
+                    self.session.lineage.node_map,
+                    self.session.lineage.edge_map,
+                    [],
+                ),
                 origins=self.session.lineage,
             ):
                 keys = _signal_targets(signal, self.session.current)
-                if (not is_accepted(self, signal) if canonical else signal["id"] not in reviewed) and keys & scope:
+                if (
+                    not is_accepted((self).session, signal)
+                    if canonical
+                    else signal["id"] not in reviewed
+                ) and keys & scope:
                     impacts |= keys
             # Reopen affected definitions, including additions to a previously
             # reviewed neighbourhood, without recursively expanding all hubs.
@@ -324,7 +427,10 @@ class IncrementalGraphIntegrationEngine:
                 for s in inspection_signals(
                     self.session.inputs,
                     Preview(
-                        self.session.current, self.session.lineage.node_map, self.session.lineage.edge_map, []
+                        self.session.current,
+                        self.session.lineage.node_map,
+                        self.session.lineage.edge_map,
+                        [],
                     ),
                     origins=self.session.lineage,
                 )
@@ -335,8 +441,10 @@ class IncrementalGraphIntegrationEngine:
         )
 
     def _publish_checks(self):
-        if getattr(self.session, 'relation_followups', ()):
-            raise IntegrationIncomplete('Final graph still has unresolved node relation obligations')
+        if getattr(self.session, "relation_followups", ()):
+            raise IntegrationIncomplete(
+                "Final graph still has unresolved node relation obligations"
+            )
         GraphManager(self.session.inputs.schema).validate_state(self.session.current)
         for edge in self.session.current.graph.edges:
             require_concrete_relation(edge.edge_type)
@@ -350,7 +458,10 @@ class IncrementalGraphIntegrationEngine:
         from cortex.capabilities.graph_merge.graph.repair import (
             validation_targets,
         )
-        from cortex.capabilities.graph_merge.reconciliation.followups import drain_relation_followups
+        from cortex.capabilities.graph_merge.reconciliation.followups import (
+            drain_relation_followups,
+        )
+
         drain_relation_followups(self, run_id)
 
         for attempt in range(self.max_rounds + 1):
@@ -364,10 +475,15 @@ class IncrementalGraphIntegrationEngine:
                 if not targets:
                     raise
                 before = self.session.current
-                self._run_task(LocalTask(
-                    f"contract-repair-{self.session.revision}", "reconcile", targets,
-                    feedback=[i.model_dump(mode="json") for i in error.issues],
-                ), run_id)
+                self._run_task(
+                    LocalTask(
+                        f"contract-repair-{self.session.revision}",
+                        "reconcile",
+                        targets,
+                        feedback=[i.model_dump(mode="json") for i in error.issues],
+                    ),
+                    run_id,
+                )
                 if self.session.current == before:
                     raise error
 
