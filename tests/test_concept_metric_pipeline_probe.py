@@ -36,8 +36,8 @@ def test_non_english_request_is_rejected_before_api(tmp_path):
 
 
 def test_every_runtime_system_prompt_uses_english():
-    from cortex.capabilities.graph_merge.llm.node_contract import node_system, NODE_TYPES
-    from cortex.capabilities.graph_merge.llm.reconciliation_prompts import reconciliation_system, SIGNALS
+    from cortex.capabilities.graph_merge.consolidation.contract import node_system, NODE_TYPES
+    from cortex.capabilities.graph_merge.reconciliation.policy import reconciliation_system, SIGNALS
     import re
     from importlib.resources import files
     texts=[node_system(role,kind) for role in ('writer','assessment') for kind in NODE_TYPES]

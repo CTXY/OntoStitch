@@ -89,7 +89,7 @@ def merge_mode_arguments(args):
 
 def validate_merge_migration(args, batch_id, snapshot):
     """A migrated copy is resumed only with its explicit, matching plan."""
-    from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+    from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
     path = getattr(args, 'merge_checkpoint_migration', None)
     if path is None:
@@ -382,10 +382,10 @@ def merge_worker(args):
     args.sdk_retries, args.merge_transport = 0, True
     from audit_incremental_merge import audit_result
 
-    from cortex.capabilities.graph_merge.integration.incremental import (
+    from cortex.capabilities.graph_merge.engine import (
         IncrementalGraphIntegrationEngine,
     )
-    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
     from cortex.capabilities.graph_merge.llm.incremental import (
         IncrementalIntegrationAgent,
     )

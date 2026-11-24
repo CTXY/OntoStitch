@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.llm.node_context import NodeTaskDialogue, build_node_packet
+from cortex.capabilities.graph_merge.consolidation.presentation import NodeTaskDialogue, build_node_packet
 from cortex.schema import GraphEdge, GraphNode, GraphSpace, GraphState, SourceReference, load_root_schema, validate_graph_state
 
 

@@ -7,9 +7,9 @@ from copy import deepcopy
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import SkipJsonSchema
 from cortex.schema import NodeContent, ConflictPoint
-from cortex.capabilities.graph_merge.integration.relation_edits import EvidenceAlternative, BusinessContract
-from cortex.capabilities.graph_merge.integration.source_units import SourceRoute
-from cortex.capabilities.graph_merge.integration.review import ReviewReference, AbsenceClaim
+from cortex.capabilities.graph_merge.graph.edits import EvidenceAlternative, BusinessContract
+from cortex.capabilities.graph_merge.graph.source_units import SourceRoute
+from cortex.capabilities.graph_merge.consolidation.review import ReviewReference, AbsenceClaim
 from cortex.schema.semantic_validation import validate_semantic_properties
 
 Text = Annotated[str, Field(min_length=1, pattern=r'\S')]

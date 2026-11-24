@@ -20,8 +20,8 @@ except ImportError:
     from markdown_it import MarkdownIt
 from langchain_core.tools import StructuredTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
-from cortex.capabilities.graph_merge.integration.patch import MergePatch
-from cortex.capabilities.graph_merge.integration.review import Review
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
+from cortex.capabilities.graph_merge.consolidation.review import Review
 from cortex.capabilities.graph_merge.llm.task_tools import build_read_tools
 from cortex.schema import load_root_schema
 

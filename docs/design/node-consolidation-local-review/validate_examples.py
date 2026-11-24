@@ -6,9 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.patch import MergePatch, _integrate
-from cortex.capabilities.graph_merge.integration.review import Review, validate_review
-from cortex.capabilities.graph_merge.integration.source_units import (
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, _integrate
+from cortex.capabilities.graph_merge.consolidation.review import Review, validate_review
+from cortex.capabilities.graph_merge.graph.source_units import (
     SourceDestination,
     source_unit_manifest,
 )

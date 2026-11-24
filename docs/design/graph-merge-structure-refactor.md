@@ -113,3 +113,23 @@ work already in progress in the original workspace. Two budget failures captured
 during collection have subsequently been repaired (5/5 budget tests pass).
 Subsequent stages must not add failures beyond this recorded baseline; current
 transaction/recovery test intentions need explicit coverage before old tests retire.
+
+## Stage B — module relocation
+
+Moved 56 modules into root engine/inputs, identity, consolidation, reconciliation,
+runtime and graph ownership. Updated repository imports, module-alias imports,
+current SQL training callers, report source paths and conservative source-policy
+resource resolution. Legacy engines remain only until their shared functions are
+extracted in stage C; this checkpoint does not claim they have been removed.
+
+A 402 KB snapshot of model-visible schemas, role prompts, node packet and relation
+messages is byte-for-byte identical before and after relocation. All 2,331 tests
+collect. The core run passed 636 cases with 3 optional-data skips; its 11 failures
+were a retained old Operator fingerprint reading the moved identity file. After
+fixing that resource path, the affected workflow/transaction and SQL integration
+group passed all 51 cases. Package/policy smoke and independent AST/import review
+found no remaining relocation regression.
+
+The temporary implementation-source map preserves existing invalidation coverage;
+it is an internal migration aid, not an old public import or checkpoint adapter.
+It will be replaced with current resource paths during the subsequent cleanup.

@@ -5,7 +5,7 @@ This allows saved failed proposals to exercise precise v3 diagnostics.
 """
 from copy import deepcopy
 
-from cortex.capabilities.graph_merge.integration.source_units import source_units
+from cortex.capabilities.graph_merge.graph.source_units import source_units
 
 
 def convert_legacy_patch(raw, base):

@@ -1,6 +1,6 @@
 from copy import deepcopy
 import pytest
-from cortex.capabilities.graph_merge.integration.reconciliation_contract import apply_edit_shape, DraftEditError
+from cortex.capabilities.graph_merge.reconciliation.contract import apply_edit_shape, DraftEditError
 
 
 def change(ident, kind='edge_remove'):

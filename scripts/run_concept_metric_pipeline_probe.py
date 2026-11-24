@@ -12,16 +12,16 @@ from pathlib import Path
 import re
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.integration.compiler import Preview, deduplicate_edges
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext, remap_node
-from cortex.capabilities.graph_merge.integration.contracts import isolate_contracts
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.relation_merger import consolidate_relations, relation_groups
-from cortex.capabilities.graph_merge.integration.signals import inspection_signals
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.llm.node_context import build_node_packet
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.graph.publication import Preview, deduplicate_edges
+from cortex.capabilities.graph_merge.inputs import IntegrationContext, remap_node
+from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.reconciliation.relation_merger import consolidate_relations, relation_groups
+from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.consolidation.presentation import build_node_packet
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.infrastructure.artifacts.graph_merge_trace import FileSystemGraphMergeTraceSink
 from cortex.schema import GraphSpace, GraphState, load_root_schema, validate_graph_state
 from cortex.capabilities.graph_merge.models import EvidenceItem
@@ -133,7 +133,7 @@ def record_stage(folder, engine, name):
     if getattr(engine, 'task_state', None):
         write(folder/'task_state.json', engine.task_state.to_dict())
     elif (folder/'workspace.sqlite').exists():
-        from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+        from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
         saved=WorkspaceStore(folder/'workspace.sqlite').load(name)
         if saved and saved.get('task_state'):write(folder/'task_state.json',saved['task_state'])
 
@@ -215,8 +215,8 @@ def run(args):
                 'reason':'This approved identity group is consolidated in a bounded real-case pipeline; preserve compatible matching methods and requested-range parameterization.'}])
             engine._run_task(task,name,aliases={member:members[0] for member in members})
             assert engine.history[-1]['assessment']=='node_assess'
-            from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-            from cortex.capabilities.graph_merge.integration.evidence_refs import evidence_sources
+            from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+            from cortex.capabilities.graph_merge.evidence import evidence_sources
             committed=WorkspaceStore(engine.workspace_path).load(name)['task_state']
             citations=committed['draft']['integrate_groups'][0].get('common_evidence_ids',[])
             node_citations[members[0]]=evidence_sources(engine.ctx,citations)
@@ -247,7 +247,7 @@ def run(args):
         # A real stage handoff, not an injected defect: expose the original
         # relation assertions so the final independent gate can check semantic
         # preservation across description consolidation as well as local health.
-        from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
+        from cortex.capabilities.graph_merge.evidence import EvidencePresentation
         source_context=IntegrationContext(before,GraphState(graph=GraphSpace()),load_root_schema(),evidence=evidence)
         presentation=EvidencePresentation(source_context)
         original_relations=[{**edge.model_dump(mode='json',exclude={'sources','reference_origin'}),

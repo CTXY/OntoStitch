@@ -1,10 +1,10 @@
 from test_graph_integration import catalog, concept, edge, state
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.models import Change, Element
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask, build_task_context
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask, build_task_context
 from cortex.capabilities.graph_merge.llm.packets import compact_node_packet
 from cortex.schema import GraphSpace, GraphState, load_root_schema
 
@@ -63,7 +63,7 @@ def test_shared_edge_is_present_in_each_selected_branch_while_a_subset_stays_loc
 
 def test_relation_packet_shows_complete_focus_branches_without_mutation():
     from ontology_v2_fixtures import discussion_state
-    from cortex.capabilities.graph_merge.integration.relation_context import relation_context
+    from cortex.capabilities.graph_merge.reconciliation.context import relation_context
     original = discussion_state()
     owner = next(n for n in original.conflict_nodes if n.node_type == 'generation_rule')
     target = next(n for n in original.graph.nodes if n.node_type == 'concept')

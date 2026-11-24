@@ -19,8 +19,8 @@ import sys
 import tempfile
 
 from cortex.capabilities.graph_merge.integration.checkpoint_migration import migrate_checkpoint
-from cortex.capabilities.graph_merge.integration.task_state import build_contract_versions, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.schema import GraphState, load_root_schema
 
 

@@ -7,11 +7,11 @@ from langchain_core.messages import AIMessage
 from test_graph_integration import catalog, concept, state
 from test_merge_task_review_boundary import ScriptedModel, engine_for
 
-from cortex.capabilities.graph_merge.integration.signal_receipts import is_accepted
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import build_contract_versions
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import build_contract_versions
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 
 
 def check(ident='A'):
@@ -91,7 +91,7 @@ def test_process_restart_after_commit_needs_no_scheduler_coverage_save(tmp_path,
     replacement.task_state=None
     # Simulate the post-load scheduler with no available model replies.
     replacement.agent=IncrementalIntegrationAgent(ScriptedModel([]))
-    monkeypatch.setattr('cortex.capabilities.graph_merge.integration.incremental.inspection_signals',lambda *a,**k:[check()])
+    monkeypatch.setattr('cortex.capabilities.graph_merge.engine.inspection_signals',lambda *a,**k:[check()])
     replacement._reconcile('run',initial_targets={'A'})
     assert replacement.history==engine.history
 
@@ -99,7 +99,7 @@ def test_process_restart_after_commit_needs_no_scheduler_coverage_save(tmp_path,
 def test_regrouping_filters_accepted_check_before_creating_new_task(tmp_path,monkeypatch):
     engine=make_engine(tmp_path,n=2)
     run(engine,[check('A')])
-    monkeypatch.setattr('cortex.capabilities.graph_merge.integration.incremental.inspection_signals',lambda *a,**k:[check('A'),check('B')])
+    monkeypatch.setattr('cortex.capabilities.graph_merge.engine.inspection_signals',lambda *a,**k:[check('A'),check('B')])
     observed=[]
     real=engine._run_task
     def capture(task,ident,**kwargs):
@@ -133,7 +133,7 @@ def test_changed_premise_really_runs_writer_and_assessment_again(tmp_path,monkey
     # receipt-bearing reconciliation; model re-entry must not be suppressed.
     engine._revision+=1
     engine.history.append({'task_id':'upstream','phase':'consolidate','revision':engine._revision})
-    monkeypatch.setattr('cortex.capabilities.graph_merge.integration.incremental.inspection_signals',lambda *a,**k:[check()])
+    monkeypatch.setattr('cortex.capabilities.graph_merge.engine.inspection_signals',lambda *a,**k:[check()])
     observed=[];real=engine._run_task
     def capture(task,ident,**kwargs):
         observed.append(task)
@@ -153,8 +153,8 @@ def test_signal_closed_by_previous_queued_task_is_not_sent_to_models(tmp_path,mo
     def signals(ctx,preview,**kwargs):
         a=next(n for n in preview.state.graph.nodes if n.id=='A')
         return [check('A')] if a.description else [check('A'),check('B')]
-    monkeypatch.setattr('cortex.capabilities.graph_merge.integration.incremental.inspection_signals',signals)
-    monkeypatch.setattr('cortex.capabilities.graph_merge.integration.incremental.review_batches',
+    monkeypatch.setattr('cortex.capabilities.graph_merge.engine.inspection_signals',signals)
+    monkeypatch.setattr('cortex.capabilities.graph_merge.engine.review_batches',
         lambda current,checks,**kwargs:[(set(c['node_ids']),[c]) for c in checks])
     engine._reconcile('run',initial_targets={'A','B'})
     assert len(engine.history)==1 and is_accepted(engine,check('A'))
@@ -209,8 +209,8 @@ def test_new_checkpoint_cannot_silently_lose_entire_ledger(tmp_path):
 
 
 def test_full_merge_restart_after_durable_accept_before_scheduler_progress(tmp_path,monkeypatch):
-    from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-    from cortex.capabilities.graph_merge.integration.models import IdentityDecision
+    from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+    from cortex.capabilities.graph_merge.graph.edit_contract import IdentityDecision
     from cortex.schema import load_root_schema
     class Agent:
         reconciliation_contract=True
@@ -224,7 +224,7 @@ def test_full_merge_restart_after_durable_accept_before_scheduler_progress(tmp_p
     def signals(ctx,preview,**kwargs):
         ident=next(n.id for n in preview.state.graph.nodes if n.node_type=='concept')
         return [check(ident)]
-    monkeypatch.setattr('cortex.capabilities.graph_merge.integration.incremental.inspection_signals',signals)
+    monkeypatch.setattr('cortex.capabilities.graph_merge.engine.inspection_signals',signals)
     source=state([*catalog(),concept('A','a')]);schema=load_root_schema()
     engine=IncrementalGraphIntegrationEngine(Agent(replies()))
     engine.workspace_path=tmp_path/'full.sqlite'

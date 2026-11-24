@@ -3,14 +3,14 @@ from copy import deepcopy
 
 import pytest
 
-from cortex.capabilities.graph_merge.integration.receipt_ledger import (
+from cortex.capabilities.graph_merge.reconciliation.ledger import (
     check_key,
     has_receipt,
     latest_receipt,
     make_receipt,
     validate_receipt_ledger,
 )
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
 CHECK = {'id': 'source_selection_variants:bond', 'kind': 'source_selection_variants',
          'node_ids': ['bond'], 'required_outcome': 'Preserve compatible matching roles'}

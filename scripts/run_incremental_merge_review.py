@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from summarize_graph_merge_calls import summarize
 
 from cortex.capabilities.graph_merge.integration.engine import implementation_version
-from cortex.capabilities.graph_merge.integration.incremental import (
+from cortex.capabilities.graph_merge.engine import (
     IncrementalGraphIntegrationEngine,
 )
 from cortex.capabilities.graph_merge.integration.recovery import (
@@ -175,7 +175,7 @@ def main():
             )
             engine.workspace_path = out / "workspace.sqlite"
             if args.resume_from:
-                from cortex.capabilities.graph_merge.integration.workspace import (
+                from cortex.capabilities.graph_merge.runtime.workspace import (
                     WorkspaceStore,
                 )
 

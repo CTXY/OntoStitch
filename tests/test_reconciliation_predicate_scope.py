@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 from test_reconciliation_context import runtime, node_context
-from cortex.capabilities.graph_merge.integration.reconciliation_contract import ReadPredicates
+from cortex.capabilities.graph_merge.reconciliation.contract import ReadPredicates
 from cortex.schema import GraphNode, GraphEdge
 
 

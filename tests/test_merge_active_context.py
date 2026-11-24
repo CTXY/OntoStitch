@@ -6,12 +6,12 @@ from langchain_core.messages import AIMessage, ToolMessage
 from test_graph_integration import state
 from test_incremental_agent import Chat
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.llm.packets import (
     TaskDialogue,
     compact_node_packet,
 )
-from cortex.capabilities.graph_merge.llm.task_agent import (
+from cortex.capabilities.graph_merge.llm.agent import (
     IncrementalIntegrationAgent,
     TaskNoProgress,
 )
@@ -128,7 +128,7 @@ def test_five_real_thrombosis_patches_rebuild_instead_of_accumulating():
     import gzip
     from pathlib import Path
 
-    from cortex.capabilities.graph_merge.llm.input_budget import check_request
+    from cortex.capabilities.graph_merge.llm.budget import check_request
     folder = Path(__file__).parent / 'fixtures/thrombosis_contract_failure'
     with gzip.open(folder / 'initial_packet.json.gz', 'rt') as stream:
         packet = json.load(stream)

@@ -6,14 +6,14 @@ import pytest
 from test_graph_integration import catalog, concept, edge, state
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.compiler import Preview
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.models import IntegrationProposal
-from cortex.capabilities.graph_merge.integration.patch import MergePatch, compile_patch
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.graph.edit_contract import IntegrationProposal
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch
 from cortex.capabilities.graph_merge.integration.legacy_patch_adapter import convert_legacy_patch
 
-from cortex.capabilities.graph_merge.integration.provenance import validate_rewrite_sources
+from cortex.capabilities.graph_merge.graph.provenance import validate_rewrite_sources
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import ConflictChoice, ConflictPoint, GraphNode, GraphSpace, GraphState, NodeContent, SourceReference, load_root_schema
 
@@ -215,7 +215,7 @@ def test_integration_remaps_declared_consumer_refs_without_integrating_future_gr
 
 
 def test_unchanged_consumer_of_new_conflict_owner_is_in_semantic_review_scope():
-    from cortex.capabilities.graph_merge.integration.task_context import semantic_review_targets
+    from cortex.capabilities.graph_merge.consolidation.task_context import semantic_review_targets
     a, b = concept("A", "a"), concept("B", "a")
     metric = GraphNode(id="metric", node_type="metric", name="Amount", properties={
         "expression": {"expr": "SUM(${value})", "refs": {"value": "A"}}}, sources=(SourceReference(source_id="metric"),))

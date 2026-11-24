@@ -10,14 +10,14 @@ from types import SimpleNamespace
 import pytest
 
 from cortex.capabilities.graph_merge.integration.checkpoint_migration import migrate_checkpoint
-from cortex.capabilities.graph_merge.integration.task_state import (
+from cortex.capabilities.graph_merge.runtime.state import (
     CheckpointContractMismatch,
     ContractVersions,
     TaskState,
     canonical_hash,
     validate_checkpoint_contract,
 )
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.schema import GraphNode, GraphSpace, GraphState
 
 

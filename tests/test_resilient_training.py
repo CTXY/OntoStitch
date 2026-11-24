@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage
 from test_agent_runtime import ScriptModel
 from test_graph_integration import catalog, concept, state
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 from cortex.infrastructure.llm.key_slots import read_key_slots
 from cortex.schema import load_root_schema
@@ -310,7 +310,7 @@ def test_merge_worker_submits_multiple_case_graphs_per_operator_call(tmp_path, m
     from pathlib import Path
     from types import SimpleNamespace
 
-    import cortex.capabilities.graph_merge.integration.incremental as integration
+    import cortex.capabilities.graph_merge.engine as integration
 
     spec = importlib.util.spec_from_file_location('batch_runner', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
     runner = importlib.util.module_from_spec(spec)

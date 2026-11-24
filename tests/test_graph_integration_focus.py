@@ -3,8 +3,8 @@
 from test_graph_integration import catalog, concept, contexts, edge, state
 
 from cortex.capabilities.graph_merge.integration.assessment import assessment_view
-from cortex.capabilities.graph_merge.integration.compiler import compile_proposal
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.publication import compile_proposal
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
 )
@@ -12,7 +12,7 @@ from cortex.capabilities.graph_merge.integration.scope import (
     content_consumers,
     focused_revision,
 )
-from cortex.capabilities.graph_merge.integration.tools import build_tools
+from cortex.capabilities.graph_merge.identity.tools import build_tools
 
 
 def fixture():
@@ -131,7 +131,7 @@ def test_rationale_coverage_is_required_without_claiming_semantic_truth():
     import pytest
     from pydantic import ValidationError
 
-    from cortex.capabilities.graph_merge.integration.models import review_output_model
+    from cortex.capabilities.graph_merge.graph.edit_contract import review_output_model
 
     model = review_output_model(["rule-a", "rule-b"])
     fields = {

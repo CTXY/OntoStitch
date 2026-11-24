@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from test_graph_integration import catalog, concept, state
 from test_incremental_agent import Chat
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 from cortex.capabilities.graph_merge.llm.transport import invoke_with_recovery
 from cortex.schema import load_root_schema

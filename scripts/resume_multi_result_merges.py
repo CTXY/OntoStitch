@@ -12,12 +12,12 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.task_state import ContractVersions,TaskState,build_contract_versions,canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.integration.signal_premises import signal_premise
-from cortex.capabilities.graph_merge.integration.signal_receipts import dependency_facts,policy_hash
-from cortex.capabilities.graph_merge.integration.signal_scope_migration import build_scope_migration,validate_scope_migrations
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.runtime.state import ContractVersions,TaskState,build_contract_versions,canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.reconciliation.premises import signal_premise
+from cortex.capabilities.graph_merge.reconciliation.receipts import dependency_facts,policy_hash
+from cortex.capabilities.graph_merge.reconciliation.scope_migration import build_scope_migration,validate_scope_migrations
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository,SqlTrainingGraphMergeEvidenceResolver
 from cortex.schema import GraphState,load_root_schema
 
@@ -36,7 +36,7 @@ def setup(root,folder,payload,versions):
    (*obj.sources,*getattr(obj,'common_sources',()),*(s for a in getattr(obj,'alternatives',()) for s in a.sources))))
  resolver=SqlTrainingGraphMergeEvidenceResolver(MappingEvidenceRepository(read(root/'source_evidence.json')))
  ctx=IntegrationContext(before,incoming,schema,evidence=resolver.resolve(sources));ctx.sql_dialect='sqlite'
- from cortex.capabilities.graph_merge.integration.incremental import input_fingerprint
+ from cortex.capabilities.graph_merge.engine import input_fingerprint
  assert input_fingerprint(ctx)==payload['input_fingerprint']
  return SimpleNamespace(ctx=ctx,current=GraphState.model_validate(payload['current']),signal_receipts=payload['signal_receipts'],
                         signal_scope_migrations=payload.get('signal_scope_migrations',[]),contract_versions=versions)

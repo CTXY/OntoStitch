@@ -4,15 +4,15 @@ import copy
 import pytest
 from test_graph_integration import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.integration.batch import BatchResult
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.graph.batch import BatchResult
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import TaskState, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.integration.review import Review
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.consolidation.review import Review
 from cortex.schema import load_root_schema
 
 

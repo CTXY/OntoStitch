@@ -10,13 +10,13 @@ from langchain_core.messages import AIMessage
 from test_graph_integration import catalog, concept, edge, state
 from test_merge_task_review_boundary import ScriptedModel, engine_for
 
-from cortex.capabilities.graph_merge.integration.compiler import Preview
-from cortex.capabilities.graph_merge.integration.signal_receipts import is_accepted, premise_hash, policy_hash, record_acceptance
-from cortex.capabilities.graph_merge.integration.signals import inspection_signals
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_runner import accepted_signal_checks
-from cortex.capabilities.graph_merge.integration.task_state import build_contract_versions, canonical_hash
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted, premise_hash, policy_hash, record_acceptance
+from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.task import accepted_signal_checks
+from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import GraphState, load_root_schema
 
@@ -97,7 +97,7 @@ def test_real_commit_with_edge_replacement_does_not_reprocess_surviving_triangle
     assert 'old' not in current[0]['edge_ids']
     assert engine.signal_receipts[0]['check']==current[0] and is_accepted(engine,current[0])
     assert engine.history[-1]['reconciliation_trigger_check_hashes']!=engine.history[-1]['reconciliation_check_hashes']
-    monkeypatch.setattr('cortex.capabilities.graph_merge.integration.incremental.inspection_signals',lambda *a,**k:current)
+    monkeypatch.setattr('cortex.capabilities.graph_merge.engine.inspection_signals',lambda *a,**k:current)
     engine.agent=IncrementalIntegrationAgent(ScriptedModel([]))
     accepted=deepcopy(engine.history)
     engine._reconcile('run',initial_targets={'A','B','C'})

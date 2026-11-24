@@ -3,7 +3,7 @@
 import pytest
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.node_relations import (
+from cortex.capabilities.graph_merge.consolidation.relations import (
     NodeRelationCoordinationRequired,
     sync_node_relations,
 )
@@ -180,7 +180,7 @@ def test_unchanged_existing_conflict_target_does_not_reopen_coordination():
 
 
 def test_exact_same_target_versions_with_confirmed_owner_alias_can_inherit():
-    from cortex.capabilities.graph_merge.integration.context import remap_node
+    from cortex.capabilities.graph_merge.inputs import remap_node
     target=conflict_concept('old-target')
     before=state([column('col'),concept('source'),target],
         [edge('incoming',source='source',target='old-target',kind='has_property')])

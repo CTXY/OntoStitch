@@ -7,23 +7,23 @@ from langchain_core.messages import AIMessage, ToolMessage
 from test_graph_integration import catalog, concept, edge, state
 from test_incremental_agent import Chat
 
-from cortex.capabilities.graph_merge.integration.batch import ActiveBatch, BatchResult
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.evidence_refs import (
+from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.evidence import (
     EvidencePresentation,
 )
-from cortex.capabilities.graph_merge.integration.proposal_scope import (
+from cortex.capabilities.graph_merge.graph.scope import (
     ProposalScope,
     ScopeContextRequired,
 )
-from cortex.capabilities.graph_merge.integration.relation_context import (
+from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
 )
-from cortex.capabilities.graph_merge.integration.relation_edits import (
+from cortex.capabilities.graph_merge.graph.edits import (
     RelationPatch,
     submit_patch,
 )
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.llm.incremental import (
     IncrementalIntegrationAgent,
     NodeReview,

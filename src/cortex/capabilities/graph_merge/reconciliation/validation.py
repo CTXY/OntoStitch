@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cortex.capabilities.graph_merge.identity import exact_identity_key
+from cortex.capabilities.graph_merge.identity.legacy import exact_identity_key
 from cortex.capabilities.graph_merge.reconciliation.evidence import evidence_complete
 from cortex.schema import GraphNode, GraphSpace, IdentityMode, validate_graph_space
 from cortex.schema.references import property_reference_ids

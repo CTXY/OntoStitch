@@ -177,7 +177,7 @@ def build_incoming_graph(
     import json
 
     from cortex.application.ontology_graph import GraphManager, GraphRejected, issue
-    from cortex.capabilities.graph_merge.integration.contracts import isolate_contracts
+    from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
     from cortex.capabilities.sql_training.core.ids import make_node_id
     from cortex.schema.references import remap_references
     from cortex.schema.relation_metadata import remap_metadata_edges

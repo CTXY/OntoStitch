@@ -3,11 +3,11 @@ from typing import Literal
 
 from langchain_core.tools import tool
 
-from cortex.capabilities.graph_merge.integration.evidence_refs import (
+from cortex.capabilities.graph_merge.evidence import (
     EvidencePresentation,
 )
-from cortex.capabilities.graph_merge.integration.tools import build_tools
-from cortex.capabilities.graph_merge.llm.relation_reads import RelationReads
+from cortex.capabilities.graph_merge.identity.tools import build_tools
+from cortex.capabilities.graph_merge.reconciliation.reads import RelationReads
 
 
 def build_read_tools(context, payload, *, scope=None, before=None, draft_provider=None):
@@ -75,7 +75,7 @@ def build_read_tools(context, payload, *, scope=None, before=None, draft_provide
         other owners return standalone scopes. Structural shared fields do not
         create source units. Reading never authorizes unrelated writes.
         """
-        from cortex.capabilities.graph_merge.integration.source_units import (
+        from cortex.capabilities.graph_merge.graph.source_units import (
             source_unit_manifest,
         )
         base = before or getattr(context, 'task_before', None)
@@ -100,7 +100,7 @@ def build_read_tools(context, payload, *, scope=None, before=None, draft_provide
         is a projection, not a replacement draft. No accepted graph is changed.
         """
         draft = draft_provider() if draft_provider is not None else getattr(context, "active_draft", None)
-        from cortex.capabilities.graph_merge.integration.task_state import (
+        from cortex.capabilities.graph_merge.runtime.state import (
             canonical_hash,
         )
         # Projections inherit the complete draft identity, never their own hash.

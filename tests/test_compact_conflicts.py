@@ -9,7 +9,7 @@ from test_graph_manager import apply, create, metric, node
 
 from cortex.application.online_context import ChoicePoint, InteractionOption
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.identity import IdentityGrouper
+from cortex.capabilities.graph_merge.identity.legacy import IdentityGrouper
 from cortex.capabilities.graph_merge.models import NodeRepresentation, RepresentationRef
 from cortex.capabilities.graph_merge.workflow.context import GroupContext
 from cortex.capabilities.online_context.output.projection import (

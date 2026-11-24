@@ -4,9 +4,9 @@ No semantic rewrite is inferred. Correspondence still names immutable source
 handles, and the full cumulative proposal passes the original compiler.
 """
 
-from cortex.capabilities.graph_merge.integration.compiler import mapped_base
-from cortex.capabilities.graph_merge.integration.context import remap_edge, remap_node
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.publication import mapped_base
+from cortex.capabilities.graph_merge.inputs import remap_edge, remap_node
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     GraphEdit,
     IntegrationProposal,
 )

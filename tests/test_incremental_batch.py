@@ -3,8 +3,8 @@
 import pytest
 from test_graph_integration import catalog, concept, state
 
-from cortex.capabilities.graph_merge.integration.batch import ActiveBatch, BatchResult
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.schema import load_root_schema
 
 
@@ -23,7 +23,7 @@ def write(node, operation="update_node"):
 
 
 def test_generated_catalog_prose_does_not_prevent_exact_edge_deduplication():
-    from cortex.capabilities.graph_merge.integration.compiler import deduplicate_edges
+    from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
     from cortex.schema import GraphEdge, SourceReference
 
     def catalog_edge(key, description, source, origin="default"):
@@ -278,7 +278,7 @@ def test_new_conflict_owner_survives_replaying_its_saved_patch():
 def test_new_edge_survivor_copies_current_sources_without_inventing_before_ref():
     from test_graph_integration import edge
 
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 
     first = edge("e1", "A", "B", "has_feature").model_copy(
         update={"sources": concept("A", "a").sources}
@@ -326,7 +326,7 @@ def test_new_edge_survivor_copies_current_sources_without_inventing_before_ref()
 
 def test_alias_projection_does_not_assign_new_evidence_to_an_unselected_conflict_branch():
     from cortex.application.ontology_graph import GraphManager
-    from cortex.capabilities.graph_merge.integration.batch import alias_view
+    from cortex.capabilities.graph_merge.graph.batch import alias_view
     from cortex.schema import (
         ConflictPoint,
         GraphSpace,

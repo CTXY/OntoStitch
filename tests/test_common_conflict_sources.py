@@ -6,11 +6,11 @@ from test_graph_manager import apply
 
 from cortex.application.merge_graph import GraphMergeResult
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.compiler import Preview
-from cortex.capabilities.graph_merge.integration.conflict_resolution import ConflictResolution, resolution_edits
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.models import Change, Element, IntegrationProposal
-from cortex.capabilities.graph_merge.integration.provenance import SourceCoverageError, validate_rewrite_sources
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.consolidation.conflicts import ConflictResolution, resolution_edits
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element, IntegrationProposal
+from cortex.capabilities.graph_merge.graph.provenance import SourceCoverageError, validate_rewrite_sources
 from cortex.capabilities.online_context.output.projection import (
     build_downstream_guidance, project_graph_state, semantic_asset_payload,
 )

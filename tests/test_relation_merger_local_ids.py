@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage
 
 from cortex.capabilities.graph_merge.llm.relation_merger import RelationResults, invoke_relation_merger
 from cortex.capabilities.graph_merge.llm.relation_merger_ids import make_adapter
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
 
 def packet():

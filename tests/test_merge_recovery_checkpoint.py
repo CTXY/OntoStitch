@@ -10,14 +10,14 @@ from test_graph_integration import catalog, concept, state
 from test_merge_task_review_boundary import engine_for
 
 from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-from cortex.capabilities.graph_merge.integration.patch import MergePatch
-from cortex.capabilities.graph_merge.integration.review import Review
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import (
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
+from cortex.capabilities.graph_merge.consolidation.review import Review
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import (
     ContractVersions,
     TaskState,
 )
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.schema import GraphNode, GraphSpace, GraphState
 
 
@@ -148,7 +148,7 @@ def test_task_runner_recovery_callbacks_preserve_errors_after_interrupt_and_rest
 
 
 def test_ready_legacy_candidate_is_recompiled_before_review_reuse(tmp_path, monkeypatch):
-    from cortex.capabilities.graph_merge.integration import task_runner
+    import cortex.capabilities.graph_merge.runtime.task as task_runner
 
     base = state([*catalog(), concept('A', 'a')])
     path = tmp_path / 'ready.sqlite'
@@ -192,7 +192,7 @@ def test_ready_legacy_candidate_is_recompiled_before_review_reuse(tmp_path, monk
 
 
 def test_legacy_ready_review_cannot_commit_a_candidate_that_does_not_recompile(tmp_path):
-    from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+    from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
     base = state([*catalog(), concept('A', 'a')])
 
@@ -201,7 +201,7 @@ def test_legacy_ready_review_cannot_commit_a_candidate_that_does_not_recompile(t
             raise AssertionError('Legacy ready candidate must recompile before any model call')
 
     engine, _ = engine_for(base, NoModel(), tmp_path / 'wrong-candidate.sqlite')
-    from cortex.capabilities.graph_merge.integration.task_state import (
+    from cortex.capabilities.graph_merge.runtime.state import (
         build_contract_versions,
     )
 
@@ -327,7 +327,7 @@ def two_review_packets(*args, **kwargs):
 def test_node_review_collects_all_actual_slice_facts_without_leaking_previous_reads(monkeypatch):
     from types import SimpleNamespace
 
-    from cortex.capabilities.graph_merge.integration import node_review
+    import cortex.capabilities.graph_merge.consolidation.assessment as node_review
 
     monkeypatch.setattr(node_review, 'review_packets', two_review_packets)
     context = SimpleNamespace(task_relevant_facts=[{'fact': 'stale prior role observation'}],
@@ -354,7 +354,7 @@ def test_node_review_collects_all_actual_slice_facts_without_leaking_previous_re
 def test_node_review_early_identity_revisit_retains_only_obtained_packets(monkeypatch):
     from types import SimpleNamespace
 
-    from cortex.capabilities.graph_merge.integration import node_review
+    import cortex.capabilities.graph_merge.consolidation.assessment as node_review
 
     monkeypatch.setattr(node_review, 'review_packets', two_review_packets)
     context = SimpleNamespace()
@@ -373,7 +373,7 @@ def test_node_review_early_identity_revisit_retains_only_obtained_packets(monkey
 
 
 def test_node_assessment_context_retry_supplies_version_bound_facts_to_all_slices(tmp_path, monkeypatch):
-    from cortex.capabilities.graph_merge.integration import node_review
+    import cortex.capabilities.graph_merge.consolidation.assessment as node_review
 
     monkeypatch.setattr(node_review, 'review_packets', two_review_packets)
     base = state([*catalog(), concept('A', 'a')])
@@ -411,7 +411,7 @@ def test_node_assessment_context_retry_supplies_version_bound_facts_to_all_slice
 
 @pytest.mark.parametrize('changed_slice', [0, 1])
 def test_node_assessment_gate_uses_facts_from_every_slice_after_restart(tmp_path, monkeypatch, changed_slice):
-    from cortex.capabilities.graph_merge.integration import node_review
+    import cortex.capabilities.graph_merge.consolidation.assessment as node_review
 
     base = state([*catalog(), concept('A', 'a')])
     path = tmp_path / 'multi-slice.sqlite'
@@ -465,11 +465,11 @@ def test_node_assessment_gate_uses_facts_from_every_slice_after_restart(tmp_path
 
 
 def test_saved_candidate_recovers_legacy_scope_without_rerunning_writer(tmp_path, monkeypatch):
-    from cortex.capabilities.graph_merge.integration import task_runner
-    from cortex.capabilities.graph_merge.integration.proposal_scope import (
+    import cortex.capabilities.graph_merge.runtime.task as task_runner
+    from cortex.capabilities.graph_merge.graph.scope import (
         ScopeContextRequired,
     )
-    from cortex.capabilities.graph_merge.integration.task_state import (
+    from cortex.capabilities.graph_merge.runtime.state import (
         build_contract_versions,
         canonical_hash,
     )

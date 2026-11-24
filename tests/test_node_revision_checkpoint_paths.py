@@ -9,11 +9,11 @@ from test_graph_integration import catalog, concept, edge, state
 from test_merge_task_review_boundary import engine_for
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import TaskState
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import TaskState
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.schema import GraphState, SourceReference, load_root_schema
 
 

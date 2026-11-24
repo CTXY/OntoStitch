@@ -10,15 +10,15 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine, _signal_targets, input_fingerprint
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.signal_receipts import is_accepted
-from cortex.capabilities.graph_merge.integration.signals import inspection_signals
-from cortex.capabilities.graph_merge.llm.reconciliation_prompts import SIGNALS
-from cortex.capabilities.graph_merge.integration.compiler import Preview
-from cortex.capabilities.graph_merge.integration.task_state import ContractVersions
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine, _signal_targets, input_fingerprint
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted
+from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
+from cortex.capabilities.graph_merge.reconciliation.policy import SIGNALS
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.runtime.state import ContractVersions
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository, SqlTrainingGraphMergeEvidenceResolver
 from cortex.schema import GraphNode, GraphState, load_root_schema
 
@@ -80,7 +80,7 @@ def audit(root, *, batch=None):
         calls.append(task.id)
         raise AssertionError('Accepted checks unexpectedly re-entered model task: '+task.id)
     engine._run_task=forbidden
-    import cortex.capabilities.graph_merge.integration.incremental as scheduler
+    import cortex.capabilities.graph_merge.engine as scheduler
     original_inspection,original_batches=scheduler.inspection_signals,scheduler.review_batches
     history=deepcopy(engine.history)
     try:

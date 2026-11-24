@@ -4,9 +4,9 @@ import pytest
 from test_graph_integration import business_contract
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration import compiler
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.models import (
+import cortex.capabilities.graph_merge.graph.publication as compiler
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
 )
@@ -266,7 +266,7 @@ def test_conflict_name_placeholder_survives_handle_publication_and_repository(tm
     )
     handle = ctx.input_node_map[owner.id]
     ctx.read_ids.add(handle)
-    from cortex.capabilities.graph_merge.integration.context import remap_node
+    from cortex.capabilities.graph_merge.inputs import remap_node
 
     candidate = remap_node(owner, {owner.id: handle})
     assert candidate.name == handle
@@ -295,7 +295,7 @@ def test_conflict_name_placeholder_survives_handle_publication_and_repository(tm
 
 
 def test_remapping_does_not_change_ordinary_name_equal_to_old_id():
-    from cortex.capabilities.graph_merge.integration.context import remap_node
+    from cortex.capabilities.graph_merge.inputs import remap_node
 
     ordinary = event("occurrence").model_copy(update={"name": "occurrence"})
     renamed = remap_node(ordinary, {"occurrence": "canonical"})

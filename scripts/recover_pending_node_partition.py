@@ -8,14 +8,14 @@ import json
 from pathlib import Path
 import sqlite3
 
-from cortex.capabilities.graph_merge.integration.compiler import identity_map
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.incremental import identity_task_projection
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.models import IdentityDecision
-from cortex.capabilities.graph_merge.integration.patch import IdentityIntegration
-from cortex.capabilities.graph_merge.integration.task_state import ContractVersions, TaskState, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.graph.publication import identity_map
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.engine import identity_task_projection
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.graph.edit_contract import IdentityDecision
+from cortex.capabilities.graph_merge.consolidation.compiler import IdentityIntegration
+from cortex.capabilities.graph_merge.runtime.state import ContractVersions, TaskState, canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.schema import GraphState, load_root_schema
 
 

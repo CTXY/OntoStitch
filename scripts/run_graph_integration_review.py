@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
-from cortex.capabilities.graph_merge.integration.context import (
+from cortex.capabilities.graph_merge.inputs import (
     IntegrationContext,
     remap_edge,
     remap_node,

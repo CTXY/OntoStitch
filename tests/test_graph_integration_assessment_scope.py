@@ -11,9 +11,9 @@ from test_graph_integration import (
 )
 
 from cortex.capabilities.graph_merge.integration.assessment import assessment_view
-from cortex.capabilities.graph_merge.integration.compiler import compile_proposal
+from cortex.capabilities.graph_merge.graph.publication import compile_proposal
 from cortex.capabilities.graph_merge.integration.engine import GraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
 )

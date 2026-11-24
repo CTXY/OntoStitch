@@ -162,8 +162,8 @@ def test_agent_read_does_not_rebind_legacy_none_diagnostics():
     from test_graph_integration import state
     from test_incremental_agent import Chat
 
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-    from cortex.capabilities.graph_merge.llm.task_agent import (
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
+    from cortex.capabilities.graph_merge.llm.agent import (
         IncrementalIntegrationAgent,
     )
     from cortex.schema import load_root_schema

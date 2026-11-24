@@ -20,13 +20,13 @@ from regress_signal_subgraph_inputs import (
 from resume_first10_current_graph import model_for
 from run_resilient_training import transport_error_details
 
-from cortex.capabilities.graph_merge.integration.incremental import (
+from cortex.capabilities.graph_merge.engine import (
     IncrementalGraphIntegrationEngine,
 )
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.infrastructure.artifacts.graph_merge_trace import (
     FileSystemGraphMergeTraceSink,
 )
@@ -69,8 +69,8 @@ def verify_completed_probe(folder, fixture):
     import sqlite3
     from types import SimpleNamespace
 
-    from cortex.capabilities.graph_merge.integration.signal_receipts import is_accepted
-    from cortex.capabilities.graph_merge.integration.task_state import ContractVersions
+    from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted
+    from cortex.capabilities.graph_merge.runtime.state import ContractVersions
     from cortex.schema import GraphState
     with sqlite3.connect((folder / 'workspace.sqlite').resolve().as_uri() + '?mode=ro', uri=True) as connection:
         saved = json.loads(connection.execute('select payload from merge_workspaces').fetchone()[0])
@@ -116,7 +116,7 @@ def run(output, short, slot, resume=None):
     engine.pending_relation_work = engine.pending_review = None
     task = context.active_task
     if resume is not None:
-        from cortex.capabilities.graph_merge.integration.task_state import (
+        from cortex.capabilities.graph_merge.runtime.state import (
             TaskState,
             build_contract_versions,
         )

@@ -2,13 +2,13 @@
 import pytest
 from test_graph_integration import catalog, concept, state
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.node_review import (
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.consolidation.assessment import (
     ReviewInputTooLarge,
     review_packets,
 )
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.config.models import GraphMergeConfig
 from cortex.schema import load_root_schema
 
@@ -52,7 +52,7 @@ def test_relation_agent_checks_the_configured_complete_request_budget(budget):
     from test_reconciliation_context import node_context, runtime
 
     from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
-    from cortex.capabilities.graph_merge.llm.input_budget import RequestInputTooLarge, check_request
+    from cortex.capabilities.graph_merge.llm.budget import RequestInputTooLarge, check_request
 
     class BudgetChat(Chat):
         def bind(self, **kwargs):
@@ -109,7 +109,7 @@ def test_oversized_request_reports_components_and_never_retries_or_modifies_the_
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from cortex.capabilities.graph_merge.llm.input_budget import (
+    from cortex.capabilities.graph_merge.llm.budget import (
         RequestInputTooLarge,
         check_request,
     )

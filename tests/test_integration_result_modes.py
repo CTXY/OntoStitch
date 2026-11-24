@@ -8,10 +8,10 @@ from test_graph_integration import catalog, concept, state
 from test_merge_identity_integration_v2 import content, points, prepare
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.patch import IdentityIntegration, MergePatch, compile_patch
-from cortex.capabilities.graph_merge.integration.source_units import PatchContractError, source_units
-from cortex.capabilities.graph_merge.llm.node_contract import NodeWriterResult
-from cortex.capabilities.graph_merge.llm.task_agent import failure_feedback
+from cortex.capabilities.graph_merge.consolidation.compiler import IdentityIntegration, MergePatch, compile_patch
+from cortex.capabilities.graph_merge.graph.source_units import PatchContractError, source_units
+from cortex.capabilities.graph_merge.consolidation.contract import NodeWriterResult
+from cortex.capabilities.graph_merge.llm.agent import failure_feedback
 from cortex.schema import ConflictPoint, GraphState, load_root_schema
 
 

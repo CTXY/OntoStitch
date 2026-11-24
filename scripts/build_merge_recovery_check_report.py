@@ -59,7 +59,7 @@ def main():
  if (report/'thrombosis_recovery.json').exists():body+=detail('完整迁移记录',read(report/'thrombosis_recovery.json'))
  diffs=[]
  before=report/'runtime_before';after=report/'runtime_after'
- for rel in ['src/cortex/capabilities/graph_merge/integration/relation_followups.py','src/cortex/capabilities/graph_merge/llm/reconciliation_context.py','src/cortex/capabilities/graph_merge/llm/prompts/reconciliation/prompts/common.en.md']:
+ for rel in ['src/cortex/capabilities/graph_merge/reconciliation/followups.py','src/cortex/capabilities/graph_merge/reconciliation/permissions.py','src/cortex/capabilities/graph_merge/llm/prompts/reconciliation/prompts/common.en.md']:
   diff=''.join(difflib.unified_diff((before/rel).read_text().splitlines(True),(after/rel).read_text().splitlines(True),fromfile='before/'+rel,tofile='after/'+rel));diffs.append(diff);body+=detail('代码/英文prompt差异：'+rel,diff)
  (report/'runtime_fix.patch').write_text('\n'.join(diffs))
  root=Path(active['databases']['thrombosis_prediction']['root']);folder=root/'merge/batch-0007'

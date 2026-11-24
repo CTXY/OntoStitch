@@ -2,11 +2,11 @@
 from types import SimpleNamespace
 import pytest
 from test_graph_integration import catalog, concept, edge, state
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.reconciliation_compile import compile_draft
-from cortex.capabilities.graph_merge.integration.reconciliation_contract import DraftDocument
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.reconciliation.compiler import compile_draft
+from cortex.capabilities.graph_merge.reconciliation.contract import DraftDocument
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.schema import GraphSpace, GraphState, NodeContent, SourceReference, load_root_schema
 
 

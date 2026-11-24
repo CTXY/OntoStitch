@@ -9,22 +9,22 @@ from dotenv import load_dotenv
 from summarize_graph_merge_calls import summarize
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.batch import alias_view
-from cortex.capabilities.graph_merge.integration.compiler import Preview
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.graph.batch import alias_view
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.integration.engine import implementation_version
-from cortex.capabilities.graph_merge.integration.incremental import (
+from cortex.capabilities.graph_merge.engine import (
     IncrementalGraphIntegrationEngine,
 )
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.models import IntegrationProposal
-from cortex.capabilities.graph_merge.integration.provenance import (
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.graph.edit_contract import IntegrationProposal
+from cortex.capabilities.graph_merge.graph.provenance import (
     validate_rewrite_sources,
 )
-from cortex.capabilities.graph_merge.integration.relation_context import (
+from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
 )
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,

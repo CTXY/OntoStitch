@@ -13,12 +13,12 @@ from types import SimpleNamespace
 import json,os,sqlite3
 
 from resume_multi_result_merges import setup
-from cortex.capabilities.graph_merge.integration.task_state import TaskState,build_contract_versions,canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.relation_followups import followup_task,validate_followup_queue
-from cortex.capabilities.graph_merge.integration.signal_scope_migration import build_scope_migration,validate_scope_migrations
-from cortex.capabilities.graph_merge.integration.signal_receipts import policy_hash
+from cortex.capabilities.graph_merge.runtime.state import TaskState,build_contract_versions,canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.reconciliation.followups import followup_task,validate_followup_queue
+from cortex.capabilities.graph_merge.reconciliation.scope_migration import build_scope_migration,validate_scope_migrations
+from cortex.capabilities.graph_merge.reconciliation.receipts import policy_hash
 from cortex.schema import load_root_schema
 
 

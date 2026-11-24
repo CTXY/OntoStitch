@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cortex.capabilities.graph_merge.integration.signal_premises import premise_object, signal_key, signal_premise
+from cortex.capabilities.graph_merge.reconciliation.premises import premise_object, signal_key, signal_premise
 from cortex.schema import GraphNode, GraphEdge, GraphSpace, GraphState, SourceReference, load_root_schema
 
 

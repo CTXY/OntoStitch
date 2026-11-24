@@ -12,7 +12,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from cortex.application.ontology_graph import GraphManager
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
-from cortex.capabilities.graph_merge.identity import IdentityGrouper
+from cortex.capabilities.graph_merge.identity.legacy import IdentityGrouper
 from cortex.capabilities.graph_merge.models import IdentityGroupingResult
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,

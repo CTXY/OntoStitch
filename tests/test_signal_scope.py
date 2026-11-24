@@ -1,8 +1,8 @@
 """Exact signal sets replace generic one-hop graph expansion."""
 from test_signal_premises import add, check, edge, node, setup
 
-from cortex.capabilities.graph_merge.integration.signal_premises import signal_premise
-from cortex.capabilities.graph_merge.integration.signal_scope import signal_scope
+from cortex.capabilities.graph_merge.reconciliation.premises import signal_premise
+from cortex.capabilities.graph_merge.reconciliation.scope import signal_scope
 
 
 def test_triangle_omits_unrelated_core_and_boundary_adjacency_and_owners():

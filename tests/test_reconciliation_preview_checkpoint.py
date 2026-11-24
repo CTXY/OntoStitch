@@ -1,8 +1,8 @@
 """Explicit complete edits survive every compile/handoff crash window."""
 from copy import deepcopy
 import pytest
-from cortex.capabilities.graph_merge.integration.task_state import TaskState
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.state import TaskState
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from test_merge_task_state import graph, versions
 from test_reconciliation_agent_runtime import CanonicalChat, fixture, call, edit
 

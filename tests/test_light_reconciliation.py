@@ -6,17 +6,17 @@ from langchain_core.messages import AIMessage
 from test_graph_integration import catalog, concept, edge, state
 from test_incremental_agent import Chat
 
-from cortex.capabilities.graph_merge.integration.batch import ActiveBatch
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.relation_context import (
+from cortex.capabilities.graph_merge.graph.batch import ActiveBatch
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
     relation_signature,
 )
-from cortex.capabilities.graph_merge.integration.relation_edits import (
+from cortex.capabilities.graph_merge.graph.edits import (
     RelationPatch,
     submit_patch,
 )
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 from cortex.schema import load_root_schema
 
@@ -253,7 +253,7 @@ def test_last_call_reserves_completion_without_turning_failure_into_empty_succes
     IncrementalIntegrationAgent(model, max_calls=2).invoke("reconcile", ctx, payload)
     assert [t.name for t in model.tools] == ["submit_patch"]
     assert ctx.active_batch.preview == base
-    from cortex.capabilities.graph_merge.integration.relation_edits import RegionIncomplete
+    from cortex.capabilities.graph_merge.graph.edits import RegionIncomplete
     with pytest.raises(RegionIncomplete, match="Missing a required relation contract"):
         submit_patch(ctx, RelationPatch(failure="Missing a required relation contract", explanation="Cannot safely complete."))
     fresh, state_before, x, y, _edge = setup()

@@ -9,9 +9,9 @@ from pathlib import Path
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from cortex.capabilities.graph_merge.integration.compiler import compile_proposal
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.publication import compile_proposal
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
 )

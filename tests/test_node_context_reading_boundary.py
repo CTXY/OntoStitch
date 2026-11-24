@@ -2,9 +2,9 @@
 import pytest
 from test_graph_integration import catalog, concept, state
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.node_context import compact_task_context
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask, build_task_context
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.consolidation.context import compact_task_context
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask, build_task_context
 from cortex.schema import load_root_schema
 
 
@@ -61,7 +61,7 @@ def test_empty_predicate_filter_is_unfiltered_and_current_owner_is_explicit():
     from langchain_core.messages import AIMessage, ToolMessage
     from test_graph_integration import edge
     from test_incremental_agent import Chat
-    from cortex.capabilities.graph_merge.integration.batch import ActiveBatch
+    from cortex.capabilities.graph_merge.graph.batch import ActiveBatch
     from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
     source = state([*catalog(), concept('A', 'a'), concept('B', 'b')], [edge('ab', 'A', 'B', 'has_feature')])
     ctx = IntegrationContext(state(), source, load_root_schema())

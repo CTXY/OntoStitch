@@ -10,11 +10,11 @@ from test_graph_integration import catalog, concept, edge, state
 from test_merge_task_review_boundary import engine_for
 
 from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-from cortex.capabilities.graph_merge.integration.relation_followups import drain_relation_followups
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import TaskState, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.reconciliation.followups import drain_relation_followups
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import TaskState, canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 
 
 class NodeChat:
@@ -145,7 +145,7 @@ def test_committed_followup_is_not_replayed_after_queue_removal_interruption(tmp
 
 def test_followup_cannot_be_rebound_to_a_different_draft(tmp_path):
     engine, _ = fixture(tmp_path, NodeChat())
-    from cortex.capabilities.graph_merge.integration.task_state import build_contract_versions
+    from cortex.capabilities.graph_merge.runtime.state import build_contract_versions
     task = TaskState.capture(engine.current, task_id='t', phase='consolidate', versions=build_contract_versions(engine.ctx.schema))
     task = task.with_draft({'explanation': 'current'})
     invalid = replace(task, coupled_relation={'draft_id': 'different-draft'})
@@ -154,14 +154,14 @@ def test_followup_cannot_be_rebound_to_a_different_draft(tmp_path):
 
 
 def force_relation_handoff(monkeypatch):
-    from cortex.capabilities.graph_merge.integration.node_relations import NodeRelationCoordinationRequired
+    from cortex.capabilities.graph_merge.consolidation.relations import NodeRelationCoordinationRequired
 
     def handoff(base, integrated, *, node_aliases, edge_aliases, owner_ids):
         raise NodeRelationCoordinationRequired(integrated, owner_ids=owner_ids,
             diagnostics=[{'code': 'explicit_test_relation_outcome', 'owner_id': 'A',
                           'edge_id': 'e-A'}],
             node_aliases=node_aliases, edge_aliases=edge_aliases)
-    monkeypatch.setattr('cortex.capabilities.graph_merge.integration.node_relations.sync_node_relations', handoff)
+    monkeypatch.setattr('cortex.capabilities.graph_merge.consolidation.relations.sync_node_relations', handoff)
 
 
 class InterruptedGraphChat(NodeChat):
@@ -214,7 +214,7 @@ def test_coupled_checkpoint_corruption_stops_without_node_writer_retry(tmp_path,
 
 
 def test_mandatory_noop_assessment_receives_current_owner_and_relations(tmp_path):
-    from cortex.capabilities.graph_merge.integration.relation_context import relation_context
+    from cortex.capabilities.graph_merge.reconciliation.context import relation_context
     engine, _ = fixture(tmp_path, NodeChat())
     task = LocalTask('obligation', 'graph_assess', {'A'}, checks=[{
         'id': 'retain-current-representation', 'kind': 'node_relation_followup',

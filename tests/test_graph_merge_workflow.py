@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from test_agent_runtime import ScriptModel, call, message
 
-from cortex.capabilities.graph_merge.identity import IdentityGrouper, node_content
+from cortex.capabilities.graph_merge.identity.legacy import IdentityGrouper, node_content
 from cortex.capabilities.graph_merge.llm import (
     LLMConsolidationChecker,
     LLMGroupConsolidator,

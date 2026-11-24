@@ -6,15 +6,15 @@ from pathlib import Path
 import pytest
 
 from cortex.application.retrieval import ColumnSemanticContext
-from cortex.capabilities.graph_merge.integration.context import (
+from cortex.capabilities.graph_merge.inputs import (
     IntegrationContext,
     remap_node,
 )
-from cortex.capabilities.graph_merge.integration.compiler import (
+from cortex.capabilities.graph_merge.graph.publication import (
     commit_result,
     compile_proposal,
 )
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
 )

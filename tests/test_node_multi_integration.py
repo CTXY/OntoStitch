@@ -7,14 +7,14 @@ from langchain_core.messages import AIMessage
 from test_graph_integration import catalog, concept, edge, state
 from test_merge_identity_integration_v2 import content, prepare
 from test_merge_task_review_boundary import engine_for
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.patch import MergePatch, compile_patch
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import TaskState
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.node_context import NodeTaskDialogue, build_node_packet
-from cortex.capabilities.graph_merge.llm.node_contract import normalize_node_result
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import TaskState
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.consolidation.presentation import NodeTaskDialogue, build_node_packet
+from cortex.capabilities.graph_merge.consolidation.contract import normalize_node_result
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.schema import GraphNode, GraphState, SourceReference
 
 
@@ -155,7 +155,7 @@ def test_partition_preserves_conflict_and_branch_specific_edges():
         key=units[route['source_unit_id']]
         route['destination']=({'kind':'common'} if key=='E' else
                               {'kind':'alternatives','alternative_ids':['left' if key=='C' else 'right']})
-    from cortex.capabilities.graph_merge.integration.node_relations import NodeRelationCoordinationRequired
+    from cortex.capabilities.graph_merge.consolidation.relations import NodeRelationCoordinationRequired
     with pytest.raises(NodeRelationCoordinationRequired) as caught:
         compile_raw(base,ctx,packet,raw)
     # A new conflict at the destination of existing edges still requires the
@@ -206,7 +206,7 @@ def test_same_partition_contract_compiles_all_four_node_types(kind):
 
 def test_empty_internal_subgroup_reports_contract_error():
     from types import SimpleNamespace
-    from cortex.capabilities.graph_merge.integration.node_revision import partition_groups
+    from cortex.capabilities.graph_merge.consolidation.revision import partition_groups
     with pytest.raises(ValueError,match='partition_group_too_small'):
         partition_groups({'owner_id':'A','member_ids':['A','B']},
                          [SimpleNamespace(owner_id='A',member_ids=())],['A','B'])

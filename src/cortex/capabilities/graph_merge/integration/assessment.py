@@ -1,7 +1,7 @@
 """Assessment scope comes from the compiled graph, never the author's change log."""
 
-from cortex.capabilities.graph_merge.integration.compiler import mapped_base
-from cortex.capabilities.graph_merge.integration.context import (
+from cortex.capabilities.graph_merge.graph.publication import mapped_base
+from cortex.capabilities.graph_merge.inputs import (
     PHYSICAL,
     semantic_relations_first,
 )

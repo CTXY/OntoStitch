@@ -5,14 +5,14 @@ from langchain_core.messages import AIMessage
 from test_light_reconciliation import setup
 from test_incremental_agent import Chat
 from test_relation_draft_recovery import setup_engine
-from cortex.capabilities.graph_merge.integration.relation_context import node_view, relation_context
-from cortex.capabilities.graph_merge.integration.relation_edits import RelationPatch, submit_patch, evidence_sources
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.batch import ActiveBatch, BatchResult
+from cortex.capabilities.graph_merge.reconciliation.context import node_view, relation_context
+from cortex.capabilities.graph_merge.graph.edits import RelationPatch, submit_patch, evidence_sources
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
 from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
-from cortex.capabilities.graph_merge.integration.review import Review
+from cortex.capabilities.graph_merge.consolidation.review import Review
 from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import SourceReference
 
@@ -85,8 +85,8 @@ def test_true_noop_skips_review(tmp_path):
 
 def test_complete_conflict_resolves_evidence_to_exact_branch_sources():
     from test_graph_integration import catalog, concept, state
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-    from cortex.capabilities.graph_merge.integration.batch import ActiveBatch
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
+    from cortex.capabilities.graph_merge.graph.batch import ActiveBatch
     from cortex.application.ontology_graph import GraphManager
     from cortex.schema import load_root_schema
     refs=[SourceReference(source_id=k,case_id=k,locator='QA',chunk_id='original') for k in ['one','two']]
@@ -112,7 +112,7 @@ def test_complete_conflict_resolves_evidence_to_exact_branch_sources():
 
 
 def test_wire_guard_does_not_count_unsent_response_metadata():
-    from cortex.capabilities.graph_merge.llm.input_budget import check_request, RequestInputTooLarge
+    from cortex.capabilities.graph_merge.llm.budget import check_request, RequestInputTooLarge
     from langchain_core.messages import HumanMessage
     message=AIMessage(content="small",response_metadata={"audit":"x"*200000})
     assert check_request([message],[],max_characters=1000)<1000
@@ -127,9 +127,9 @@ def test_wire_guard_does_not_count_unsent_response_metadata():
 def test_explicit_existing_branch_resolution_projects_edges_and_lineage(tmp_path):
     from test_graph_integration import catalog, concept, edge, state
     from cortex.schema import GraphNode, load_root_schema
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-    from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
+    from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
     from cortex.capabilities.graph_merge.llm.incremental import NodeReview
     refs=[SourceReference(source_id=k) for k in ['one','two']]
     owner=GraphNode.model_validate({**concept('owner','a').model_dump(mode='json'),
@@ -154,7 +154,7 @@ def test_explicit_existing_branch_resolution_projects_edges_and_lineage(tmp_path
 
 
 def test_alternative_tool_schema_uses_evidence_ids_not_internal_sources():
-    from cortex.capabilities.graph_merge.integration.models import CompleteAlternative
+    from cortex.capabilities.graph_merge.graph.edit_contract import CompleteAlternative
     fields=CompleteAlternative.model_json_schema()['properties']
     assert 'evidence_ids' in fields and 'sources' not in fields
 
@@ -182,7 +182,7 @@ def test_distinct_required_reads_are_not_blocked_after_four_rounds():
     from langchain_core.messages import AIMessage, ToolMessage
     from test_graph_integration import catalog, concept, state
     from test_incremental_agent import Chat
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
     from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
     from cortex.schema import load_root_schema
     ctx = IntegrationContext(state(), state([*catalog(), concept('N', 'a')]), load_root_schema())
@@ -201,7 +201,7 @@ def test_distinct_required_reads_are_not_blocked_after_four_rounds():
 def test_shared_guidance_is_not_rerendered_when_requested():
     from langchain_core.messages import AIMessage, ToolMessage
     from test_graph_integration import catalog, concept, state
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
     from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
     from cortex.schema import load_root_schema
     ctx=IntegrationContext(state(),state([*catalog(),concept('N','a')]),load_root_schema());ctx.candidate=ctx.union_state()
@@ -239,7 +239,7 @@ def test_pending_created_object_keeps_sources_on_later_update():
 
 
 def test_read_attribution_matches_packet_without_touching_business_properties():
-    from cortex.capabilities.graph_merge.integration.evidence_refs import compact_attribution
+    from cortex.capabilities.graph_merge.evidence import compact_attribution
     from cortex.capabilities.graph_merge.models import EvidenceItem
     ctx,base,a,b,_=setup();node=next(n for n in base.graph.nodes if n.id==a)
     ctx.evidence=(EvidenceItem(id='proof',case_id='case',source=node.sources[0],content={'question':'Q'}),)
@@ -261,7 +261,7 @@ def test_partial_update_retains_name_bindings_and_sources():
 
 
 def test_repair_verification_reads_current_field_not_old_finding():
-    from cortex.capabilities.graph_merge.integration.node_review import current_repair_fields
+    from cortex.capabilities.graph_merge.consolidation.assessment import current_repair_fields
     ctx,base,a,b,_=setup()
     nodes=[n.model_copy(update={'description':'Corrected current description'}) if n.id==a else n for n in base.graph.nodes]
     current=base.model_copy(update={'graph':base.graph.model_copy(update={'nodes':tuple(nodes)})})
@@ -272,7 +272,7 @@ def test_repair_verification_reads_current_field_not_old_finding():
 
 def test_conflict_union_stays_canonical_after_replaying_pending_edits():
     from test_graph_integration import catalog, concept, state
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
     from cortex.schema import load_root_schema
     refs=[SourceReference(source_id='z-source'),SourceReference(source_id='a-source')]
     a=concept('A','a').model_copy(update={'sources':(refs[0],)})

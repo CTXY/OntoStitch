@@ -5,8 +5,8 @@ import sqlite3
 
 import pytest
 
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.workspace import (
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.runtime.workspace import (
     WorkspaceCorruption,
     WorkspaceRevisionMismatch,
     WorkspaceStore,
@@ -138,7 +138,7 @@ def test_store_allows_known_pending_global_grounding_conflict(tmp_path):
 def test_persisted_lineage_restores_with_actual_current_and_origins(tmp_path):
     from types import SimpleNamespace
 
-    from cortex.capabilities.graph_merge.integration.models import Change, Element
+    from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element
 
     initial = state()
     ctx = SimpleNamespace(

@@ -7,15 +7,15 @@ from langchain_core.messages import AIMessage
 from test_graph_integration import catalog, concept, edge, state
 from test_merge_identity_integration_v2 import content, points, prepare, parse_legacy
 
-from cortex.capabilities.graph_merge.integration.batch import ActiveBatch
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.graph.batch import ActiveBatch
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.patch import MergePatch, compile_patch
-from cortex.capabilities.graph_merge.integration.review import Review
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch
+from cortex.capabilities.graph_merge.consolidation.review import Review
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.schema import GraphNode, SourceReference
 
 

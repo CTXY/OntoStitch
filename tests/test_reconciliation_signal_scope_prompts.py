@@ -1,8 +1,8 @@
 """Signal-local input promises match bounded reads and explicit write rights."""
 from test_reconciliation_context import runtime
 
-from cortex.capabilities.graph_merge.llm.reconciliation_presentation import fixed_prompt
-from cortex.capabilities.graph_merge.llm.reconciliation_prompts import (
+from cortex.capabilities.graph_merge.reconciliation.presentation import fixed_prompt
+from cortex.capabilities.graph_merge.reconciliation.policy import (
     SIGNALS,
     reconciliation_system,
 )

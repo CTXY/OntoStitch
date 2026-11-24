@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cortex.capabilities.graph_merge.integration.signal_premises import signal_key, signal_premise
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+from cortex.capabilities.graph_merge.reconciliation.premises import signal_key, signal_premise
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import GraphNode, GraphState, SourceReference, load_root_schema
 

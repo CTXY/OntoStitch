@@ -7,8 +7,8 @@ import pytest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import run_bird_first_batch_review as runner
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.llm.identity_guidance import build_identity_guidance
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.identity.guidance import build_identity_guidance
 from cortex.schema import GraphState, GraphSpace, load_root_schema
 
 

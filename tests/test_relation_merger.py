@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage
 
-from cortex.capabilities.graph_merge.integration.relation_merger import (
+from cortex.capabilities.graph_merge.reconciliation.relation_merger import (
     consolidate_relations, relation_groups,
 )
 from cortex.schema import SourceReference, load_root_schema

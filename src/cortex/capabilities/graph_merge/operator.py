@@ -17,7 +17,7 @@ from cortex.capabilities.graph_merge.edges import (
     normalize_edges,
     remap_property_node_ids,
 )
-from cortex.capabilities.graph_merge.identity import IdentityGrouper
+from cortex.capabilities.graph_merge.identity.legacy import IdentityGrouper
 from cortex.capabilities.graph_merge.models import (
     FinalNodeGroup,
     IdentityGroupingResult,
@@ -53,7 +53,7 @@ def _implementation_fingerprint():
             for name in (
                 "operator.py",
                 "transactions.py",
-                "identity.py",
+                "identity/legacy.py",
                 "normalization.py",
                 "edges.py",
                 "models.py",

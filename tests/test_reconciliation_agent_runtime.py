@@ -8,8 +8,8 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from test_graph_integration import catalog, concept, edge, state
 from test_merge_task_review_boundary import engine_for
 
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 
 
 def call(name, args):
@@ -122,7 +122,7 @@ def test_mixed_actions_do_not_apply_any_edit(tmp_path):
 
 
 def test_repeated_unchanged_edit_reuses_compilation(tmp_path,monkeypatch):
-    from cortex.capabilities.graph_merge.integration import reconciliation_compile
+    import cortex.capabilities.graph_merge.reconciliation.compiler as reconciliation_compile
     original=reconciliation_compile.compile_draft;versions=[]
     def counted(*args,**kw): versions.append(args[2].version);return original(*args,**kw)
     monkeypatch.setattr(reconciliation_compile,'compile_draft',counted)
@@ -215,7 +215,7 @@ def test_assessment_after_redundant_read_gets_result_only_not_another_read(tmp_p
 def unbound_chat_tools(monkeypatch):
     # Real bind_tools returns a separate runnable; this mutable test chat needs
     # its old tool list cleared when transport deliberately uses the base LLM.
-    from cortex.capabilities.graph_merge.llm import reconciliation_agent
+    import cortex.capabilities.graph_merge.reconciliation.agent as reconciliation_agent
     original=reconciliation_agent.invoke_with_recovery
     def invoke(agent,tools,messages,**kwargs):
         if not tools: agent.llm.tools=[]

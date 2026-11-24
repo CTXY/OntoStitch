@@ -7,9 +7,9 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from test_graph_integration import catalog, concept, state
 
-from cortex.capabilities.graph_merge.integration.compiler import mapped_base
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.publication import mapped_base
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
     IntegrationReview,
@@ -87,8 +87,8 @@ def test_nested_rule_errors_are_reported_before_graph_compilation():
 
 
 def test_rewrite_source_guard_preserves_exact_references_without_auto_propagation():
-    from cortex.capabilities.graph_merge.integration.compiler import Preview
-    from cortex.capabilities.graph_merge.integration.provenance import (
+    from cortex.capabilities.graph_merge.graph.publication import Preview
+    from cortex.capabilities.graph_merge.graph.provenance import (
         validate_rewrite_sources,
     )
     from cortex.schema import GraphSpace, GraphState, SourceReference
@@ -283,7 +283,7 @@ def test_call_trace_survives_agent_error(tmp_path):
 
 
 def test_submit_tool_schema_requires_operation_and_retains_pending_repair():
-    from cortex.capabilities.graph_merge.integration.tools import build_tools
+    from cortex.capabilities.graph_merge.identity.tools import build_tools
 
     ctx = IntegrationContext(
         state(), state([*catalog(), concept("A", "a")]), load_root_schema()
@@ -423,8 +423,8 @@ def test_bad_correspondence_can_be_removed_and_replaced():
 
 
 def test_selection_signal_uses_current_concept_targets_and_sql_dialect():
-    from cortex.capabilities.graph_merge.integration.compiler import Preview
-    from cortex.capabilities.graph_merge.integration.signals import inspection_signals, projected_columns
+    from cortex.capabilities.graph_merge.graph.publication import Preview
+    from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals, projected_columns
     from cortex.capabilities.graph_merge.models import EvidenceItem
     from cortex.schema import SourceReference
 
@@ -472,7 +472,7 @@ def test_selection_signal_uses_current_concept_targets_and_sql_dialect():
 
 
 def test_supported_reason_cannot_also_declare_unsupported_claims():
-    from cortex.capabilities.graph_merge.integration.models import RationaleCheck
+    from cortex.capabilities.graph_merge.graph.edit_contract import RationaleCheck
 
     with pytest.raises(ValueError, match="unsupported"):
         RationaleCheck(
@@ -484,7 +484,7 @@ def test_supported_reason_cannot_also_declare_unsupported_claims():
 
 
 def test_conflict_tool_factors_actual_actions_and_preserves_sources():
-    from cortex.capabilities.graph_merge.integration.tools import build_tools
+    from cortex.capabilities.graph_merge.identity.tools import build_tools
     from cortex.schema import GraphNode, SourceReference
 
     def rule(key, action):

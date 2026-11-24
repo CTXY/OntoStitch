@@ -6,23 +6,23 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.compiler import (
+from cortex.capabilities.graph_merge.graph.publication import (
     commit_result,
     compile_proposal,
     identity_map,
     mapped_base,
 )
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.integration.engine import (
     GraphIntegrationEngine,
     IntegrationIncomplete,
 )
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
     IntegrationReview,
 )
-from cortex.capabilities.graph_merge.integration.tools import build_tools
+from cortex.capabilities.graph_merge.identity.tools import build_tools
 from cortex.schema import (
     GraphEdge,
     GraphNode,

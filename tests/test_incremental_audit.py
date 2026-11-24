@@ -196,7 +196,7 @@ def test_real_conflict_resolves_each_complete_alternative():
 
 def test_publication_all_branch_scope_equals_unscoped_but_subset_does_not():
     from ontology_v2_fixtures import discussion_state
-    from cortex.capabilities.graph_merge.integration.compiler import assessed_semantic_content
+    from cortex.capabilities.graph_merge.graph.publication import assessed_semantic_content
 
     original = discussion_state()
     owner = original.conflict_nodes[0]

@@ -1,8 +1,8 @@
 """Public patch contracts must match compile/scope feedback behavior."""
 import pytest
 
-from cortex.capabilities.graph_merge.integration.relation_edits import RelationPatch, submit_patch
-from cortex.capabilities.graph_merge.integration.proposal_scope import ScopeContextRequired
+from cortex.capabilities.graph_merge.graph.edits import RelationPatch, submit_patch
+from cortex.capabilities.graph_merge.graph.scope import ScopeContextRequired
 from test_merge_simplified_interface import region
 
 
@@ -62,27 +62,27 @@ def test_scope_feedback_includes_only_changed_property_old_value():
 
 @pytest.mark.parametrize('refs', [[], ()])
 def test_revise_requires_an_affected_object_reference(refs):
-    from cortex.capabilities.graph_merge.integration.review import Review
+    from cortex.capabilities.graph_merge.consolidation.review import Review
     with pytest.raises(ValueError):
         Review(verdict='revise', issues=[{'refs': refs, 'basis': [{'kind':'edge','id':'edge.one'}], 'problem':'Incorrect attribute bearer.', 'required_outcome':'Attach the attribute to its true bearer.'}])
 
 
 def test_structural_review_accepts_cross_object_references_without_field_paths():
-    from cortex.capabilities.graph_merge.integration.review import Review
+    from cortex.capabilities.graph_merge.consolidation.review import Review
     review = Review(verdict='revise', issues=[{'refs': [{'kind':'edge','id':'edge.one'}, {'kind':'node','id':'concept.bearer'}], 'basis':[{'kind':'edge','id':'edge.one'}], 'problem':'The relation is attached to the wrong bearer.', 'required_outcome':'Use the original supported bearer.'}])
     assert review.verdict == 'revise'
     assert all(not ref.fields for ref in review.issue_refs)
 
 
 def test_review_acceptance_does_not_require_references():
-    from cortex.capabilities.graph_merge.integration.review import Review
+    from cortex.capabilities.graph_merge.consolidation.review import Review
     assert Review(verdict='accept').issue_refs == ()
 
 
 def test_unknown_field_feedback_does_not_advertise_blocked_whole_properties():
     from test_light_reconciliation import setup
-    from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
-    from cortex.capabilities.graph_merge.llm.relation_reads import RelationReads
+    from cortex.capabilities.graph_merge.evidence import EvidencePresentation
+    from cortex.capabilities.graph_merge.reconciliation.reads import RelationReads
     ctx, _, a, _, _ = setup()
     reply = RelationReads(ctx, EvidencePresentation(ctx)).read('items', [a], ['targets'])
     fields = reply['read_errors'][0]['available_fields']
@@ -92,7 +92,7 @@ def test_unknown_field_feedback_does_not_advertise_blocked_whole_properties():
 
 
 def test_edge_merge_schema_explains_edge_ids_and_separate_property_update():
-    from cortex.capabilities.graph_merge.integration.batch import EdgeMerge
+    from cortex.capabilities.graph_merge.graph.batch import EdgeMerge
     fields = EdgeMerge.model_json_schema()['properties']
     assert set(fields) == {'source_ids', 'survivor_id', 'explanation'}
     assert 'Graph EDGE IDs' in fields['source_ids']['description']
@@ -101,7 +101,7 @@ def test_edge_merge_schema_explains_edge_ids_and_separate_property_update():
 
 
 def test_canonical_edit_examples_match_the_actual_public_tool_schema():
-    from cortex.capabilities.graph_merge.integration.reconciliation_contract import EditDraft
+    from cortex.capabilities.graph_merge.reconciliation.contract import EditDraft
     edit=EditDraft.model_validate({"put_changes":[
         {"change_id":"create","kind":"edge_create","edge_id":"new","edge_type":"has_feature",
          "from_node_id":"A","to_node_id":"B","properties":{"description":"An evidence-supported relationship"},
@@ -116,8 +116,8 @@ def test_canonical_edit_examples_match_the_actual_public_tool_schema():
 
 def test_validation_feedback_keeps_all_paths_without_echoing_patch():
     from pydantic import ValidationError
-    from cortex.capabilities.graph_merge.integration.relation_edits import RelationPatch
-    from cortex.capabilities.graph_merge.integration.edit_feedback import validation_feedback
+    from cortex.capabilities.graph_merge.graph.edits import RelationPatch
+    from cortex.capabilities.graph_merge.runtime.feedback import validation_feedback
     with pytest.raises(ValidationError) as caught:
         RelationPatch.model_validate({'edge_merges': [{'kept_edge_id': 'SECRET_BODY_SENTINEL'}]})
     text = validation_feedback(caught.value)
@@ -134,6 +134,6 @@ def test_validation_feedback_keeps_all_paths_without_echoing_patch():
                  'properties':{'description':'A real relation.'}, 'evidence':['Q1']}),
 ])
 def test_obsolete_field_aliases_are_rejected_instead_of_silently_rewritten(model, data):
-    from cortex.capabilities.graph_merge.integration import relation_edits
+    import cortex.capabilities.graph_merge.graph.edits as relation_edits
     with pytest.raises(ValueError):
         getattr(relation_edits, model).model_validate(data)

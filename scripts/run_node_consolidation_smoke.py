@@ -20,15 +20,15 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.integration.context import PHYSICAL, IntegrationContext, references, remap_edge, remap_node
-from cortex.capabilities.graph_merge.integration.contracts import isolate_contracts
-from cortex.capabilities.graph_merge.integration.compiler import deduplicate_edges
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import TaskState, build_contract_versions, canonical_hash
-from cortex.capabilities.graph_merge.llm.node_context import NodeTaskDialogue, build_node_packet
-from cortex.capabilities.graph_merge.llm.node_contract import node_system
+from cortex.capabilities.graph_merge.inputs import PHYSICAL, IntegrationContext, references, remap_edge, remap_node
+from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
+from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import TaskState, build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.consolidation.presentation import NodeTaskDialogue, build_node_packet
+from cortex.capabilities.graph_merge.consolidation.contract import node_system
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import GraphSpace, GraphState, SourceReference, load_root_schema, validate_graph_state
 
@@ -78,7 +78,7 @@ def read_checkpoint(path, run_id):
 
 def migrate_fixture(args, prepared, schema):
     """Create a versioned recovery copy, preserving node/relationship Writer work."""
-    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 
     manifest, base, context, packet = prepared
     name, root = manifest['name'], args.output / manifest['name']
@@ -349,7 +349,7 @@ def permission_evidence(trace):
 
 
 def run_fixture(args, spec, prepared, model, shared_budget):
-    from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+    from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
     from cortex.infrastructure.artifacts.graph_merge_trace import FileSystemGraphMergeTraceSink
     from run_resilient_training import transport_error_details
 
@@ -394,7 +394,7 @@ def run_fixture(args, spec, prepared, model, shared_budget):
         engine._run_task(task, 'node-smoke:' + manifest['name'], aliases={member: members[0] for member in members})
         GraphManager(context.schema).validate_state(engine.current)
         manifest['strict_candidate_validation_passed'] = True
-        from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+        from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
         saved = WorkspaceStore(root / 'workspace.sqlite').load('node-smoke:' + manifest['name'])
         completed = [entry for entry in engine.history if entry.get('task_id') == task.id and entry.get('assessment') == 'node_assess']
         manifest['node_assessment_passed'] = bool(completed) and saved.get('task_state', {}).get('stage') == 'committed'

@@ -6,7 +6,7 @@ import hashlib
 from uuid import uuid4
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.identity import exact_identity_key
+from cortex.capabilities.graph_merge.identity.legacy import exact_identity_key
 from cortex.capabilities.graph_merge.models import (
     NodeRepresentation,
     ReconciledNode,

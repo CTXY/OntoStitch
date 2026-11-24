@@ -10,9 +10,9 @@ from langchain_openai.chat_models.base import _convert_message_to_dict
 from test_graph_integration import state
 from test_incremental_agent import Chat
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.llm.packets import TaskDialogue
-from cortex.capabilities.graph_merge.llm.task_agent import (
+from cortex.capabilities.graph_merge.llm.agent import (
     IncrementalIntegrationAgent,
     OutputProtocolRecoveryExhausted,
 )
@@ -195,7 +195,7 @@ def test_protocol_repair_also_applies_to_identity_and_assessment(phase, name, ou
 def test_mixed_read_and_submission_is_rejected_atomically_before_read_or_draft_write(monkeypatch):
     from langchain_core.tools import tool
 
-    from cortex.capabilities.graph_merge.llm import task_agent
+    import cortex.capabilities.graph_merge.llm.agent as task_agent
     reads = []
 
     @tool

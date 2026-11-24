@@ -4,8 +4,8 @@ from copy import deepcopy
 import pytest
 
 from test_graph_integration import catalog, concept, edge, state
-from cortex.capabilities.graph_merge.integration.batch import ActiveBatch, BatchResult
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.schema import GraphState, GraphSpace, load_root_schema
 
 
@@ -82,12 +82,12 @@ def test_explicit_relation_deletion_clears_pending_diagnostic():
 @pytest.mark.parametrize('restore_ready_accept', [False, True])
 def test_assessment_sees_self_edge_and_cannot_accept_it_before_writer_repairs(tmp_path, repair, restore_ready_accept):
     from test_merge_task_review_boundary import engine_for
-    from cortex.capabilities.graph_merge.integration.patch import MergePatch
-    from cortex.capabilities.graph_merge.integration.review import Review
-    from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-    from cortex.capabilities.graph_merge.integration.task_state import TaskState
-    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-    from cortex.capabilities.graph_merge.llm.node_context import build_node_packet
+    from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
+    from cortex.capabilities.graph_merge.consolidation.review import Review
+    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+    from cortex.capabilities.graph_merge.runtime.state import TaskState
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+    from cortex.capabilities.graph_merge.consolidation.presentation import build_node_packet
 
     base, _, _ = preview_batch()
 

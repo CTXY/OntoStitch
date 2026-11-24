@@ -11,11 +11,11 @@ import time
 from zoneinfo import ZoneInfo
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.schema import GraphEdge, GraphNode, GraphSpace, GraphState, load_root_schema
 from reconciliation_probe_fixtures import (Fixture, case_data, preserve_conflict_fixture,
     content, digest, evidence_for, live_invariant_oracle, real_metric_fixture,
@@ -31,7 +31,7 @@ MERGER_CASES = {
 
 def natural_relation_fixture(args, name):
     """Use an untouched real graph and its original QA, never replicated edges."""
-    from cortex.capabilities.graph_merge.integration.relation_merger import relation_groups
+    from cortex.capabilities.graph_merge.reconciliation.relation_merger import relation_groups
     database, case_id = MERGER_CASES[name]
     graph_path = args.graph_root / database / 'case_level_graphs' / case_id / 'state.json'
     before = GraphState.model_validate(json.loads(graph_path.read_text()))
@@ -202,7 +202,7 @@ def bind_recovery(args, agent, folder):
 
 
 def run_merger(args, budget, fixture):
-    from cortex.capabilities.graph_merge.integration.relation_merger import consolidate_relations, relation_groups
+    from cortex.capabilities.graph_merge.reconciliation.relation_merger import consolidate_relations, relation_groups
     from cortex.infrastructure.artifacts.graph_merge_trace import FileSystemGraphMergeTraceSink
     from run_resilient_training import transport_error_details
     folder = args.output / fixture.name
@@ -274,8 +274,8 @@ def run_merger(args, budget, fixture):
 
 
 def run_reconciliation(args, fixture, budget):
-    from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+    from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
     from cortex.infrastructure.artifacts.graph_merge_trace import FileSystemGraphMergeTraceSink
     from run_resilient_training import transport_error_details
     folder = args.output / fixture.name
@@ -346,7 +346,7 @@ def run_reconciliation(args, fixture, budget):
     resume_case=getattr(args,'resume_case',None)
     if resume_case is not None:
         import sqlite3
-        from cortex.capabilities.graph_merge.integration.task_state import TaskState, build_contract_versions
+        from cortex.capabilities.graph_merge.runtime.state import TaskState, build_contract_versions
         source=Path(resume_case)/'workspace.sqlite'
         with sqlite3.connect(source.resolve().as_uri()+'?mode=ro',uri=True) as origin, sqlite3.connect(engine.workspace_path) as destination:
             origin.backup(destination)

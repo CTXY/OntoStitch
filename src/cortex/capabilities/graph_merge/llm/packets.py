@@ -80,7 +80,7 @@ def premise_fingerprint(payload, reads=(), *, policy=''):
     draft/task bookkeeping never advance the premise version. Historical review
     basis and explicitly supplied context are collected as facts too.
     """
-    from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+    from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
     atoms, evidence, aliases = set(), {}, {}
     views = {'input', 'before', 'candidate', 'unknown'}
@@ -330,7 +330,7 @@ class TaskDialogue:
     def _draft_hash(draft):
         if draft is None:
             return None
-        from cortex.capabilities.graph_merge.integration.task_state import (
+        from cortex.capabilities.graph_merge.runtime.state import (
             canonical_hash,
         )
         return canonical_hash(draft)

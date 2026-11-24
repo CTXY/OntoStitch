@@ -13,10 +13,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.context import remap_edge
-from cortex.capabilities.graph_merge.integration.compiler import deduplicate_edges
-from cortex.capabilities.graph_merge.integration.patch import MergePatch, _integrate
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+from cortex.capabilities.graph_merge.inputs import remap_edge
+from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, _integrate
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import ConflictChoice, ConflictPoint, GraphSpace, GraphState, NodeContent, load_root_schema
 

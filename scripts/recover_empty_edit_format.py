@@ -7,9 +7,9 @@ import json
 import os
 import sqlite3
 
-from cortex.capabilities.graph_merge.integration.reconciliation_contract import EditDraft
-from cortex.capabilities.graph_merge.integration.task_state import TaskState, build_contract_versions, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.reconciliation.contract import EditDraft
+from cortex.capabilities.graph_merge.runtime.state import TaskState, build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.graph_merge.llm.recovery import RecoveryTracker
 from cortex.schema import load_root_schema
 

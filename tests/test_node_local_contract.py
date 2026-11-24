@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from cortex.capabilities.graph_merge.llm.node_contract import (
+from cortex.capabilities.graph_merge.consolidation.contract import (
     NODE_TYPES,
     NodeAssessmentResult,
     NodeWriterResult,
@@ -15,7 +15,7 @@ from cortex.capabilities.graph_merge.llm.node_contract import (
     normalize_node_result,
 )
 from cortex.schema import SourceReference
-from cortex.capabilities.graph_merge.integration.source_units import PatchContractError
+from cortex.capabilities.graph_merge.graph.source_units import PatchContractError
 
 
 def local_fixture():

@@ -12,14 +12,14 @@ from langgraph.graph import END, START, StateGraph
 from cortex.application.merge_graph import GraphMergeResult
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.integration.assessment import assessment_view
-from cortex.capabilities.graph_merge.integration.compiler import (
+from cortex.capabilities.graph_merge.graph.publication import (
     Preview,
     commit_result,
     compile_proposal,
     identity_map,
     mapped_base,
 )
-from cortex.capabilities.graph_merge.integration.context import (
+from cortex.capabilities.graph_merge.inputs import (
     PHYSICAL,
     IntegrationContext,
 )
@@ -29,11 +29,11 @@ from cortex.capabilities.graph_merge.integration.engine import (
     RunState,
     implementation_version,
 )
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
 )
-from cortex.capabilities.graph_merge.integration.provenance import (
+from cortex.capabilities.graph_merge.graph.provenance import (
     validate_rewrite_sources,
 )
 from cortex.capabilities.graph_merge.integration.submission import ProposalBuffer
@@ -261,7 +261,7 @@ class TwoStageGraphIntegrationEngine(GraphIntegrationEngine):
             if phase == "reconcile":
                 payload.update(assessment_view(ctx, decision, preview))
                 payload["graph_issues"] = graph_issues(ctx, decision, previous)
-                from cortex.capabilities.graph_merge.integration.signals import (
+                from cortex.capabilities.graph_merge.reconciliation.inspection import (
                     inspection_signals,
                 )
 
@@ -272,10 +272,10 @@ class TwoStageGraphIntegrationEngine(GraphIntegrationEngine):
                 selected = {preview.node_map[k] for k in scope}
                 # A node task receives its complete groups, not the batch's unrelated
                 # seed/candidate directories or Identity distinctions about other Rules.
-                from cortex.capabilities.graph_merge.integration.context import (
+                from cortex.capabilities.graph_merge.inputs import (
                     references,
                 )
-                from cortex.capabilities.graph_merge.integration.packing import (
+                from cortex.capabilities.graph_merge.llm.packing import (
                     bounded_items,
                 )
 
@@ -384,7 +384,7 @@ class TwoStageGraphIntegrationEngine(GraphIntegrationEngine):
                 if n.node_type not in PHYSICAL
             }
             if phase == "reconcile":
-                from cortex.capabilities.graph_merge.integration.signals import (
+                from cortex.capabilities.graph_merge.reconciliation.inspection import (
                     inspection_signals,
                 )
 
@@ -481,7 +481,7 @@ class TwoStageGraphIntegrationEngine(GraphIntegrationEngine):
                 ]
             }
             if state.get("return_phase") == "reconcile":
-                from cortex.capabilities.graph_merge.integration.signals import (
+                from cortex.capabilities.graph_merge.reconciliation.inspection import (
                     inspection_signals,
                 )
 

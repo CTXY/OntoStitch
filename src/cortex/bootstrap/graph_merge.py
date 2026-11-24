@@ -7,7 +7,7 @@ from pathlib import Path
 from langchain_core.language_models import BaseChatModel
 
 from cortex.application.merge_graph import GraphMergeUseCase
-from cortex.capabilities.graph_merge.identity import (
+from cortex.capabilities.graph_merge.identity.legacy import (
     CrossTypeAssetResolver,
     IdentityGrouper,
     SemanticIdentityResolver,
@@ -68,7 +68,7 @@ def build_graph_merge_operator(
         and consolidation_checker is None
         and cross_type_resolver is None
     ):
-        from cortex.capabilities.graph_merge.integration.incremental import (
+        from cortex.capabilities.graph_merge.engine import (
             IncrementalGraphIntegrationEngine as GraphIntegrationEngine,
         )
         from cortex.capabilities.graph_merge.llm.incremental import (

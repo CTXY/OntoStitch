@@ -12,9 +12,9 @@ from cortex.capabilities.graph_merge.llm.packets import (
 
 def test_explicit_review_policy_reuse_does_not_hide_changed_graph_content(monkeypatch):
     from test_graph_integration import catalog, concept, state
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-    from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-    from cortex.capabilities.graph_merge.integration.relation_context import relation_signature
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
+    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+    from cortex.capabilities.graph_merge.reconciliation.context import relation_signature
     from cortex.schema import load_root_schema
     ctx = IntegrationContext(state(), state([*catalog(), concept('N', 'a')]), load_root_schema())
     current = ctx.union_state()
@@ -88,7 +88,7 @@ def test_relation_reads_return_complete_values_on_explicit_reread():
     from test_graph_integration import catalog, concept, state
     from test_incremental_agent import Chat
 
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
     from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
     from cortex.schema import load_root_schema
 
@@ -104,6 +104,6 @@ def test_relation_reads_return_complete_values_on_explicit_reread():
     previous = next(json.loads(m.content) for m in model.requests[-2] if isinstance(m, ToolMessage))
     assert len(replies) == 1 and replies[0]['items'] == previous['items']
     assert next(m.tool_call_id for m in model.requests[-1] if isinstance(m, ToolMessage)) == 'again'
-    from cortex.capabilities.graph_merge.integration.review import Review
+    from cortex.capabilities.graph_merge.consolidation.review import Review
     assert Review in model.tools
     assert any(getattr(t, "name", None) == "inspect_graph" for t in model.tools)

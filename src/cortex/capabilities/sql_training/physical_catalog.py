@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cortex.capabilities.graph_merge.integration.context import (
+from cortex.capabilities.graph_merge.inputs import (
     PHYSICAL,
     remap_edge,
     remap_node,
@@ -117,7 +117,7 @@ def audit_physical_ids(state: GraphState) -> None:
 
 def combine_physical_catalogs(states) -> GraphSpace:
     """Collect canonical facts while leaving each input's semantic evidence isolated."""
-    from cortex.capabilities.graph_merge.integration.compiler import deduplicate_edges
+    from cortex.capabilities.graph_merge.graph.publication import deduplicate_edges
     from cortex.schema.relation_contracts import merge_relation_contracts
 
     nodes, edges = {}, []

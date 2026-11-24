@@ -23,16 +23,16 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.compiler import Preview
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.incremental import _signal_targets
-from cortex.capabilities.graph_merge.integration.relation_context import relation_signature
-from cortex.capabilities.graph_merge.integration.signals import inspection_signals
-from cortex.capabilities.graph_merge.integration.single_graph import reconcile_current_graph
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import build_contract_versions, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.engine import _signal_targets
+from cortex.capabilities.graph_merge.reconciliation.context import relation_signature
+from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
+from cortex.capabilities.graph_merge.reconciliation.single_graph import reconcile_current_graph
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.config import load_config
 from cortex.config.models import LLMConfig

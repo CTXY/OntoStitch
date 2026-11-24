@@ -12,16 +12,16 @@ from pathlib import Path
 from cortex.application.merge_graph import GraphMergeResult
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.integration.assessment import assessment_view
-from cortex.capabilities.graph_merge.integration.compiler import compile_proposal
-from cortex.capabilities.graph_merge.integration.context import (
+from cortex.capabilities.graph_merge.graph.publication import compile_proposal
+from cortex.capabilities.graph_merge.inputs import (
     PHYSICAL,
     IntegrationContext,
 )
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
 )
-from cortex.capabilities.graph_merge.integration.packing import expand_payload
+from cortex.capabilities.graph_merge.llm.packing import expand_payload
 from cortex.capabilities.graph_merge.integration.revision import compose_revision
 from cortex.schema import GraphState, SchemaDefinition
 
@@ -85,7 +85,7 @@ def audit(root):
         decision = IdentityDecision.model_validate(workflow["identity"])
         proposal = IntegrationProposal.model_validate(workflow["proposal"])
         preview = compile_proposal(context, decision, proposal)
-        from cortex.capabilities.graph_merge.integration.provenance import (
+        from cortex.capabilities.graph_merge.graph.provenance import (
             validate_rewrite_sources,
         )
 

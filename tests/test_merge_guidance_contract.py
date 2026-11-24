@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage
 from test_graph_integration import catalog, concept, state
 from test_incremental_agent import Chat
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 from cortex.schema import load_root_schema
 
@@ -26,7 +26,7 @@ def test_assessment_can_get_type_schema_on_demand():
 
 
 def test_relation_contract_does_not_request_blanket_branch_content_audits():
-    from cortex.capabilities.graph_merge.llm.reconciliation_prompts import reconciliation_system
+    from cortex.capabilities.graph_merge.reconciliation.policy import reconciliation_system
     prompt = reconciliation_system('assessment', ['related_decisions'])
     assert '不重做 extraction 审计' in prompt
     assert '不重新审计已接受 Rule 的原子性' in prompt

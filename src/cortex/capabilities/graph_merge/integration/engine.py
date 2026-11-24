@@ -13,17 +13,17 @@ from langgraph.graph import END, START, StateGraph
 from cortex.application.merge_graph import GraphMergeResult
 from cortex.application.ontology_graph import GraphManager
 from cortex.capabilities.graph_merge.integration.assessment import assessment_view
-from cortex.capabilities.graph_merge.integration.compiler import (
+from cortex.capabilities.graph_merge.graph.publication import (
     commit_result,
     compile_proposal,
     identity_map,
     mapped_base,
 )
-from cortex.capabilities.graph_merge.integration.context import (
+from cortex.capabilities.graph_merge.inputs import (
     PHYSICAL,
     IntegrationContext,
 )
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
 )
@@ -61,26 +61,9 @@ class RunState(TypedDict, total=False):
 
 
 def implementation_version():
-    root = Path(__file__).parent
-    paths = [
-        *root.glob("*.py"),
-        root.parent / "llm/integration.py",
-        root.parent / "llm/incremental.py",
-        root.parent / "llm/task_agent.py",
-        root.parent / 'llm/prompts/incremental_protocol.md',
-        *root.parent.glob('llm/reconciliation_*.py'),
-        *root.parent.glob('llm/prompts/reconciliation/**/*.md'),
-        *root.parent.glob('llm/prompts/node_local/**/*.md'),
-        root.parent / "llm/submission.py",
-        *root.parent.glob("llm/prompts/integration_*.md"),
-        root.parent / "transactions.py",
-        root.parent.parent / "sql_training/llm/prompts/asset_contract.py",
-        root.parent.parent / "sql_training/llm/generation_rule_taxonomy.py",
-        root.parent.parent.parent / "application/ontology_graph.py",
-        root.parent.parent.parent / "schema/references.py",
-        root.parent.parent.parent / "schema/relation_metadata.py",
-    ]
-    return hashlib.sha256(b"".join(p.read_bytes() for p in sorted(paths))).hexdigest()
+    root = Path(__file__).parents[1]
+    paths = sorted(root.rglob('*.py')) + sorted((root / 'llm/prompts').rglob('*.md'))
+    return hashlib.sha256(b''.join(p.read_bytes() for p in paths)).hexdigest()
 
 
 class GraphIntegrationEngine:

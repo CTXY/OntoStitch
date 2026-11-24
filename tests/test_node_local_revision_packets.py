@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from test_node_local_context import context
 
-from cortex.capabilities.graph_merge.llm.node_context import NodeTaskDialogue, build_node_packet
+from cortex.capabilities.graph_merge.consolidation.presentation import NodeTaskDialogue, build_node_packet
 from cortex.schema import GraphEdge, GraphNode
 
 

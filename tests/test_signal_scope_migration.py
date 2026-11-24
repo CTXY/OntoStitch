@@ -7,30 +7,30 @@ from types import SimpleNamespace
 import pytest
 from test_signal_premises import add, check, edge, node, setup
 
-from cortex.capabilities.graph_merge.integration.receipt_ledger import (
+from cortex.capabilities.graph_merge.reconciliation.ledger import (
     make_receipt,
     validate_receipt_ledger,
 )
-from cortex.capabilities.graph_merge.integration.signal_premises import (
+from cortex.capabilities.graph_merge.reconciliation.premises import (
     normalize_signal,
     premise_object,
     signal_premise,
 )
-from cortex.capabilities.graph_merge.integration.signal_receipts import (
+from cortex.capabilities.graph_merge.reconciliation.receipts import (
     dependency_facts,
     policy_hash,
 )
-from cortex.capabilities.graph_merge.integration.signal_scope_migration import (
+from cortex.capabilities.graph_merge.reconciliation.scope_migration import (
     _subset_rows,
     build_scope_migration,
     migrated_receipt,
     validate_scope_migrations,
 )
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
 
 def transition(engine, receipt):
-    relative = 'src/cortex/capabilities/graph_merge/integration/signal_scope.py'
+    relative = 'src/cortex/capabilities/graph_merge/reconciliation/scope.py'
     target = Path(__file__).resolve().parents[1] / relative
     return {'source_policy_hash': receipt['policy_hash'], 'target_policy_hash': policy_hash(engine),
             'files': {relative: {'before': None, 'after': sha256(target.read_bytes()).hexdigest()}}}

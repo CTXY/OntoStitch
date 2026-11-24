@@ -2,12 +2,12 @@
 
 from test_graph_integration import catalog, concept, state
 
-from cortex.capabilities.graph_merge.integration.batch import BatchResult
-from cortex.capabilities.graph_merge.integration.incremental import (
+from cortex.capabilities.graph_merge.graph.batch import BatchResult
+from cortex.capabilities.graph_merge.engine import (
     IncrementalGraphIntegrationEngine,
     review_batches,
 )
-from cortex.capabilities.graph_merge.integration.models import IdentityDecision
+from cortex.capabilities.graph_merge.graph.edit_contract import IdentityDecision
 from cortex.capabilities.graph_merge.llm.incremental import NodeReview
 from cortex.schema import load_root_schema
 
@@ -64,7 +64,7 @@ def test_first_structural_pass_covers_unmatched_nodes_without_signals():
 
 def test_interrupted_assessment_resumes_validated_writer_result_without_repeating_writer(tmp_path):
     import pytest
-    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 
     class Interrupted(IdentityOnlyAgent):
         def invoke(self, phase, ctx, payload):
@@ -94,9 +94,9 @@ def test_interrupted_assessment_resumes_validated_writer_result_without_repeatin
 def test_no_edit_decision_judgment_skips_independent_assessment():
     from test_graph_integration import edge
 
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-    from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
+    from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
     from cortex.schema import GraphNode
 
     rules = [
@@ -174,10 +174,10 @@ def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
     import pytest
     from test_graph_integration import edge
 
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
     from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-    from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+    from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
     from cortex.schema import GraphNode
 
     rule = GraphNode(
@@ -250,7 +250,7 @@ def test_semantic_deletion_is_reviewed_even_without_a_surviving_changed_node():
 
 
 def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path):
-    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 
     source = state([*catalog(), concept("A", "a"), concept("B", "a")])
     schema = load_root_schema()
@@ -280,7 +280,7 @@ def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path
 
 
 def test_completed_content_feedback_uses_node_assessment_without_identity_rerun(tmp_path):
-    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 
     source = state([*catalog(), concept("A", "a"), concept("B", "a")])
     first = IncrementalGraphIntegrationEngine(IdentityOnlyAgent())
@@ -306,9 +306,9 @@ def test_completed_content_feedback_uses_node_assessment_without_identity_rerun(
 
 
 def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypatch):
-    from cortex.capabilities.graph_merge.integration import incremental as module
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
+    import cortex.capabilities.graph_merge.engine as module
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
+    from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
 
     original = state([*catalog(), concept("A", "a"), concept("B", "b")])
     ctx = IntegrationContext(state(), original, load_root_schema())
@@ -330,13 +330,13 @@ def test_local_reconciliation_does_not_reopen_unrelated_source_signals(monkeypat
 def test_later_identity_batch_does_not_reproject_a_consumed_member():
     import pytest
 
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
     from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-    from cortex.capabilities.graph_merge.integration.incremental import (
+    from cortex.capabilities.graph_merge.engine import (
         active_identity_projection,
     )
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-    from cortex.capabilities.graph_merge.integration.models import Change
+    from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.graph.edit_contract import Change
 
     ctx = IntegrationContext(
         state(),
@@ -373,7 +373,7 @@ def test_later_identity_batch_does_not_reproject_a_consumed_member():
 
 
 def test_resume_reuses_exact_accepted_relation_coverage_without_model_calls(tmp_path):
-    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 
     original = state([*catalog(), concept("A", "a"), concept("B", "a")])
     first = IncrementalGraphIntegrationEngine(IdentityOnlyAgent())
@@ -392,7 +392,7 @@ def test_resume_reuses_exact_accepted_relation_coverage_without_model_calls(tmp_
 def test_resume_same_sqlite_run_restores_storage_revision_and_rejects_stale_snapshot(tmp_path):
     import pytest
 
-    from cortex.capabilities.graph_merge.integration.workspace import (
+    from cortex.capabilities.graph_merge.runtime.workspace import (
         WorkspaceRevisionMismatch,
         WorkspaceStore,
     )

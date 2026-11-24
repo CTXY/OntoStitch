@@ -17,7 +17,7 @@ def read(path):
 
 
 def build():
-    from cortex.capabilities.graph_merge.llm.reconciliation_prompts import reconciliation_system, SIGNALS
+    from cortex.capabilities.graph_merge.reconciliation.policy import reconciliation_system, SIGNALS
     from cortex.capabilities.graph_merge.llm.relation_merger import RelationResults
     stamp = datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(timespec='seconds')
     old = read(ROOT/'policy_before_live.json')

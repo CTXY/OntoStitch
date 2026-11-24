@@ -12,15 +12,15 @@ from langchain_core.tools import tool
 from test_graph_integration import catalog, concept, state
 from test_incremental_agent import Chat
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.proposal_scope import (
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.scope import (
     ScopeContextRequired,
 )
 from cortex.capabilities.graph_merge.llm.recovery import (
     OutputProtocolRecoveryExhausted,
     TaskNoProgress,
 )
-from cortex.capabilities.graph_merge.llm.task_agent import (
+from cortex.capabilities.graph_merge.llm.agent import (
     IncrementalIntegrationAgent,
     failure_feedback,
 )
@@ -256,7 +256,7 @@ def test_plain_json_array_cannot_replace_prior_draft():
 
 @pytest.mark.parametrize('problem', ['missing_id', 'duplicate_id', 'unknown_tool'])
 def test_tool_identity_errors_are_rejected_before_any_read_or_draft_side_effect(monkeypatch, problem):
-    from cortex.capabilities.graph_merge.llm import task_agent
+    import cortex.capabilities.graph_merge.llm.agent as task_agent
     reads = []
 
     @tool

@@ -7,7 +7,7 @@ import sys
 from langchain_core.messages import HumanMessage
 import pytest
 
-from cortex.capabilities.graph_merge.llm.input_budget import RequestInputTooLarge, check_request
+from cortex.capabilities.graph_merge.llm.budget import RequestInputTooLarge, check_request
 
 SCRIPTS = Path(__file__).parents[1] / 'scripts'
 if str(SCRIPTS) not in sys.path:

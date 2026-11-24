@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from cortex.capabilities.graph_merge.integration.task_state import ContractVersions, TaskState
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.state import ContractVersions, TaskState
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.schema import GraphNode, GraphSpace, GraphState
 
 

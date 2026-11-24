@@ -4,23 +4,23 @@ from types import SimpleNamespace
 import pytest
 from test_graph_integration import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.evidence_refs import (
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.evidence import (
     EvidencePresentation,
     compact_attribution,
 )
-from cortex.capabilities.graph_merge.integration.relation_context import (
+from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
 )
-from cortex.capabilities.graph_merge.integration.review import (
+from cortex.capabilities.graph_merge.consolidation.review import (
     AbsenceClaim,
     Review,
     ReviewFactError,
     absence_counterexamples,
     validate_review,
 )
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.llm.relation_reads import RelationReads
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.reconciliation.reads import RelationReads
 from legacy_merge_task_tools import build_read_tools
 from cortex.schema import GraphNode, SourceReference, load_root_schema
 
@@ -161,7 +161,7 @@ def test_explicit_rereads_are_complete_and_common_support_is_not_broadcast():
 
 
 def test_repair_fields_keep_before_and_candidate_values_separate():
-    from cortex.capabilities.graph_merge.integration.edit_feedback import (
+    from cortex.capabilities.graph_merge.runtime.feedback import (
         current_repair_fields,
     )
     ctx = context()

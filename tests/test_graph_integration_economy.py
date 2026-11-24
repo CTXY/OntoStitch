@@ -7,21 +7,21 @@ from test_graph_integration import Agent, catalog, concept, contexts, edge, stat
 from test_graph_integration_local_context import event, evidence
 
 from cortex.capabilities.graph_merge.integration.assessment import assessment_view
-from cortex.capabilities.graph_merge.integration.compiler import compile_proposal
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.graph.publication import compile_proposal
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.integration.engine import GraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
     IntegrationReview,
 )
-from cortex.capabilities.graph_merge.integration.packing import (
+from cortex.capabilities.graph_merge.llm.packing import (
     bounded_items,
     expand_payload,
     pack_payload,
 )
 from cortex.capabilities.graph_merge.integration.revision import compose_revision
-from cortex.capabilities.graph_merge.integration.tools import build_tools
+from cortex.capabilities.graph_merge.identity.tools import build_tools
 from cortex.schema import load_root_schema
 
 

@@ -20,12 +20,12 @@ from merge_model_runtime import configure_merge_model
 from run_resilient_training import transport_error_details
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.batch import alias_view
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.graph.batch import alias_view
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
 from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
-from cortex.capabilities.graph_merge.integration.task_state import build_contract_versions, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository, SqlTrainingGraphMergeEvidenceResolver
 from cortex.capabilities.sql_training.merge_evaluation import compose_case_graphs, _augment_existing_physical_graph
 from cortex.infrastructure.artifacts.graph_html import render_graph_html

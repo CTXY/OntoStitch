@@ -4,8 +4,8 @@ import pytest
 from test_graph_integration import catalog, concept, edge, state
 
 from cortex.application.ontology_graph import GraphRejected
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.validation_repair import validation_targets
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.graph.repair import validation_targets
 from cortex.schema import load_root_schema
 
 
@@ -53,8 +53,8 @@ def test_noop_contract_repair_stops_without_repeating_model_tasks():
 
 
 def test_grounding_deletion_assessment_shows_the_remaining_canonical_owner():
-    from cortex.capabilities.graph_merge.integration.relation_context import relation_context
-    from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+    from cortex.capabilities.graph_merge.reconciliation.context import relation_context
+    from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
     engine = engine_with_contested_binding()
     before = engine.current
     after = before.model_copy(update={"graph": before.graph.model_copy(update={

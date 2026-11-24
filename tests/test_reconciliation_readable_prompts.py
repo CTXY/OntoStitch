@@ -4,7 +4,7 @@ import json
 
 import pytest
 from test_reconciliation_context import runtime
-from cortex.capabilities.graph_merge.llm.reconciliation_presentation import state_prompt, user_assets
+from cortex.capabilities.graph_merge.reconciliation.presentation import state_prompt, user_assets
 
 
 @pytest.mark.parametrize('phase',['reconcile','graph_assess'])

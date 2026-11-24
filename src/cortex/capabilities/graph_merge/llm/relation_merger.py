@@ -7,9 +7,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
-from cortex.capabilities.graph_merge.llm.input_budget import check_request
+from cortex.capabilities.graph_merge.evidence import EvidencePresentation
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.llm.budget import check_request
 from cortex.capabilities.graph_merge.llm.trace import EpisodeTrace
 from cortex.capabilities.graph_merge.llm.transport import invoke_with_recovery
 

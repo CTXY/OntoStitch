@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from test_graph_integration import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.integration.task_state import ContractVersions, TaskState
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.state import ContractVersions, TaskState
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 
 
 spec = importlib.util.spec_from_file_location('node_trajectory_review',

@@ -1,8 +1,8 @@
 """Relation descriptions enter the production engine without an Assessment."""
 from test_merge_task_review_boundary import engine_for
 from test_relation_merger import fixture, Hook
-from cortex.capabilities.graph_merge.integration.relation_merger_stage import run_relation_merger
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.relation_stage import run_relation_merger
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 
 
 def test_engine_stage_commits_graph_mapping_and_checkpoint_together(tmp_path):

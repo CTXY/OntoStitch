@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from cortex.capabilities.graph_merge.identity import IdentityGrouper
+from cortex.capabilities.graph_merge.identity.legacy import IdentityGrouper
 from cortex.capabilities.graph_merge.models import (
     EvidenceItem,
     NodeIdentitySelection,

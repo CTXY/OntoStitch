@@ -13,7 +13,7 @@ import shutil
 import tempfile
 
 from cortex.capabilities.graph_merge.integration.checkpoint_migration import migrate_checkpoint
-from cortex.capabilities.graph_merge.integration.task_state import build_contract_versions, canonical_hash
+from cortex.capabilities.graph_merge.runtime.state import build_contract_versions, canonical_hash
 from cortex.schema import load_root_schema
 
 

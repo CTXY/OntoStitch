@@ -12,8 +12,8 @@ import json
 from pathlib import Path
 import sqlite3
 
-from cortex.capabilities.graph_merge.integration.local_validation import validate_local_transition
-from cortex.capabilities.graph_merge.integration.task_state import TaskState
+from cortex.capabilities.graph_merge.graph.validation import validate_local_transition
+from cortex.capabilities.graph_merge.runtime.state import TaskState
 from cortex.schema import GraphState, load_root_schema
 
 OWNER = 'input::input::n18'

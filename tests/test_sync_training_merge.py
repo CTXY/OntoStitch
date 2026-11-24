@@ -14,7 +14,7 @@ from cortex.application.sql_training import (
     SqlTrainingService,
 )
 from cortex.bootstrap.graph_merge import build_graph_merge_operator
-from cortex.capabilities.graph_merge.identity import IdentityGrouper
+from cortex.capabilities.graph_merge.identity.legacy import IdentityGrouper
 from cortex.capabilities.graph_merge.llm.agents import LLMSemanticIdentityResolver
 from cortex.capabilities.graph_merge.models import (
     GroupIdentityView,

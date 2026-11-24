@@ -2,8 +2,8 @@
 
 from collections import defaultdict
 
-from cortex.capabilities.graph_merge.integration.context import PHYSICAL, references
-from cortex.capabilities.graph_merge.integration.packing import bounded_items
+from cortex.capabilities.graph_merge.inputs import PHYSICAL, references
+from cortex.capabilities.graph_merge.llm.packing import bounded_items
 from cortex.schema.relation_contracts import effective_schema
 
 

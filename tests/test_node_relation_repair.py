@@ -4,14 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-from cortex.capabilities.graph_merge.integration.node_relation_repair import coordinate_node_relations
-from cortex.capabilities.graph_merge.integration.node_relations import NodeRelationCoordinationRequired
-from cortex.capabilities.graph_merge.integration.patch import MergePatch
-from cortex.capabilities.graph_merge.integration.review import Review
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+from cortex.capabilities.graph_merge.consolidation.coordination import coordinate_node_relations
+from cortex.capabilities.graph_merge.consolidation.relations import NodeRelationCoordinationRequired
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
+from cortex.capabilities.graph_merge.consolidation.review import Review
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 from cortex.schema import GraphNode, load_root_schema
 from test_graph_integration import catalog, edge, state
 
@@ -153,7 +153,7 @@ def test_recovery_callback_persists_nested_scope_without_overwriting_local_draft
 
 def test_incoming_target_versions_reach_relation_agents_and_noop_review_keeps_focus():
     from cortex.application.ontology_graph import GraphManager
-    from cortex.capabilities.graph_merge.integration.node_relations import sync_node_relations
+    from cortex.capabilities.graph_merge.consolidation.relations import sync_node_relations
     from cortex.schema import NodeContent, ConflictPoint
     from test_graph_integration import concept
     owner=concept('owner','a',name='category').model_copy(update={'properties':{'targets':[['a']],'definition':'First complete definition.'}})
@@ -201,8 +201,8 @@ def test_incoming_target_versions_reach_relation_agents_and_noop_review_keeps_fo
 
 def test_retired_identity_edge_map_uses_disposition_not_alias_to_absent_edge():
     """Regress the real toxicology 204->266 accepted retirement Patch shape."""
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-    from cortex.capabilities.graph_merge.integration.models import Change, Element
+    from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element
     old='case204::edge.carcinogenic_count_depends_on_carcinogenic_molecule'
     survivor='case266::edge.carcinogenic_count_depends'
     owner='case266::metric.carcinogenic_molecule_count'
@@ -251,12 +251,12 @@ def test_real_saved_toxicology_retirement_record_preserves_lineage_and_sources()
     """Replay the exact failed live Patch and accepted repair with zero models."""
     import json
     from pathlib import Path
-    from cortex.capabilities.graph_merge.integration.compiler import Preview
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-    from cortex.capabilities.graph_merge.integration.models import IntegrationProposal
-    from cortex.capabilities.graph_merge.integration.patch import compile_patch
-    from cortex.capabilities.graph_merge.integration.provenance import validate_rewrite_sources
-    from cortex.capabilities.graph_merge.llm.node_contract import normalize_node_result
+    from cortex.capabilities.graph_merge.graph.publication import Preview
+    from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.graph.edit_contract import IntegrationProposal
+    from cortex.capabilities.graph_merge.consolidation.compiler import compile_patch
+    from cortex.capabilities.graph_merge.graph.provenance import validate_rewrite_sources
+    from cortex.capabilities.graph_merge.consolidation.contract import normalize_node_result
     from cortex.capabilities.graph_merge.models import EvidenceItem
     from cortex.schema import GraphSpace, GraphState
     fixture=json.loads((Path(__file__).parent/'fixtures/node_local_metric_retirement.json').read_text())

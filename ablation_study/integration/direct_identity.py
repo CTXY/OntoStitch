@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from cortex.capabilities.graph_merge.identity import (
+from cortex.capabilities.graph_merge.identity.legacy import (
     IdentityGrouper,
     build_default_identity_implementation_registry,
 )

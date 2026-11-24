@@ -7,9 +7,9 @@ from test_graph_integration import catalog, concept, edge, state
 from test_merge_identity_integration_v2 import content, prepare
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.patch import MergePatch, compile_patch
-from cortex.capabilities.graph_merge.llm.node_context import build_node_packet
-from cortex.capabilities.graph_merge.llm.node_contract import normalize_node_result
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, compile_patch
+from cortex.capabilities.graph_merge.consolidation.presentation import build_node_packet
+from cortex.capabilities.graph_merge.consolidation.contract import normalize_node_result
 from cortex.schema import SourceReference, load_root_schema
 
 

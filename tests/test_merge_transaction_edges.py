@@ -9,7 +9,7 @@ from test_conflict_writes import set_operation
 from test_graph_manager import apply, create, metric, node
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.identity import node_content
+from cortex.capabilities.graph_merge.identity.legacy import node_content
 from cortex.capabilities.graph_merge.models import (
     FinalNodeGroup,
     NodeRepresentation,

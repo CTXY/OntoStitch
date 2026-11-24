@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.integration.compiler import assessed_semantic_content
+from cortex.capabilities.graph_merge.graph.publication import assessed_semantic_content
 from cortex.capabilities.graph_merge.transactions import apply_merge_state
 from cortex.schema import GraphState, load_root_schema
 

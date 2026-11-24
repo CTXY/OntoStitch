@@ -14,17 +14,17 @@ from langchain.agents.middleware import (
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import HumanMessage
 
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
     IntegrationReview,
     review_output_model,
 )
-from cortex.capabilities.graph_merge.integration.packing import (
+from cortex.capabilities.graph_merge.llm.packing import (
     pack_payload,
     prompt_json,
 )
-from cortex.capabilities.graph_merge.integration.tools import build_tools
+from cortex.capabilities.graph_merge.identity.tools import build_tools
 from cortex.capabilities.graph_merge.llm.agents import (
     _AutomaticToolChoice,
 )
@@ -63,7 +63,7 @@ class IntegrationAgent:
         if buffer is not None:
             from pydantic import create_model, model_validator
 
-            from cortex.capabilities.graph_merge.integration.models import (
+            from cortex.capabilities.graph_merge.graph.edit_contract import (
                 StageCompletion,
             )
 

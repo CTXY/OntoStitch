@@ -6,8 +6,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from test_light_reconciliation import setup
 from test_incremental_agent import Chat
 
-from cortex.capabilities.graph_merge.integration.relation_context import relation_context
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+from cortex.capabilities.graph_merge.reconciliation.context import relation_context
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 
 

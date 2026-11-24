@@ -5,12 +5,12 @@ from types import SimpleNamespace
 import pytest
 
 from test_graph_integration import catalog, concept, edge, state
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.receipt_ledger import make_receipt, validate_receipt_ledger
-from cortex.capabilities.graph_merge.integration.signal_premises import normalize_signal, signal_premise
-from cortex.capabilities.graph_merge.integration.signals import inspection_signals
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
-from cortex.capabilities.graph_merge.llm.reconciliation_context import ReconciliationRuntime
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.reconciliation.ledger import make_receipt, validate_receipt_ledger
+from cortex.capabilities.graph_merge.reconciliation.premises import normalize_signal, signal_premise
+from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.reconciliation.permissions import ReconciliationRuntime
 from cortex.schema import load_root_schema
 
 

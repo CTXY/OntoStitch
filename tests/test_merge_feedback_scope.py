@@ -1,10 +1,10 @@
 from test_graph_integration import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.integration.patch import MergePatch
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
 from cortex.capabilities.graph_merge.llm.incremental import NodeReview
 from cortex.schema import load_root_schema
 
@@ -50,7 +50,7 @@ def test_review_named_node_gets_incident_edge_scope_without_opening_its_neighbou
                     'edge_updates': [{'id': bc, 'properties': {'description': 'The reviewed direct business attribute.'},
                                       'explanation': 'Repair the reviewer-named coupled assertion.'}],
                     'explanation': 'Replace the complete local draft with the coupled repair.'})
-            from cortex.capabilities.graph_merge.integration.proposal_scope import ScopeContextRequired
+            from cortex.capabilities.graph_merge.graph.scope import ScopeContextRequired
             try:
                 context.output_validator(result)
             except ScopeContextRequired as error:

@@ -5,8 +5,8 @@ from copy import deepcopy
 from threading import RLock
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.compiler import compile_proposal
-from cortex.capabilities.graph_merge.integration.models import IntegrationProposal
+from cortex.capabilities.graph_merge.graph.publication import compile_proposal
+from cortex.capabilities.graph_merge.graph.edit_contract import IntegrationProposal
 from cortex.schema import GraphEdge, GraphNode
 from cortex.schema.semantic_validation import validate_semantic_properties
 from cortex.schema.validation import _validate_properties

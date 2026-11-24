@@ -2,8 +2,8 @@
 
 from test_graph_integration import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.tools import build_tools
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.identity.tools import build_tools
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import (
     GraphNode,

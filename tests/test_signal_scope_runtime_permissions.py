@@ -4,7 +4,7 @@ from copy import deepcopy
 import pytest
 from test_reconciliation_context import node_context, runtime
 
-from cortex.capabilities.graph_merge.integration.reconciliation_contract import (
+from cortex.capabilities.graph_merge.reconciliation.contract import (
     DraftDocument,
 )
 from cortex.schema import GraphEdge, GraphNode

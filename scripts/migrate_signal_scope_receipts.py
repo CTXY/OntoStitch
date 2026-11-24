@@ -5,17 +5,17 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.signal_scope_migration import (
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.reconciliation.scope_migration import (
     build_scope_migration,
     validate_scope_migrations,
 )
-from cortex.capabilities.graph_merge.integration.task_state import (
+from cortex.capabilities.graph_merge.runtime.state import (
     ContractVersions,
     build_contract_versions,
     canonical_hash,
 )
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,
     SqlTrainingGraphMergeEvidenceResolver,

@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 from test_graph_integration import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.integration.compiler import mapped_base
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.models import Element, IdentityDecision
-from cortex.capabilities.graph_merge.integration.task_context import (
+from cortex.capabilities.graph_merge.graph.publication import mapped_base
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.edit_contract import Element, IdentityDecision
+from cortex.capabilities.graph_merge.consolidation.task_context import (
     LocalTask,
     affected_query_roots,
     build_task_context,
@@ -246,8 +246,8 @@ def test_actual_changes_uses_supplied_before_not_original_sources():
 
 
 def test_explicit_followup_is_complete_without_expanding_unrelated_hub_edges():
-    from cortex.capabilities.graph_merge.integration.relation_context import relation_context
-    from cortex.capabilities.graph_merge.integration.signal_scope import signal_scope
+    from cortex.capabilities.graph_merge.reconciliation.context import relation_context
+    from cortex.capabilities.graph_merge.reconciliation.scope import signal_scope
 
     ctx, current = context(
         [concept("P", "a"), concept("A", "a"), concept("B", "b"), concept("C", "c")],
@@ -421,8 +421,8 @@ def test_small_hub_keeps_existing_context_and_large_focus_is_not_split():
 
 
 def test_budget_keeps_explicit_relation_followup_indivisible():
-    from cortex.capabilities.graph_merge.integration.incremental import review_batches
-    from cortex.capabilities.graph_merge.integration.relation_context import relation_context
+    from cortex.capabilities.graph_merge.engine import review_batches
+    from cortex.capabilities.graph_merge.reconciliation.context import relation_context
 
     descriptions = {f"N{i:03}": f"Supported feature {i}: " + "Evidence " * 100 for i in range(100)}
     neighbors = [

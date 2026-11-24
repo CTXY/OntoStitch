@@ -1,6 +1,6 @@
 """No public decision ledger; exact local fields and stable draft handles."""
 import pytest
-from cortex.capabilities.graph_merge.integration.reconciliation_contract import (
+from cortex.capabilities.graph_merge.reconciliation.contract import (
     AssessmentResult,DraftDocument,EditDraft,TOOLS,apply_edit_shape,NodeFields,validate_combinations)
 
 
@@ -60,7 +60,7 @@ def test_replace_requires_distinct_survivor_and_no_chains():
     '```json\n{"explanation":"ok","feedback":[]}\n```',
     '```\n{"explanation":"ok","feedback":[]}\n```'])
 def test_one_exact_transport_envelope_is_normalized_without_semantic_repair(text):
-    from cortex.capabilities.graph_merge.llm.reconciliation_agent import _json_object
+    from cortex.capabilities.graph_merge.reconciliation.agent import _json_object
     assert AssessmentResult.model_validate(_json_object(text)).feedback==()
 
 
@@ -69,5 +69,5 @@ def test_one_exact_transport_envelope_is_normalized_without_semantic_repair(text
     '{"explanation":"ok","feedback":[],"feedback":[]}',
     '[]','{} {}'])
 def test_narrative_multiple_results_and_duplicate_keys_stay_invalid(text):
-    from cortex.capabilities.graph_merge.llm.reconciliation_agent import _json_object
+    from cortex.capabilities.graph_merge.reconciliation.agent import _json_object
     with pytest.raises(ValueError): _json_object(text)

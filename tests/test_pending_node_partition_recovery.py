@@ -47,10 +47,10 @@ def test_repaired_checkpoint_preserves_accepts_and_original_file(tmp_path):
     import hashlib
 
     from recover_pending_node_partition import repair
-    from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-    from cortex.capabilities.graph_merge.integration.task_state import ContractVersions, TaskState
-    from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+    from cortex.capabilities.graph_merge.inputs import IntegrationContext
+    from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+    from cortex.capabilities.graph_merge.runtime.state import ContractVersions, TaskState
+    from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
     from cortex.schema import GraphNode, GraphSpace, GraphState, load_root_schema
 
     folder = tmp_path / 'batch'

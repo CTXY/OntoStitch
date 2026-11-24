@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from test_node_local_context import context as node_context
-from cortex.capabilities.graph_merge.llm.reconciliation_context import ReconciliationRuntime
+from cortex.capabilities.graph_merge.reconciliation.permissions import ReconciliationRuntime
 from cortex.schema import GraphEdge, GraphNode, SourceReference
 
 

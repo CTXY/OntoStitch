@@ -3,15 +3,15 @@ from types import SimpleNamespace
 import pytest
 from test_graph_integration import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.integration.batch import BatchResult
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.graph.batch import BatchResult
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
-from cortex.capabilities.graph_merge.integration.incremental import (
+from cortex.capabilities.graph_merge.engine import (
     IncrementalGraphIntegrationEngine,
     identity_task_projection,
 )
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.models import Change, Element, IdentityDecision
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element, IdentityDecision
 from cortex.capabilities.graph_merge.llm.incremental import NodeReview
 from cortex.schema import load_root_schema
 
@@ -59,7 +59,7 @@ def test_ordinary_confirmed_group_keeps_its_existing_projection():
 
 
 def test_later_group_after_accepted_rewrite_requires_explicit_model_merge(monkeypatch):
-    import cortex.capabilities.graph_merge.integration.incremental as module
+    import cortex.capabilities.graph_merge.engine as module
     monkeypatch.setattr(module, "matched_batches", lambda groups, nodes, **kwargs: [[g] for g in groups])
     original = state([*catalog(), concept("A", "a"), concept("B", "a"), concept("C", "b"), concept("D", "b")],
                      [edge("ca", "C", "A", "has_feature")])

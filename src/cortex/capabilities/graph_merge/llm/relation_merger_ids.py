@@ -9,7 +9,7 @@ from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
 
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
 
 
 def adapter_hash():

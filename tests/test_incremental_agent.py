@@ -3,7 +3,7 @@
 from langchain_core.messages import AIMessage, ToolMessage
 from test_graph_integration import state
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 from cortex.schema import load_root_schema
 

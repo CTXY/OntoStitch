@@ -2,18 +2,18 @@
 
 from test_graph_integration import catalog, concept, contexts, edge, state
 
-from cortex.capabilities.graph_merge.integration.catalog import select_catalog_nodes
-from cortex.capabilities.graph_merge.integration.compiler import compile_proposal
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.identity.catalog import select_catalog_nodes
+from cortex.capabilities.graph_merge.graph.publication import compile_proposal
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
 )
-from cortex.capabilities.graph_merge.integration.packing import (
+from cortex.capabilities.graph_merge.llm.packing import (
     expand_payload,
     pack_payload,
     prompt_json,
 )
-from cortex.capabilities.graph_merge.integration.tools import build_tools
+from cortex.capabilities.graph_merge.identity.tools import build_tools
 from cortex.schema import GraphNode
 
 

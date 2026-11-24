@@ -7,7 +7,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from relation_fixtures import metric_context_contract
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.identity import IdentityGrouper
+from cortex.capabilities.graph_merge.identity.legacy import IdentityGrouper
 from cortex.capabilities.graph_merge.llm.agents import RoleResult
 from cortex.capabilities.graph_merge.llm.tools import build_read_tools
 from cortex.capabilities.graph_merge.models import (

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 from test_reconciliation_agent_runtime import CanonicalChat, fixture
-from cortex.capabilities.graph_merge.llm.reconciliation_context import ReconciliationRuntime
+from cortex.capabilities.graph_merge.reconciliation.permissions import ReconciliationRuntime
 
 
 def test_no_remaining_evidence_hides_read_tool(tmp_path):

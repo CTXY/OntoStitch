@@ -4,14 +4,14 @@ sys.path.insert(0,'scripts')
 from reconciliation_probe_fixtures import write
 from cortex.schema import GraphState,GraphSpace,load_root_schema
 from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.relation_merger import relation_groups,consolidate_relations,policy_fingerprint
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.relation_context import relation_context
-from cortex.capabilities.graph_merge.llm.reconciliation_context import ReconciliationRuntime
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.reconciliation.relation_merger import relation_groups,consolidate_relations,policy_fingerprint
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.consolidation.task_context import LocalTask
+from cortex.capabilities.graph_merge.reconciliation.context import relation_context
+from cortex.capabilities.graph_merge.reconciliation.permissions import ReconciliationRuntime
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository,SqlTrainingGraphMergeEvidenceResolver
-from cortex.capabilities.graph_merge.llm.reconciliation_prompts import reconciliation_system
+from cortex.capabilities.graph_merge.reconciliation.policy import reconciliation_system
 root=Path('output/single_graph_merge_fix_20261121');schema=load_root_schema()
 for db in ('thrombosis_prediction','toxicology'):
  folder=root/db;folder.mkdir(exist_ok=True)
@@ -59,8 +59,8 @@ for db in ('thrombosis_prediction','toxicology'):
  ctx.task_before=ctx.candidate=merged.state;ctx.active_task=task
  payload=relation_context(ctx,merged.state,task)
  rt=ReconciliationRuntime(ctx,payload,'reconcile');rt.system=reconciliation_system('writer',[])
- from cortex.capabilities.graph_merge.llm.input_budget import check_request
- from cortex.capabilities.graph_merge.integration.reconciliation_contract import TOOLS
+ from cortex.capabilities.graph_merge.llm.budget import check_request
+ from cortex.capabilities.graph_merge.reconciliation.contract import TOOLS
  from langchain_core.tools import StructuredTool
  tools=list(rt.available_read_tools(rt.build_read_tools()).values())
  tools.append(StructuredTool.from_function(lambda **kw:kw,name='edit_draft',description='Edit the current local draft.',args_schema=TOOLS['edit_draft']))

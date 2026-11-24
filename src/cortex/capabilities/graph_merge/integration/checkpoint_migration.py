@@ -13,12 +13,12 @@ import json
 from pathlib import Path
 import sqlite3
 
-from cortex.capabilities.graph_merge.integration.task_state import (
+from cortex.capabilities.graph_merge.runtime.state import (
     ContractVersions,
     TaskState,
     canonical_hash,
 )
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.schema import GraphState
 
 

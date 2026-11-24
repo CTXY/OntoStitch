@@ -30,7 +30,7 @@ def natural_probe_args(tmp_path, name):
 
 @pytest.mark.parametrize('name', smoke.MERGER_CASES)
 def test_natural_probe_retains_exact_saved_graph_without_padding(tmp_path, name):
-    from cortex.capabilities.graph_merge.integration.relation_merger import relation_groups
+    from cortex.capabilities.graph_merge.reconciliation.relation_merger import relation_groups
     args, graph, graph_file = natural_probe_args(tmp_path, name)
     before = graph_file.read_bytes()
     fixture = smoke.natural_relation_fixture(args, name)

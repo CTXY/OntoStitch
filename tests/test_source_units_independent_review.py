@@ -1,6 +1,6 @@
 """Review regressions for the hidden scope assumptions behind thrombosis failures."""
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.source_units import source_units
+from cortex.capabilities.graph_merge.graph.source_units import source_units
 from cortex.schema import GraphNode, GraphSpace, GraphState, NodeContent, SourceReference
 
 

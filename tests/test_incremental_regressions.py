@@ -4,10 +4,10 @@
 import pytest
 from test_graph_integration import catalog, concept, edge, state
 
-from cortex.capabilities.graph_merge.integration.batch import ActiveBatch, BatchResult
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.models import Change, Element
+from cortex.capabilities.graph_merge.graph.batch import ActiveBatch, BatchResult
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.graph.edit_contract import Change, Element
 from cortex.schema import SourceReference, load_root_schema
 
 

@@ -9,8 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
-from cortex.capabilities.graph_merge.integration.patch import MergePatch
-from cortex.capabilities.graph_merge.integration.review import Review
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch
+from cortex.capabilities.graph_merge.consolidation.review import Review
 from cortex.capabilities.graph_merge.llm.task_tools import build_read_tools
 
 HERE = Path(__file__).resolve().parent

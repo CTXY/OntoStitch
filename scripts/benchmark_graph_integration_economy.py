@@ -11,18 +11,18 @@ import json
 from pathlib import Path
 
 from cortex.application.merge_graph import GraphMergeResult
-from cortex.capabilities.graph_merge.integration.compiler import (
+from cortex.capabilities.graph_merge.graph.publication import (
     commit_result,
     compile_proposal,
 )
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
 from cortex.capabilities.graph_merge.integration.engine import GraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.models import (
+from cortex.capabilities.graph_merge.graph.edit_contract import (
     IdentityDecision,
     IntegrationProposal,
     IntegrationReview,
 )
-from cortex.capabilities.graph_merge.integration.packing import (
+from cortex.capabilities.graph_merge.llm.packing import (
     expand_payload,
     pack_payload,
     prompt_json,
