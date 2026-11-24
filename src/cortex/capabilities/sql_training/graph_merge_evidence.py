@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import SourceReference
 
 

@@ -95,7 +95,7 @@ def main():
             source=Path(result['resume_from']['case_directory'])
             saved=read(source/'task_state.json')
             candidate=GraphState.model_validate(saved['last_valid_candidate'])
-            from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+            from cortex.capabilities.graph_merge.runtime.state import canonical_hash
             check.update(resumed_without_writer=all(e.get('component')!='integration_reconcile' for e in starts),
                 candidate_hash_matches_checkpoint=canonical_hash(candidate)==canonical_hash(GraphState.model_validate(after)),
                 saved_draft=result['resume_from']['draft'],source_checkpoint_sha256=digest(source/'workspace.sqlite'))

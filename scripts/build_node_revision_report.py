@@ -4,7 +4,7 @@ from html import escape
 from pathlib import Path
 import sys
 
-from cortex.capabilities.graph_merge.llm.node_contract import NODE_TYPES, node_system, node_output_model
+from cortex.capabilities.graph_merge.consolidation.contract import NODE_TYPES, node_system, node_output_model
 from resume_first10_current_graph import read, write, write_text
 
 

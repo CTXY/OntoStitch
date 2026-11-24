@@ -12,19 +12,21 @@ from pathlib import Path
 import re
 
 from cortex.application.ontology_graph import GraphManager, GraphRejected
-from cortex.capabilities.graph_merge.integration.compiler import Preview, deduplicate_edges
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext, remap_node
-from cortex.capabilities.graph_merge.integration.contracts import isolate_contracts
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.relation_merger import consolidate_relations, relation_groups
-from cortex.capabilities.graph_merge.integration.signals import inspection_signals
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.llm.node_context import build_node_packet
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.graph.operations import remap_node
+from cortex.capabilities.graph_merge.graph.contracts import isolate_contracts
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.reconciliation.relation_merger import consolidate_relations, relation_groups
+from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
+from cortex.capabilities.graph_merge.models import LocalTask
+from cortex.capabilities.graph_merge.consolidation.presentation import build_node_packet
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.infrastructure.artifacts.graph_merge_trace import FileSystemGraphMergeTraceSink
 from cortex.schema import GraphSpace, GraphState, load_root_schema, validate_graph_state
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from reconciliation_probe_fixtures import digest, write
 from run_node_consolidation_smoke import project_case, trace_summary
 from run_relation_reconciliation_v2_smoke import model_for
@@ -115,11 +117,11 @@ def make_engine(args, folder, state, evidence, budget):
     context = IntegrationContext(state, GraphState(graph=GraphSpace()), load_root_schema(), evidence=evidence)
     context.task_before = context.candidate = state
     engine = IncrementalGraphIntegrationEngine(agent, max_rounds=3, model_call_budget=budget['limit'])
-    engine.ctx, engine.current, engine.lineage = context, state, LineageIndex(context)
-    engine.history, engine.reviewed_sources, engine._revision = [], {}, 0
-    engine.identity_decision, engine.open_tasks = {}, []
-    engine.workspace_path, engine._storage_revision = folder/'workspace.sqlite', None
-    engine.pending_relation_work = engine.pending_review = None
+    engine.session.inputs, engine.session.current, engine.session.lineage = context, state, LineageIndex(context)
+    engine.session.history, engine.session.reviewed_sources, engine.session.revision = [], {}, 0
+    engine.session.identity_decision, engine.session.open_tasks = {}, []
+    engine.workspace_path, engine.session.storage_revision = folder/'workspace.sqlite', None
+    engine.session.pending_relation_work = engine.session.pending_review = None
     context.task_visible_ids = {node.id for node in state.graph.nodes} | {edge.id for edge in state.graph.edges}
     write(folder/'before.json', state.model_dump(mode='json'))
     write(folder/'fixture_evidence.json', [row.model_dump(mode='json') for row in evidence])
@@ -127,13 +129,13 @@ def make_engine(args, folder, state, evidence, budget):
 
 
 def record_stage(folder, engine, name):
-    write(folder/'after.json', engine.current.model_dump(mode='json'))
-    write(folder/'result.json', {'name': name, 'status': 'passed', 'history': engine.history,
+    write(folder/'after.json', engine.session.current.model_dump(mode='json'))
+    write(folder/'result.json', {'name': name, 'status': 'passed', 'history': engine.session.history,
         'trace': trace_summary(folder), 'source_files_unchanged': True})
-    if getattr(engine, 'task_state', None):
-        write(folder/'task_state.json', engine.task_state.to_dict())
+    if getattr(engine.session, 'task_state', None):
+        write(folder/'task_state.json', engine.session.task_state.to_dict())
     elif (folder/'workspace.sqlite').exists():
-        from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+        from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
         saved=WorkspaceStore(folder/'workspace.sqlite').load(name)
         if saved and saved.get('task_state'):write(folder/'task_state.json',saved['task_state'])
 
@@ -208,20 +210,19 @@ def run(args):
             engine=make_engine(args,folder,state,evidence,budget)
             members=[f'case{case}::{kind}' for case in ('266','204')]
             group={'owner_id':members[0],'member_ids':members}
-            engine.ctx.task_identity_groups=[group]
-            write(folder/'writer.packet.initial.json',build_node_packet(engine.ctx, {'group':group,'task_id':name},before=state))
+            write(folder/'writer.packet.initial.json',build_node_packet(engine.session.inputs, {'group':group,'task_id':name},before=state))
             task=LocalTask(name,'consolidate',set(members),groups=[{'members':members,
                 'meaning':'The same carcinogenic molecule identity.' if number==1 else 'The same count of carcinogenic molecules in a requested population.',
                 'reason':'This approved identity group is consolidated in a bounded real-case pipeline; preserve compatible matching methods and requested-range parameterization.'}])
             engine._run_task(task,name,aliases={member:members[0] for member in members})
-            assert engine.history[-1]['assessment']=='node_assess'
-            from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-            from cortex.capabilities.graph_merge.integration.evidence_refs import evidence_sources
+            assert engine.session.history[-1]['assessment']=='node_assess'
+            from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+            from cortex.capabilities.graph_merge.evidence import evidence_sources
             committed=WorkspaceStore(engine.workspace_path).load(name)['task_state']
             citations=committed['draft']['integrate_groups'][0].get('common_evidence_ids',[])
-            node_citations[members[0]]=evidence_sources(engine.ctx,citations)
+            node_citations[members[0]]=evidence_sources(engine.session.inputs,citations)
             write(folder/'task_state.json',committed)
-            state=engine.current
+            state=engine.session.current
             record_stage(folder,engine,name)
             summary['stages'].append({'name':name,'status':'passed'})
             write(args.output/'progress.json',summary)
@@ -231,23 +232,23 @@ def run(args):
         groups=relation_groups(state)
         assert len(groups)==2, 'Expected two natural groups: grounding and dependency'
         write(folder/'groups.json',groups)
-        merged=consolidate_relations(engine.agent,engine.ctx,state,batch_size=10,
+        merged=consolidate_relations(engine.agent,engine.session.inputs,state,batch_size=10,
                                     save=lambda cp:write(folder/'checkpoint.json',cp))
         used=budget['used']
-        resumed=consolidate_relations(engine.agent,engine.ctx,merged.state,checkpoint=merged.checkpoint)
+        resumed=consolidate_relations(engine.agent,engine.session.inputs,merged.state,checkpoint=merged.checkpoint)
         assert resumed.state==merged.state and budget['used']==used
-        engine.current=state=merged.state
+        engine.session.current=state=merged.state
         record_stage(folder,engine,'03_relation_merger')
         summary['stages'].append({'name':'03_relation_merger','status':'passed','natural_groups':len(groups),'completed_resume_api_calls':0})
         print('03_relation_merger passed',flush=True)
         folder=args.output/'04_reconciliation'
         engine=make_engine(args,folder,state,evidence,budget)
         preview=Preview(state,{}, {}, [])
-        checks=inspection_signals(engine.ctx,preview)
+        checks=inspection_signals(engine.session.inputs,preview)
         # A real stage handoff, not an injected defect: expose the original
         # relation assertions so the final independent gate can check semantic
         # preservation across description consolidation as well as local health.
-        from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
+        from cortex.capabilities.graph_merge.evidence import EvidencePresentation
         source_context=IntegrationContext(before,GraphState(graph=GraphSpace()),load_root_schema(),evidence=evidence)
         presentation=EvidencePresentation(source_context)
         original_relations=[{**edge.model_dump(mode='json',exclude={'sources','reference_origin'}),
@@ -266,8 +267,8 @@ def run(args):
         targets.update(['case266::'+C,'case266::'+M])
         task=LocalTask('04_reconciliation','reconcile',targets,checks=checks)
         engine._run_task(task,task.id)
-        assert engine.history[-1]['assessment']=='graph_assess'
-        state=engine.current
+        assert engine.session.history[-1]['assessment']=='graph_assess'
+        state=engine.session.current
         record_stage(folder,engine,'04_reconciliation')
         summary['stages'].append({'name':'04_reconciliation','status':'passed','signals':[row['kind'] for row in checks]})
         write(args.output/'verification.json',verify(before,state,node_citations=node_citations))
@@ -282,8 +283,8 @@ def run(args):
         # as well, if a provider embeds it in its exception message.
         summary['errors']=transport_error_details(error,(secret.get_secret_value(),) if hasattr(secret,'get_secret_value') else ())
         if 'folder' in locals() and 'engine' in locals():
-            write(folder/'after.json',engine.current.model_dump(mode='json'))
-            if getattr(engine,'task_state',None):write(folder/'task_state.json',engine.task_state.to_dict())
+            write(folder/'after.json',engine.session.current.model_dump(mode='json'))
+            if getattr(engine.session,'task_state',None):write(folder/'task_state.json',engine.session.task_state.to_dict())
             write(folder/'result.json',{'name':folder.name,'status':'unfinished','errors':summary['errors']})
         print('Pipeline unfinished:',type(error).__name__,str(error)[:700],flush=True)
     summary['original_sources_unchanged']=all(digest(p)==h for p,h in hashes.items())

@@ -17,29 +17,29 @@ from langchain_core.tools import StructuredTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_openai.chat_models.base import _convert_message_to_dict
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.reconciliation_contract import (
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.reconciliation.contract import (
     TOOLS,
     DraftDocument,
 )
-from cortex.capabilities.graph_merge.integration.relation_context import (
+from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
 )
-from cortex.capabilities.graph_merge.integration.signal_premises import signal_premise
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
-from cortex.capabilities.graph_merge.llm.reconciliation_agent import DESCRIPTIONS
-from cortex.capabilities.graph_merge.llm.reconciliation_context import (
+from cortex.capabilities.graph_merge.reconciliation.scope import signal_premise
+from cortex.capabilities.graph_merge.models import LocalTask
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.reconciliation.agent import DESCRIPTIONS
+from cortex.capabilities.graph_merge.reconciliation.permissions import (
     ReconciliationRuntime,
 )
-from cortex.capabilities.graph_merge.llm.reconciliation_projection import (
+from cortex.capabilities.graph_merge.reconciliation.presentation import (
     edge_record,
     node_record,
 )
-from cortex.capabilities.graph_merge.llm.reconciliation_prompts import (
+from cortex.capabilities.graph_merge.reconciliation.policy import (
     reconciliation_system,
 )
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import GraphSpace, GraphState, load_root_schema
 
 ROOT = Path(__file__).resolve().parents[1]

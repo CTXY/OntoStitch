@@ -4,13 +4,13 @@ from pathlib import Path
 from types import SimpleNamespace
 import json
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.models import LocalTask
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.infrastructure.artifacts.graph_merge_trace import FileSystemGraphMergeTraceSink
 from cortex.schema import GraphState,GraphSpace,load_root_schema
 from reconciliation_probe_fixtures import write
@@ -53,11 +53,11 @@ def reconcile(database,owner,slot):
         request_max_characters=210000,trace_sink=FileSystemGraphMergeTraceSink(folder/'trace.jsonl'))
     agent.call_budget={'limit':20,'used':0}
     engine=IncrementalGraphIntegrationEngine(agent,max_rounds=3,model_call_budget=20)
-    engine.ctx,engine.current,engine.lineage=ctx,state,LineageIndex(ctx)
-    engine.history,engine.reviewed_sources,engine._revision=[],{},0
-    engine.identity_decision,engine.open_tasks={},[]
-    engine.workspace_path,engine._storage_revision=folder/'workspace.sqlite',None
-    engine.pending_relation_work=engine.pending_review=None
+    engine.session.inputs,engine.session.current,engine.session.lineage=ctx,state,LineageIndex(ctx)
+    engine.session.history,engine.session.reviewed_sources,engine.session.revision=[],{},0
+    engine.session.identity_decision,engine.session.open_tasks={},[]
+    engine.workspace_path,engine.session.storage_revision=folder/'workspace.sqlite',None
+    engine.session.pending_relation_work=engine.session.pending_review=None
     check={'id':'current-graph-role-check','kind':'node_relation_followup','mode':'required','node_ids':[owner],
         'required_outcome':'Check that the nominated current Concept and its physical realization express a valid business role and preserve matching methods, scope and evidence. This task concerns this owner and its incident relations; unrelated pre-existing binding contests are separate tasks. Keep correct existing content.'}
     task=LocalTask('single-graph:'+database,'reconcile',{owner},checks=[check])
@@ -65,15 +65,15 @@ def reconcile(database,owner,slot):
     result={'name':database,'status':'running','case_level_graph_reads':0,'source_archive_tools':False}
     try:
         engine._run_task(task,task.id)
-        assert engine.history[-1]['assessment']=='graph_assess'
+        assert engine.session.history[-1]['assessment']=='graph_assess'
         saved=WorkspaceStore(engine.workspace_path).load(task.id)
         write(folder/'task_state.json',saved['task_state'])
         result.update(status='passed',independent_assessment=True,checkpoint_stage=saved['task_state']['stage'],
-                      history=engine.history,model_calls=agent.call_budget['used'])
+                      history=engine.session.history,model_calls=agent.call_budget['used'])
     except Exception as error:
         from run_resilient_training import transport_error_details
         result.update(status='unfinished',errors=transport_error_details(error,()))
-    write(folder/'after.json',engine.current.model_dump(mode='json'))
+    write(folder/'after.json',engine.session.current.model_dump(mode='json'))
     result['trace']=trace_summary(folder);write(folder/'result.json',result)
     return result
 

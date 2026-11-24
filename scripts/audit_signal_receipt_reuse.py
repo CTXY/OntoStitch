@@ -10,15 +10,17 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine, _signal_targets, input_fingerprint
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.signal_receipts import is_accepted
-from cortex.capabilities.graph_merge.integration.signals import inspection_signals
-from cortex.capabilities.graph_merge.llm.reconciliation_prompts import SIGNALS
-from cortex.capabilities.graph_merge.integration.compiler import Preview
-from cortex.capabilities.graph_merge.integration.task_state import ContractVersions
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.inputs import input_fingerprint
+from cortex.capabilities.graph_merge.planning import _signal_targets
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.reconciliation.receipts import is_accepted
+from cortex.capabilities.graph_merge.reconciliation.inspection import inspection_signals
+from cortex.capabilities.graph_merge.reconciliation.contract import SIGNALS
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.runtime.state import ContractVersions
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository, SqlTrainingGraphMergeEvidenceResolver
 from cortex.schema import GraphNode, GraphState, load_root_schema
 
@@ -43,30 +45,28 @@ def audit(root, *, batch=None):
     context.sql_dialect='sqlite'
     assert input_fingerprint(context)==cp['input_fingerprint']
     engine=IncrementalGraphIntegrationEngine(SimpleNamespace(reconciliation_contract=True))
-    engine.ctx=context;engine.current=GraphState.model_validate(cp['current'])
-    engine.contract_versions=ContractVersions.from_dict(cp['contract_versions'])
-    engine.signal_receipts=deepcopy(cp.get('signal_receipts',[]))
-    engine.signal_scope_migrations=deepcopy(cp.get('signal_scope_migrations',[]))
-    engine.history=deepcopy(cp['history']);engine.lineage=LineageIndex.restore(context,cp['lineage'])
-    engine.task_state=None;engine.relation_followups=[];engine.open_tasks=[]
-    latest={row['check_key']:row for row in engine.signal_receipts}
+    engine.session.inputs=context;engine.session.current=GraphState.model_validate(cp['current'])
+    engine.session.contract_versions=ContractVersions.from_dict(cp['contract_versions'])
+    engine.session.signal_receipts=deepcopy(cp.get('signal_receipts',[]))
+    engine.session.history=deepcopy(cp['history']);engine.session.lineage=LineageIndex.restore(context,cp['lineage'])
+    engine.session.task_state=None;engine.session.relation_followups=[];engine.session.open_tasks=[]
+    latest={row['check_key']:row for row in engine.session.signal_receipts}
     # Compare against the next ACTUAL detector definition. Replaying only the
     # stored trigger can miss a stale membership manifest after a valid repair.
-    detected={c['id']:c for c in inspection_signals(context,Preview(engine.current,{}, {},[]))}
+    detected={c['id']:c for c in inspection_signals(context,Preview(engine.session.current,{}, {},[]))}
     checks=[];stale=[];changed=[];closed=[]
     for row in latest.values():
         original=row['check'];current=detected.get(original.get('id'))
         if original['kind'] in SIGNALS and current is not None:
-            if is_accepted(engine,current):checks.append(current)
-            elif is_accepted(engine,original):stale.append(original.get('id'))
+            if is_accepted((engine).session,current):checks.append(current)
+            elif is_accepted((engine).session,original):stale.append(original.get('id'))
             else:changed.append(original.get('id'))
-        elif is_accepted(engine,original):
+        elif is_accepted((engine).session,original):
             checks.append(original);closed.append(original.get('id'))
     result={'audit_protocol':2,'checked_at':datetime.now(timezone.utc).isoformat(),'database':plan['database'],
-        'batch':index,'accepted_receipts':len(engine.signal_receipts),'matching_current_checks':len(checks),
+        'batch':index,'accepted_receipts':len(engine.session.signal_receipts),'matching_current_checks':len(checks),
         'check_ids':[c.get('id') for c in checks],'snapshot_revision':cp['revision'],
         'live_checkpoint_mutated':False,'provider_calls':0,
-        'scope_compatibility_proofs':len(engine.signal_scope_migrations),
         'stale_accepted_manifests':stale,'changed_premises_recheck_expected':changed,
         'closed_or_explicit_obligation_receipts':closed}
     if stale:
@@ -80,33 +80,33 @@ def audit(root, *, batch=None):
         calls.append(task.id)
         raise AssertionError('Accepted checks unexpectedly re-entered model task: '+task.id)
     engine._run_task=forbidden
-    import cortex.capabilities.graph_merge.integration.incremental as scheduler
+    import cortex.capabilities.graph_merge.engine as scheduler
     original_inspection,original_batches=scheduler.inspection_signals,scheduler.review_batches
-    history=deepcopy(engine.history)
+    history=deepcopy(engine.session.history)
     try:
         scheduler.inspection_signals=lambda *args,**kwargs:deepcopy(checks)
-        targets=set().union(*(_signal_targets(c,engine.current) for c in checks))
+        targets=set().union(*(_signal_targets(c,engine.session.current) for c in checks))
         for grouping in ('single_group','one_check_per_group'):
             scheduler.review_batches=(lambda current,checks,**kwargs:[
                 (set().union(*(_signal_targets(c,current) for c in checks)),checks)] if checks else []) if grouping=='single_group' else (
                 lambda current,checks,**kwargs:[(_signal_targets(c,current),[c]) for c in checks])
             engine._reconcile('read-only-receipt-audit',initial_targets=targets)
-        assert engine.history==history and not calls
+        assert engine.session.history==history and not calls
     finally:
         scheduler.inspection_signals,scheduler.review_batches=original_inspection,original_batches
-    original=engine.current
+    original=engine.session.current
     extra=GraphNode(id='receipt.audit.unrelated',node_type='concept',name='Read-only audit control',
         properties={'definition':'An isolated control outside every check.'})
-    engine.current=original.model_copy(update={'graph':original.graph.model_copy(update={'nodes':(*original.graph.nodes,extra)})})
-    assert all(is_accepted(engine,c) for c in checks)
-    engine.current=original
+    engine.session.current=original.model_copy(update={'graph':original.graph.model_copy(update={'nodes':(*original.graph.nodes,extra)})})
+    assert all(is_accepted((engine).session,c) for c in checks)
+    engine.session.current=original
     c=checks[0]
     anchors=_signal_targets(c,original)
     selected=next(n for n in original.graph.nodes if n.id in anchors and n.node_type not in {'table','column','dimension_value'})
     changed=selected.model_copy(update={'description':(selected.description or '')+' [Detached relevant-condition control] '})
-    engine.current=original.model_copy(update={'graph':original.graph.model_copy(update={'nodes':tuple(
+    engine.session.current=original.model_copy(update={'graph':original.graph.model_copy(update={'nodes':tuple(
         changed if n.id==selected.id else n for n in original.graph.nodes)})})
-    assert not is_accepted(engine,c)
+    assert not is_accepted((engine).session,c)
     result.update(status='passed',regrouping_scheduler_task_calls=len(calls),
         accepted_history_unchanged=True,unrelated_change_reused=True,relevant_change_invalidated=True)
     return result

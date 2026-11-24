@@ -18,7 +18,13 @@ class OutputProtocolRecoveryExhausted(RuntimeError):
 
 
 def _json(value):
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    return json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 def _detached(value):
@@ -35,8 +41,12 @@ def _output_set(output, feedback):
     """
     outputs = output if isinstance(output, list) else [output]
     paired = isinstance(feedback, list) and len(feedback) == len(outputs)
-    return sorted({_json([value, feedback[index] if paired else feedback])
-                   for index, value in enumerate(outputs)})
+    return sorted(
+        {
+            _json([value, feedback[index] if paired else feedback])
+            for index, value in enumerate(outputs)
+        }
+    )
 
 
 class RecoveryTracker:
@@ -58,9 +68,14 @@ class RecoveryTracker:
         if not isinstance(restored, dict):
             raise TypeError("Recovery state must be an object")
         defaults = {
-            "version": 1, "failure_rounds": 0, "protocol_failures": 0,
-            "protocol_error": None, "fallback": False, "failures": {},
-            "last_failure": None, "blocked": None,
+            "version": 1,
+            "failure_rounds": 0,
+            "protocol_failures": 0,
+            "protocol_error": None,
+            "fallback": False,
+            "failures": {},
+            "last_failure": None,
+            "blocked": None,
         }
         self.data = {**defaults, **restored}
         if self.data["version"] != 1:
@@ -68,15 +83,20 @@ class RecoveryTracker:
         for key in ("failure_rounds", "protocol_failures"):
             if type(self.data[key]) is not int or self.data[key] < 0:
                 raise ValueError(f"Invalid recovery counter {key}")
-        if type(self.data["fallback"]) is not bool or not isinstance(self.data["failures"], dict):
+        if type(self.data["fallback"]) is not bool or not isinstance(
+            self.data["failures"], dict
+        ):
             raise ValueError("Invalid recovery mode or failure signatures")
-        if any(not isinstance(key, str) or type(count) is not int or count < 1
-               for key, count in self.data["failures"].items()):
+        if any(
+            not isinstance(key, str) or type(count) is not int or count < 1
+            for key, count in self.data["failures"].items()
+        ):
             raise ValueError("Invalid recovery failure count")
         blocked = self.data["blocked"]
         if blocked is not None and (
-            not isinstance(blocked, dict) or blocked.get("type") not in {
-                "TaskNoProgress", "OutputProtocolRecoveryExhausted"}
+            not isinstance(blocked, dict)
+            or blocked.get("type")
+            not in {"TaskNoProgress", "OutputProtocolRecoveryExhausted"}
             or not isinstance(blocked.get("message"), str)
         ):
             raise ValueError("Invalid blocked recovery state")
@@ -98,34 +118,52 @@ class RecoveryTracker:
         self.data["fallback"] = value
 
     def ensure_active(self, facts_hash=None):
-        if facts_hash is not None and (not isinstance(facts_hash, str) or not facts_hash):
+        if facts_hash is not None and (
+            not isinstance(facts_hash, str) or not facts_hash
+        ):
             raise ValueError("Visible facts hash must be a nonempty string")
         blocked = self.data["blocked"]
         if blocked is not None:
             last = self.data.get("last_failure") or {}
             previous_facts = last.get("facts_hash") if isinstance(last, dict) else None
-            if (blocked["type"] == "TaskNoProgress" and facts_hash is not None
-                    and isinstance(previous_facts, str) and previous_facts
-                    and facts_hash != previous_facts):
+            if (
+                blocked["type"] == "TaskNoProgress"
+                and facts_hash is not None
+                and isinstance(previous_facts, str)
+                and previous_facts
+                and facts_hash != previous_facts
+            ):
                 # An explicit new set of injected premises grants another
                 # content-repair opportunity. Keep every old failure bucket:
                 # returning to its old premises must not restart that loop.
                 self.data["blocked"] = None
                 return
-            exception = (OutputProtocolRecoveryExhausted if blocked["type"] ==
-                         "OutputProtocolRecoveryExhausted" else TaskNoProgress)
+            exception = (
+                OutputProtocolRecoveryExhausted
+                if blocked["type"] == "OutputProtocolRecoveryExhausted"
+                else TaskNoProgress
+            )
             raise exception(blocked["message"])
 
     def observe(self, stage, output, feedback, facts_hash):
-        if not isinstance(stage, str) or not stage or not isinstance(facts_hash, str) or not facts_hash:
+        if (
+            not isinstance(stage, str)
+            or not stage
+            or not isinstance(facts_hash, str)
+            or not facts_hash
+        ):
             raise ValueError("Failure stage and visible facts hash are required")
         self.ensure_active(facts_hash=facts_hash)
         feedback = _detached(feedback)
         output_set = _output_set(output, feedback)
-        signature = hashlib.sha256(_json([stage, output_set, facts_hash]).encode()).hexdigest()
+        signature = hashlib.sha256(
+            _json([stage, output_set, facts_hash]).encode()
+        ).hexdigest()
         self.data["failure_rounds"] += 1
         self.data["last_failure"] = {
-            "stage": stage, "feedback": feedback, "facts_hash": facts_hash,
+            "stage": stage,
+            "feedback": feedback,
+            "facts_hash": facts_hash,
             "signature": signature,
         }
         if stage == "output_protocol":
@@ -133,9 +171,12 @@ class RecoveryTracker:
             self.data["protocol_error"] = deepcopy(feedback)
             if self.data["protocol_failures"] >= 3:
                 self.data["blocked"] = {
-                    "type": "OutputProtocolRecoveryExhausted", "stage": stage,
-                    "message": ("Output protocol repair exhausted after three separate model responses; "
-                                "the prior draft and checkpoint are retained"),
+                    "type": "OutputProtocolRecoveryExhausted",
+                    "stage": stage,
+                    "message": (
+                        "Output protocol repair exhausted after three separate model responses; "
+                        "the prior draft and checkpoint are retained"
+                    ),
                 }
         else:
             # Reaching schema/compiler validation proves the single-result
@@ -146,14 +187,22 @@ class RecoveryTracker:
             self.data["failures"][signature] = count
             if count >= 2:
                 self.data["blocked"] = {
-                    "type": "TaskNoProgress", "stage": stage,
-                    "message": ("The identical draft/output set and rejection repeated across separate "
-                                f"model rounds with unchanged visible facts ({stage}); checkpoint retained"),
+                    "type": "TaskNoProgress",
+                    "stage": stage,
+                    "message": (
+                        "The identical draft/output set and rejection repeated across separate "
+                        f"model rounds with unchanged visible facts ({stage}); checkpoint retained"
+                    ),
                 }
         self.ensure_active()
 
     def success(self):
         """Complete an invocation; callers must not use this for read-only turns."""
         self.ensure_active()
-        self.data.update(protocol_failures=0, protocol_error=None, fallback=False,
-                         failures={}, last_failure=None)
+        self.data.update(
+            protocol_failures=0,
+            protocol_error=None,
+            fallback=False,
+            failures={},
+            last_failure=None,
+        )

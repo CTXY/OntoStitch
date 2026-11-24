@@ -1,7 +1,0 @@
-{
-  "source_request": "output/bird_merge_v2_live_20261119_132445/integration/thrombosis_prediction/merge/batch-0003/wire/000001_request.json",
-  "message_index": 1,
-  "original_content_sha256": "ebf70aebaade5ab1f5e6f907e83da6443f20dae21120ded6a773330db63198f0",
-  "raw_packet_bytes": 207477,
-  "credentials_included": false
-}

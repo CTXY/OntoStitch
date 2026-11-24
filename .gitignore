@@ -27,20 +27,13 @@ usecase/
 *.log
 .DS_Store
 /results_final/
-/docs/*
-!/docs/design/
-/tests/*
-!/tests/*.py
-!/tests/fixtures/
-/tests/fixtures/*
-!/tests/fixtures/merge_output_protocol_failure/
-/baseline/tests/
 /datasets/
 /output/
 /artifacts/
 
-# Portable reconciliation receipt regression records.
-!/tests/fixtures/reconciliation_signal_receipts/
-
-# Portable signal-specific scope regressions.
-!/tests/fixtures/reconciliation_signal_subgraphs/
+# Local documentation, experiments, and test suites (not published).
+/docs/
+/examples/
+/baseline/
+/ablation_study/
+/tests/

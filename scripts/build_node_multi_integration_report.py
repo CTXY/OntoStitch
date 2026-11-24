@@ -11,7 +11,7 @@ import json
 import sys
 import xml.etree.ElementTree as ET
 
-from cortex.capabilities.graph_merge.llm.node_contract import node_system, node_output_model
+from cortex.capabilities.graph_merge.consolidation.contract import node_system, node_output_model
 
 REPO=Path(__file__).resolve().parents[1]
 SRC=REPO/'src/cortex/capabilities/graph_merge'

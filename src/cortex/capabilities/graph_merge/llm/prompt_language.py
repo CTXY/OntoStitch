@@ -4,14 +4,19 @@ The lookup changes prose only. Schema keys, IDs, types and validation rules rema
 identical. Unknown authored text is preserved rather than guessed or translated
 at request time. Changes to this asset are part of checkpoint policy binding.
 """
+
+import json
 from functools import lru_cache
 from importlib.resources import files
-import json
 
 
 @lru_cache(maxsize=1)
 def _catalog():
-    return json.loads(files('cortex.capabilities.graph_merge.llm.prompts').joinpath('schema-contracts.en.json').read_text())
+    return json.loads(
+        files("cortex.capabilities.graph_merge.llm.prompts")
+        .joinpath("schema-contracts.en.json")
+        .read_text()
+    )
 
 
 def english_contract(value):

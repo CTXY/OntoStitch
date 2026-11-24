@@ -9,23 +9,24 @@ from dotenv import load_dotenv
 from summarize_graph_merge_calls import summarize
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.batch import alias_view
-from cortex.capabilities.graph_merge.integration.compiler import Preview
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.engine import implementation_version
-from cortex.capabilities.graph_merge.integration.incremental import (
+from cortex.capabilities.graph_merge.graph.batch import alias_view
+from cortex.capabilities.graph_merge.graph.publication import Preview
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.runtime.contracts import implementation_sources
+from cortex.capabilities.graph_merge.engine import (
     IncrementalGraphIntegrationEngine,
 )
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.models import IntegrationProposal
-from cortex.capabilities.graph_merge.integration.provenance import (
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.graph.edit_contract import IntegrationProposal
+from cortex.capabilities.graph_merge.graph.provenance import (
     validate_rewrite_sources,
 )
-from cortex.capabilities.graph_merge.integration.relation_context import (
+from cortex.capabilities.graph_merge.reconciliation.context import (
     relation_context,
 )
-from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.models import LocalTask
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.sql_training.graph_merge_evidence import (
     MappingEvidenceRepository,
     SqlTrainingGraphMergeEvidenceResolver,
@@ -76,12 +77,12 @@ def main():
     agent.call_budget = {"used": 0, "limit": 10}
     engine = IncrementalGraphIntegrationEngine(agent, max_rounds=1)
     base, edge_map = alias_view(original, {})
-    engine.ctx, engine.current = ctx, base
-    engine.lineage = LineageIndex(ctx, initial_edge_map=edge_map)
-    engine._revision, engine.reviewed_sources = 0, {}
+    engine.session.inputs, engine.session.current = ctx, base
+    engine.session.lineage = LineageIndex(ctx, initial_edge_map=edge_map)
+    engine.session.revision, engine.session.reviewed_sources = 0, {}
     targets = set(json.loads(args.targets.read_text()))
     dump("manifest.json", {"host": host, "model": model.model_name,
-        "implementation_version": implementation_version(), "max_model_calls": 10,
+        "implementation_version": canonical_hash(implementation_sources()), "max_model_calls": 10,
         "state": str(args.state), "evidence": str(args.evidence),
         "targets": sorted(targets), "streaming": True, "sdk_retries": 0,
         "full_merge": False, "targeted_feedback": False})
@@ -89,14 +90,14 @@ def main():
     result = {"status": "running"}
     try:
         engine._run_task(LocalTask("local-region", "reconcile", targets), "local-region")
-        accepted = engine.current
+        accepted = engine.session.current
         GraphManager(schema).validate_state(accepted)
         ctx.candidate = accepted
         view = relation_context(ctx, accepted, LocalTask("view", "reconcile", targets))
         for e in view["edges"]:
             require_concrete_relation(e["edge_type"])
-        preview = Preview(accepted, engine.lineage.node_map, engine.lineage.edge_map, [])
-        validate_rewrite_sources(ctx, IntegrationProposal(changes=engine.lineage.source_changes(accepted)), preview)
+        preview = Preview(accepted, engine.session.lineage.node_map, engine.session.lineage.edge_map, [])
+        validate_rewrite_sources(ctx, IntegrationProposal(changes=engine.session.lineage.source_changes(accepted)), preview)
         conflicts_before = [n.model_dump(mode="json") for n in base.graph.nodes if n.alternatives]
         conflicts_after = [n.model_dump(mode="json") for n in accepted.graph.nodes if n.alternatives]
         if conflicts_before != conflicts_after:
@@ -104,8 +105,8 @@ def main():
         restored = GraphState.model_validate_json(accepted.model_dump_json())
         assert restored == accepted
         dump("graph_state.json", accepted.model_dump(mode="json"))
-        dump("lineage.json", engine.lineage.snapshot())
-        dump("history.json", engine.history)
+        dump("lineage.json", engine.session.lineage.snapshot())
+        dump("history.json", engine.session.history)
         dump("relation_view.json", view)
         chosen = {e["id"] for e in view["edges"]}
         ids = {n["id"] for n in view["nodes"]}
@@ -119,11 +120,11 @@ def main():
             before_count = agent.call_budget["used"]
             engine._run_task(LocalTask("noop-control", "reconcile", targets), "local-region")
             result["noop_control"] = {
-                "unchanged": engine.current == accepted,
+                "unchanged": engine.session.current == accepted,
                 "calls": agent.call_budget["used"] - before_count,
-                "assessment": engine.history[-1]["assessment"],
+                "assessment": engine.session.history[-1]["assessment"],
             }
-            if engine.current != accepted or engine.history[-1]["assessment"] != "skipped_no_change":
+            if engine.session.current != accepted or engine.session.history[-1]["assessment"] != "skipped_no_change":
                 raise ValueError("No-op control did not remain unchanged; stop before full merge")
     except Exception as exc:
         result.update(status="failed", error_type=type(exc).__name__, error=str(exc))

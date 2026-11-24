@@ -19,10 +19,11 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.task_state import build_contract_versions, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository, SqlTrainingGraphMergeEvidenceResolver
 from cortex.capabilities.sql_training.merge_evaluation import compose_case_graphs, _augment_existing_physical_graph
 from cortex.config import load_config
@@ -63,7 +64,7 @@ def prepare(root):
         for case in ids:
             source=REPO/f'output/latest_graphs/{db}/case_level_graphs/{case}/state.json'
             assert sha(source)==row['cases'][case]['sha256']
-            from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
+            from graph_merge_archive import migrate_relation_notes
             state,notes=migrate_relation_notes(read(source));GraphManager(load_root_schema()).validate_state(state)
             qa=REPO/f'output/bird_merge_v4_live_20261119_214104/integration/{db}/cases/{case}/input.json'
             raw=read(qa);assert raw['source_id']==f'bird-{db}-{case}'
@@ -153,7 +154,7 @@ def run_worker(root,db):
         write(folder/'merged_state.json',result.state.model_dump(mode='json'))
         (folder/'merged_graph.html').write_text(render_graph_html(result.state.graph,schema,title=db+' · first 10 cases · awaiting review'))
         write(folder/'status.json',{'status':'awaiting_user_review','case_ids':entry['case_ids'],
-            'model_calls':(agent.call_budget or {}).get('used'),'history':engine.history,
+            'model_calls':(agent.call_budget or {}).get('used'),'history':engine.session.history,
             'nodes':len(result.state.graph.nodes),'edges':len(result.state.graph.edges),
             'node_types':dict(Counter(n.node_type for n in result.state.graph.nodes)),
             'conflict_nodes':len(result.state.conflict_nodes),'progress_at':time.time(),

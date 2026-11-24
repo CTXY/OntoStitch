@@ -13,11 +13,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.context import remap_edge
-from cortex.capabilities.graph_merge.integration.compiler import deduplicate_edges
-from cortex.capabilities.graph_merge.integration.patch import MergePatch, _integrate
-from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
-from cortex.capabilities.graph_merge.models import EvidenceItem
+from cortex.capabilities.graph_merge.graph.operations import remap_edge
+from cortex.capabilities.graph_merge.graph.operations import deduplicate_edges
+from cortex.capabilities.graph_merge.consolidation.compiler import MergePatch, _integrate
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.evidence import EvidenceItem
 from cortex.schema import ConflictChoice, ConflictPoint, GraphSpace, GraphState, NodeContent, load_root_schema
 
 # The sibling helpers read data only until configuration/observe are called.
@@ -216,40 +216,6 @@ def combine_concept_cases(args, database, cases, selected):
     state = GraphState(graph=GraphSpace(nodes=tuple(nodes.values()), edges=tuple(deduplicated.values())))
     GraphManager(load_root_schema()).validate_state(state)
     return state, ordinary, originals, rows, hashes
-
-
-def metadata_fixture(args):
-    baseline, node, originals, rows, hashes = combine_concept_cases(args, 'toxicology', ('300', '229'), 'concept.molecule')
-    bindings = [edge for edge in baseline.graph.edges if edge.from_node_id == node.id and edge.edge_type == 'grounded_on']
-    if len(bindings) != 2:
-        raise ValueError('Metadata boundary needs exactly the two evidenced molecule representations')
-    group = {'id': 'molecule-representations', 'edges': [edge.id for edge in bindings],
-        'description': 'These relations retain the molecule identity representation in the molecule table and its representation in bond records.'}
-    properties = {**node.properties, 'relation_metadata': [group]}
-    annotated = node.model_copy(update={'properties': properties})
-    before_nodes = tuple(annotated if item.id == node.id else item for item in baseline.graph.nodes)
-    old = bindings[-1].id
-    new = 'smoke-renamed::' + old
-    renamed = tuple(edge.model_copy(update={'id': new}) if edge.id == old else edge for edge in baseline.graph.edges)
-    before = baseline.model_copy(update={'graph': baseline.graph.model_copy(update={'nodes': before_nodes, 'edges': renamed})})
-    updated = {**group, 'edges': [new if key == old else key for key in group['edges']]}
-    fixed = annotated.model_copy(update={'properties': {**properties, 'relation_metadata': [updated]}})
-    expected = before.model_copy(update={'graph': before.graph.model_copy(update={'nodes': tuple(
-        fixed if item.id == node.id else item for item in before.graph.nodes)})})
-    GraphManager(load_root_schema()).validate_state(expected)
-    signal = {'id': 'metadata-alias', 'kind': 'concept_metadata_repair', 'mode': 'required',
-        'node_ids': [node.id], 'edge_ids': [new, bindings[0].id],
-        'observed': {'metadata_id': group['id'], 'missing_edge_id': old, 'trusted_edge_aliases': {old: new},
-                     'original_edge_record': bindings[-1].model_dump(mode='json')},
-        'check_question': '同步真实边ID映射，完整保留原组的两种表示含义；不能删除metadata来绕过引用错误。'}
-    return Fixture('metadata_alias', before, expected, evidence_for(before, rows), signal,
-        [{'change_id': 'repair-metadata-alias', 'kind': 'node_update', 'node_id':node.id, 'set':{'properties':{'relation_metadata':[updated]}},
-            'reason':'Map only the declared edge alias and preserve the complete group meaning.'}],
-        {'source_sha256': hashes, 'case_ids': ['toxicology/300', 'toxicology/229'],
-         'controlled_changes': ['Curated same-identity baseline retains both original Concept contents and physical representations.',
-             'Added a group restating the two existing representation roles, without introducing ordering/exclusivity.',
-             {'renamed_edge': old, 'new_edge': new, 'metadata_deliberately_not_synced': True}],
-         'expected_outcome': 'Only the stale metadata reference changes; the group and both real relations remain.'}, [node.id], node.id, 'node_update')
 
 
 def preserve_conflict_fixture(args):

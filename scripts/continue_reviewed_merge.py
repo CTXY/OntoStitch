@@ -20,12 +20,13 @@ from merge_model_runtime import configure_merge_model
 from run_resilient_training import transport_error_details
 
 from cortex.application.ontology_graph import GraphManager
-from cortex.capabilities.graph_merge.integration.batch import alias_view
-from cortex.capabilities.graph_merge.integration.incremental import IncrementalGraphIntegrationEngine
-from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
-from cortex.capabilities.graph_merge.integration.task_state import build_contract_versions, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
+from cortex.capabilities.graph_merge.graph.batch import alias_view
+from cortex.capabilities.graph_merge.engine import IncrementalGraphIntegrationEngine
+from graph_merge_archive import migrate_relation_notes
+from cortex.capabilities.graph_merge.runtime.contracts import build_contract_versions
+from cortex.capabilities.graph_merge.runtime.state import canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.llm.agent import IncrementalIntegrationAgent
 from cortex.capabilities.sql_training.graph_merge_evidence import MappingEvidenceRepository, SqlTrainingGraphMergeEvidenceResolver
 from cortex.capabilities.sql_training.merge_evaluation import compose_case_graphs, _augment_existing_physical_graph
 from cortex.infrastructure.artifacts.graph_html import render_graph_html
@@ -250,12 +251,13 @@ def compose_batch(root, plan, case_ids, current, folder):
 def run(root):
     plan = read(root / 'plan.json')
     limits = runtime_limits(root)
+    relation_id_mode = 'native'
     if (root / 'relation_id_protocol.json').exists():
-        from cortex.capabilities.graph_merge.llm.relation_merger_ids import adapter_hash, install
+        from cortex.capabilities.graph_merge.llm.relation_merger_ids import adapter_hash
         protocol = read(root / 'relation_id_protocol.json')
         if protocol['adapter_hash'] != adapter_hash():
             raise ValueError('Relation local-ID adapter changed; retain checkpoints and review migration')
-        install()
+        relation_id_mode = 'local'
     schema = load_root_schema()
     if plan['contracts'] != build_contract_versions(schema).to_dict():
         raise ValueError('Runtime contracts changed; explicit checkpoint migration is required')
@@ -292,6 +294,7 @@ def run(root):
                 continue
             for window in range(3):
                 agent = OperatorAgent(model_for(folder, selected[-1]), max_calls=16,
+                    relation_id_mode=relation_id_mode,
                     request_max_characters=limits['local_request_max_characters'],
                     identity_request_max_characters=limits['identity_request_max_characters'],
                     trace_sink=FileSystemGraphMergeTraceSink(folder / 'agents.jsonl'))
@@ -356,7 +359,7 @@ def run(root):
             write_text(folder / 'graph.html', render_graph_html(current.graph, schema,
                        title=plan['database'] + f' · {len(merged) + len(case_ids)} accepted cases'))
             write(folder / 'completed.json', {'case_ids': case_ids, 'state_sha256': digest(folder / 'state.json'),
-                  'completed_at': time.time(), 'history_entries': len(engine.history)})
+                  'completed_at': time.time(), 'history_entries': len(engine.session.history)})
             merged.extend(case_ids)
             write(root / 'merged_checkpoint_state.json', current.model_dump(mode='json'))
             write_text(root / 'merged_preview.html', render_graph_html(current.graph, schema,

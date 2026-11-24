@@ -8,14 +8,14 @@ import json
 from pathlib import Path
 import sqlite3
 
-from cortex.capabilities.graph_merge.integration.compiler import identity_map
-from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.incremental import identity_task_projection
-from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.models import IdentityDecision
-from cortex.capabilities.graph_merge.integration.patch import IdentityIntegration
-from cortex.capabilities.graph_merge.integration.task_state import ContractVersions, TaskState, canonical_hash
-from cortex.capabilities.graph_merge.integration.workspace import WorkspaceStore
+from cortex.capabilities.graph_merge.identity.contract import identity_map
+from cortex.capabilities.graph_merge.inputs import IntegrationContext
+from cortex.capabilities.graph_merge.planning import identity_task_projection
+from cortex.capabilities.graph_merge.graph.lineage import LineageIndex
+from cortex.capabilities.graph_merge.identity.contract import IdentityDecision
+from cortex.capabilities.graph_merge.consolidation.compiler import IdentityIntegration
+from cortex.capabilities.graph_merge.runtime.state import ContractVersions, TaskState, canonical_hash
+from cortex.capabilities.graph_merge.runtime.workspace import WorkspaceStore
 from cortex.schema import GraphState, load_root_schema
 
 
@@ -91,7 +91,7 @@ def repair(source, destination, *, run_id):
     revised['task_state'] = TaskState.from_dict(task).to_dict()
     revised['pending_review'] = revised['pending_relation_work'] = None
     revised['final'] = False
-    for key in ('current', 'history', 'lineage', 'signal_receipts', 'signal_scope_migrations', 'reviewed_sources', 'input_fingerprint', 'accepted_revision'):
+    for key in ('current', 'history', 'lineage', 'signal_receipts', 'reviewed_sources', 'input_fingerprint', 'accepted_revision'):
         if revised.get(key) != original.get(key):
             raise ValueError('Recovery changed accepted progress: ' + key)
     destination.parent.mkdir(parents=True, exist_ok=True)
