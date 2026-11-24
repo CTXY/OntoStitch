@@ -1,0 +1,12 @@
+{
+  "source": "/Users/yichendezaizai/autoonto-nl2sql-release/output/signal_subgraphs_20261122/publication_failure/published.json",
+  "sha256": "a9374af8229de7e9ea02d7e91c77509730d4e0fa1d5ce17fac1ca8f07fd1c1fa",
+  "expected_scopes": {
+    "incoming.edge.3dd07284f06edd280fcf": [
+      "distinct_count"
+    ],
+    "incoming.edge.660317b6406c1b2e4d14": [
+      "plain_count"
+    ]
+  }
+}

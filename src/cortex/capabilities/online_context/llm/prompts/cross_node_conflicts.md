@@ -70,4 +70,9 @@ Return JSON matching:
 
 {template_output}
 
-Return exactly one JSON object inside `<result>...</result>`, with no Markdown fence or extra text.
+Return exactly one JSON object directly at the root. No result wrapper, XML tags, Markdown fences, encoded JSON strings or surrounding text.
+
+CandidateDraft accepts sources, not candidate_sources. Internal source categories are derived from graph_refs and initial_sql_evidence; omit optional sources rather than copying internal fields.
+
+# SQL provenance
+Use supplied initial_sql_refs (S0 or exact fragment IDs), never copy or reconstruct initial_sql_evidence. References identify evidence, not hypothetical SQL. Intra-node proposes memory/schema candidates only; the Initial-SQL/Memory stage assigns actual SQL provenance. Keep one actual-SQL candidate per controlled decision.

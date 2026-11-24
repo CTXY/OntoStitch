@@ -66,6 +66,9 @@ Exclusion is task-local; it does not declare the stored Rule invalid.
 - For a ratio within population P, P limits both numerator and denominator.
   Do not turn it into an unrestricted numerator divided by the count of P.
 - Do not infer a table from a bare field name when multiple sources are possible.
+- Preserve explicit evidence formulas, their numerator/denominator, sign, scale,
+  date bounds and output direction. A counting-method answer does not change a
+  supplied ratio formula; an age-expression answer does not determine MIN/MAX.
 - An unasked or unanswered decision is not permission to complete it. Do not add
   filters, JOINs, outputs, formulas, DISTINCT or limits to make guidance concrete.
 - Check that the combined guidance preserves the confirmed answers and does not
@@ -77,8 +80,4 @@ Exclusion is task-local; it does not declare the stored Rule invalid.
 Return one JSON object inside `<result>...</result>` matching the schema below:
 
 - `guidance_by_slot`: one `{choice_point_id, guidance_content}` per Slot, in order.
-- `rule_guidance`: one `{rule_id, include, reason, instruction}` per candidate
-  Rule. Copy its ID exactly. For inclusion, copy `action` exactly; for exclusion,
-  use `include: false` and an empty instruction.
-
-{template_output}
+- `rule_guidance`: one `{rule_id, include, reason}` per supplied short Rule ID (R1, R2, ...). Do not copy actions or emit instruction. The Controller restores real IDs and exact actions.

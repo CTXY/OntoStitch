@@ -2,6 +2,31 @@
 import re
 
 
+def validate_candidate_evidence(candidate):
+    """Validate actual citations, not a prose claim that evidence exists."""
+    key = candidate.candidate_id
+    refs = candidate.graph_refs
+    fragment = candidate.initial_sql_evidence
+    if any(not ref.strip() for ref in refs) or len(refs) != len(set(refs)):
+        raise ValueError(f"{key}: graph_refs must contain nonempty, distinct supplied handles")
+    if fragment is not None and not fragment.strip():
+        raise ValueError(f"{key}: initial_sql_evidence must be a nonempty verbatim fragment or null")
+    if not refs and not fragment:
+        raise ValueError(
+            f"{key}: supply graph_refs for Memory/Schema evidence or "
+            "initial_sql_evidence for Initial SQL evidence; explanation is not a citation"
+        )
+    types = set(candidate.evidence_assessment.source_types)
+    if bool(refs) != bool(types & {"ontology_asset", "database_schema"}):
+        raise ValueError(f"{key}: Memory/Schema source_types and nonempty graph_refs must agree")
+    if bool(fragment) != ("initial_sql" in types):
+        raise ValueError(f"{key}: initial_sql source_type and nonempty initial_sql_evidence must agree")
+    declared = set(getattr(candidate, "sources", ()))
+    actual = ({"memory_graph"} if refs else set()) | ({"initial_sql"} if fragment else set())
+    if declared and declared != actual:
+        raise ValueError(f"{key}: sources must agree with actual graph_refs/initial_sql_evidence")
+
+
 def validate_initial_sql_sources(points):
     for point in points:
         options = getattr(point, "options", getattr(point, "candidates", ()))

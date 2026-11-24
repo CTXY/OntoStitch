@@ -1,7 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from cortex.schema import GraphSpace, GraphState
 from cortex.schema.relation_metadata import filter_metadata
+
+PHYSICAL_TYPES = frozenset({'table', 'column', 'dimension_value'})
+SEMANTIC_TYPES = frozenset({'concept', 'metric', 'generation_rule', 'event'})
+
+
+@dataclass
+class ContextSelection:
+    node_ids: set[str]
+    seed_ids: set[str]
+    skipped: dict[str, dict]
+    semantic_nodes: int
+    physical_nodes: int
 
 
 def _metadata_view(node, edge_ids):
@@ -17,48 +31,10 @@ def _metadata_view(node, edge_ids):
     return node.model_copy(update={"properties": filter_metadata(node.properties, edge_ids)})
 
 
-def expand_context(state: GraphState, seed_node_ids: set[str], *, excluded_node_ids=()) -> set[str]:
-    """One asserted hop, followed only by mandatory references and JOIN routing.
-
-    Neighbours do not become new business traversal roots. In particular a
-    physical column reached from a Concept must not fan back out to every other
-    Concept sharing that column. Predicates need no hard-coded traversal list.
-    """
-
+def _required_context(state, node_ids):
+    """Complete references, full alternatives and induced-edge prerequisites."""
     nodes = {node.id: node for node in state.graph.nodes}
-    seeds = seed_node_ids & nodes.keys()
-    excluded = set(excluded_node_ids) - seeds
-    result = set(seeds)
-    for edge in state.graph.edges:
-        if edge.from_node_id in seeds and edge.to_node_id not in excluded:
-            result.add(edge.to_node_id)
-        if edge.to_node_id in seeds and edge.from_node_id not in excluded:
-            result.add(edge.from_node_id)
-    result.intersection_update(nodes)
-    # Physical joins are Table-to-Table edges. Include up to two hops so a
-    # semantic source pair can retain one intermediate routing table.
-    table_frontier = {
-        node_id for node_id in result if nodes[node_id].node_type == "table"
-    }
-    for _depth in range(2):
-        neighbors = {
-            endpoint
-            for edge in state.graph.edges
-            if edge.edge_type == "joins_with"
-            and (
-                edge.from_node_id in table_frontier or edge.to_node_id in table_frontier
-            )
-            for endpoint in (edge.from_node_id, edge.to_node_id)
-            if endpoint in nodes and nodes[endpoint].node_type == "table"
-        } - result
-        if len(result) + len(neighbors) > 160:
-            break
-        result.update(neighbors)
-        table_frontier = neighbors
-        if not table_frontier:
-            break
-    # Mandatory references have no heuristic depth limit: preserve complete formulas,
-    # alternatives, value ownership, and composite JOIN endpoints.
+    result = set(node_ids) & nodes.keys()
     from cortex.application.ontology_graph import GraphManager
     from cortex.schema.references import property_reference_ids
 
@@ -86,6 +62,10 @@ def expand_context(state: GraphState, seed_node_ids: set[str], *, excluded_node_
             for group in alternative.overrides.get("properties.relation_metadata", ())
             for edge_id in group["edges"]
         }
+        # Common relation groups on a conflict belong to every complete branch.
+        required_edge_ids.update(edge_id for ref in result if nodes[ref].alternatives
+            for group in nodes[ref].properties.get('relation_metadata', ())
+            for edge_id in group['edges'])
         for edge in state.graph.edges:
             if edge.id in required_edge_ids:
                 required.update((edge.from_node_id, edge.to_node_id))
@@ -102,6 +82,80 @@ def expand_context(state: GraphState, seed_node_ids: set[str], *, excluded_node_
             break
         result.update(added)
     return result
+
+
+def select_context(state: GraphState, seed_node_ids: set[str], *, ranked_seed_ids=None,
+                   excluded_node_ids=(), semantic_node_limit=30, physical_node_limit=50) -> ContextSelection:
+    """Admit complete knowledge units under final, independent hard node caps.
+
+    Ranked seeds precede optional one-hop neighbors and physical JOIN routing.
+    Every admission includes the full mandatory reference closure, including
+    effects of edges induced with already admitted nodes. An indivisible unit
+    that does not fit is skipped whole; dependencies never bypass the caps.
+    """
+    if any(type(n) is not int or n < 1 for n in (semantic_node_limit, physical_node_limit)):
+        raise ValueError('Final semantic/physical node limits must be positive integers')
+    nodes = {n.id: n for n in state.graph.nodes}
+    if any(n.node_type not in SEMANTIC_TYPES | PHYSICAL_TYPES for n in nodes.values()):
+        raise ValueError('Unsupported node type in bounded retrieval context')
+    seeds = set(seed_node_ids) & nodes.keys()
+    excluded = set(excluded_node_ids) - seeds
+    order = list(dict.fromkeys(ref for ref in (ranked_seed_ids or ()) if ref in seeds))
+    order.extend(sorted(seeds - set(order)))
+    result, skipped = set(), {}
+
+    def counts(refs):
+        physical = sum(nodes[ref].node_type in PHYSICAL_TYPES for ref in refs)
+        return len(refs) - physical, physical
+
+    def admit(ref, phase):
+        nonlocal result
+        if ref in result:
+            return True
+        candidate = _required_context(state, result | {ref})
+        semantic, physical = counts(candidate)
+        if semantic > semantic_node_limit or physical > physical_node_limit:
+            skipped[ref] = {'phase': phase, 'reason': 'complete_unit_exceeds_final_node_budget',
+                'candidate_semantic_nodes': semantic, 'candidate_physical_nodes': physical}
+            return False
+        result = candidate
+        return True
+
+    for ref in order:
+        admit(ref, 'seed')
+    # Only admitted original seeds are business traversal roots. A new neighbor
+    # or mandatory reference cannot start another business hop.
+    roots = seeds & result
+    neighbors = {}
+    root_rank = {ref: rank for rank, ref in enumerate(order)}
+    for edge in state.graph.edges:
+        for root, other in ((edge.from_node_id, edge.to_node_id), (edge.to_node_id, edge.from_node_id)):
+            if root in roots and other in nodes and other not in excluded and other not in result:
+                neighbors[other] = min(neighbors.get(other, len(order)), root_rank[root])
+    for ref in sorted(neighbors, key=lambda ref: (neighbors[ref], ref)):
+        admit(ref, 'one_hop')
+    # Preserve the existing at-most-two-hop physical routing opportunity, now
+    # charged to the same final budget, including complete column_pairs.
+    frontier = {ref for ref in result if nodes[ref].node_type == 'table'}
+    for _ in range(2):
+        neighbors = {endpoint for edge in state.graph.edges if edge.edge_type == 'joins_with'
+            and (edge.from_node_id in frontier or edge.to_node_id in frontier)
+            for endpoint in (edge.from_node_id, edge.to_node_id)
+            if endpoint in nodes and nodes[endpoint].node_type == 'table' and endpoint not in result}
+        added = {ref for ref in sorted(neighbors) if admit(ref, 'join_route')}
+        if not added:
+            break
+        frontier = added
+    semantic, physical = counts(result)
+    assert semantic <= semantic_node_limit and physical <= physical_node_limit
+    return ContextSelection(result, seeds & result, skipped, semantic, physical)
+
+
+def expand_context(state: GraphState, seed_node_ids: set[str], *, excluded_node_ids=(),
+                   semantic_node_limit=30, physical_node_limit=50) -> set[str]:
+    """One asserted business hop with complete references and final hard caps."""
+    return select_context(state, seed_node_ids, excluded_node_ids=excluded_node_ids,
+        semantic_node_limit=semantic_node_limit, physical_node_limit=physical_node_limit).node_ids
 
 
 def build_retrieved_graph_state(state: GraphState, node_ids: set[str]) -> GraphState:
@@ -151,5 +205,6 @@ def without_untrusted_dimension_values(state: GraphState) -> GraphState:
 __all__ = [
     "build_retrieved_graph_state",
     "expand_context",
+    "select_context",
     "without_untrusted_dimension_values",
 ]

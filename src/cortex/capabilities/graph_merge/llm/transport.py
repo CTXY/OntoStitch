@@ -28,10 +28,13 @@ def _connection_failure(error):
     return False
 
 
-def invoke_with_recovery(agent, tools, messages, *, config, tool_choice="required"):
+def invoke_with_recovery(agent, tools, messages, *, config, tool_choice="required", response_format=None):
     failures = 0
     while True:
-        model = agent.llm.bind_tools(tools, tool_choice=tool_choice) if tools else agent.llm
+        options={'strict':True} if response_format is not None else {}
+        model = agent.llm.bind_tools(tools, tool_choice=tool_choice, **options) if tools else agent.llm
+        if response_format is not None:
+            model = model.bind(response_format=response_format)
         try:
             return model.invoke(messages, config=config)
         except Exception as error:

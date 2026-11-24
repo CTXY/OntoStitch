@@ -11,7 +11,6 @@ from cortex.capabilities.graph_merge.integration.context import PHYSICAL
 from cortex.capabilities.graph_merge.integration.models import Change, Element, Model
 from cortex.capabilities.graph_merge.integration.source_units import SourceRoute
 from cortex.schema import NodeContent, ConflictPoint
-from cortex.schema.relation_metadata import validate_metadata_items
 
 
 class RegionIncomplete(RuntimeError):
@@ -136,10 +135,6 @@ def submit_patch(context, patch):
             raise ValueError("Unknown evidence ID")
         additions = [e.source for e in context.evidence if e.id in update.add_evidence]
         raw["sources"] = [s.model_dump(mode="json") for s in dict.fromkeys((*node.sources, *additions))]
-        if raw["properties"].get("relation_metadata") is not None:
-            if node.node_type != "concept":
-                raise ValueError("relation_metadata is a list of groups on Concept only; use edge description for Rule/Metric/Event relation scope")
-            validate_metadata_items(raw["properties"]["relation_metadata"])
         edits.append({"operation": "update_node", "node": raw})
         if not any(r.kind == "node" and r.id == node.id for c in changes for r in c.before):
             changes.append(Change(before=(Element(kind="node", id=node.id),),
@@ -153,8 +148,6 @@ def submit_patch(context, patch):
             raise ValueError("Physical catalogue edges are readonly")
         if {"sources", "branches", "target_id"} & update.properties.keys():
             raise ValueError("Use properties.alternative_ids for scope and from_node_id/to_node_id for endpoints; internal sources are not editable properties")
-        if "relation_metadata" in update.properties:
-            raise ValueError("relation_metadata belongs on a Concept node, not an edge; use edge description for single-edge meaning")
         raw = edge.model_dump(mode="json")
         for key in ("edge_type", "from_node_id", "to_node_id"):
             value = getattr(update, key)

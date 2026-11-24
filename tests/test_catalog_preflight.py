@@ -77,3 +77,15 @@ def test_preflight_structural_error_stops_before_row_sampling(tmp_path,monkeypat
     with pytest.raises(ValueError,match='Unresolved database identifier'):
         prepare_physical_catalog(config,db,load_root_schema(),tmp_path/'physical')
     assert not (tmp_path/'physical/catalog_manifest.json').exists()
+
+
+def test_preflight_checks_published_graph_checksum(tmp_path):
+    db = database(tmp_path)
+    config = SqlTrainingRuntimeConfig(workspace=str(tmp_path / 'case'),
+                                     database=RuntimeDatabaseConfig(url=db.url, dialect='sqlite'))
+    root = tmp_path / 'physical'
+    manifest = prepare_physical_catalog(config, db, load_root_schema(), root)
+    assert 'physical_graph.json' in manifest['files']
+    (root / 'physical_graph.json').write_text('{}')
+    with pytest.raises(ValueError, match='catalog changed'):
+        validate_prepared_files(root)

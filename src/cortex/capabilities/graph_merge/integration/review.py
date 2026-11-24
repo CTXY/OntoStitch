@@ -115,6 +115,12 @@ def absence_counterexamples(context, claim, *, before=None, candidate=None):
 
 def validate_review(review, context, *, before=None, candidate=None):
     """Bind a review to its actual candidate and refute false mechanical premises."""
+    from cortex.capabilities.graph_merge.integration.reconciliation_contract import AssessmentRecord
+    if isinstance(review, AssessmentRecord):
+        runtime = getattr(context, 'reconciliation_runtime', None)
+        if runtime is None:
+            raise ReviewFactError('Canonical assessment requires its bound local runtime')
+        return runtime.validate_review(review)
     review = Review.model_validate(review)
     state = candidate or context.candidate
     if state is None:

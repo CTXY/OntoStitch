@@ -8,7 +8,7 @@ from pathlib import Path
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from cortex.application.retrieve_db import RetrieveDbResult
+from cortex.application.retrieve_db import RetrieveDbResult, RetrievalCheckpointCompatibilityError
 from cortex.capabilities.retrieve_db.workflow.graph import build_retrieval_graph
 from cortex.infrastructure.observability import native_tracing
 from cortex.infrastructure.workflow.locking import workflow_writer
@@ -52,7 +52,7 @@ class RetrievalWorkflow:
                         graph = build_retrieval_graph(self.nodes, saver)
                         saved = await graph.aget_state(config)
                         if saved.values and saved.values.get("request") != request:
-                            raise ValueError(
+                            raise RetrievalCheckpointCompatibilityError(
                                 "cannot resume retrieval: graph, question, prompt, schema or configuration changed"
                             )
                         if saved.values and not saved.next:

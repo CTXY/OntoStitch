@@ -7,7 +7,11 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 from cortex.infrastructure.llm.deepseek import DeepSeekChatOpenAI
-from cortex.infrastructure.llm.pool import KeyScheduler, PooledChatModel, ThreadedChatModel
+from cortex.infrastructure.llm.pool import (
+    KeyScheduler,
+    PooledChatModel,
+    ThreadedChatModel,
+)
 
 
 def test_disabled_deepseek_thinking_omits_unsupported_reasoning_effort_on_wire(monkeypatch):
@@ -36,6 +40,49 @@ def test_disabled_deepseek_thinking_omits_unsupported_reasoning_effort_on_wire(m
         assert model.invoke([HumanMessage(content="Reply OK")]).content == "OK"
     assert requests[0]["thinking"] == {"type": "disabled"}
     assert "reasoning_effort" not in requests[0]
+
+
+def test_disabled_thinking_preserves_explicit_none_on_actual_wire(monkeypatch):
+    from cortex.config.models import LLMConfig
+    from cortex.infrastructure.llm import providers
+
+    requests = []
+
+    def transport(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        return httpx.Response(200, json={
+            "id": "test", "object": "chat.completion", "created": 0,
+            "model": "deepseek-v4-pro",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "OK"},
+                         "finish_reason": "stop"}],
+        })
+
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        monkeypatch.setattr(providers, "DeepSeekChatOpenAI",
+                            lambda **kwargs: DeepSeekChatOpenAI(http_client=client, **kwargs))
+        model = providers.create_chat_model(LLMConfig(
+            model="deepseek-v4-pro", base_url="https://offline.invalid/v1", api_key="test-only",
+            enable_thinking=False, reasoning_effort="none", max_retries=0,
+        ))
+        assert model.invoke([HumanMessage(content="Reply OK")]).content == "OK"
+    assert requests[0]["thinking"] == {"type": "disabled"}
+    assert requests[0]["reasoning_effort"] == "none"
+
+
+def test_opt_in_native_transport_keeps_configured_none_without_sending_unsupported_field():
+    requests=[]
+    def transport(request):
+        payload=json.loads(request.content);requests.append(payload)
+        return httpx.Response(200,json={'id':'native','object':'chat.completion','created':0,'model':'deepseek-v4-pro',
+            'choices':[{'index':0,'message':{'role':'assistant','content':'OK'},'finish_reason':'stop'}]})
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        model=DeepSeekChatOpenAI(model='deepseek-v4-pro',api_key='test-only',base_url='https://offline.invalid',
+            http_client=client,reasoning_effort='none',extra_body={'thinking':{'type':'disabled'}},
+            wire_native_thinking_only=True,max_retries=0)
+        assert model.invoke([HumanMessage(content='Reply OK')]).content=='OK'
+        assert model.reasoning_effort=='none'
+    assert 'reasoning_effort' not in requests[0] and requests[0]['thinking']=={'type':'disabled'}
 
 
 @pytest.mark.parametrize('adapter', ['threaded', 'pooled'])

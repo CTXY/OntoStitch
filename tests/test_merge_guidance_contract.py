@@ -26,9 +26,10 @@ def test_assessment_can_get_type_schema_on_demand():
 
 
 def test_relation_contract_does_not_request_blanket_branch_content_audits():
-    prompt = files('cortex.capabilities.graph_merge.llm.prompts').joinpath('incremental_relation_shared.md').read_text()
-    assert '不重新审计其事实、公式、理由或原子性' in prompt
-    assert 'read missing content only for a specific relation decision or necessary node reconstruction' in prompt
+    from cortex.capabilities.graph_merge.llm.reconciliation_prompts import reconciliation_system
+    prompt = reconciliation_system('assessment', ['related_decisions'])
+    assert '不重做 extraction 审计' in prompt
+    assert '不重新审计已接受 Rule 的原子性' in prompt
     assert 'Evaluate name/action/condition/reason and other required fields on each complete resolved alternative.' not in prompt
 
 
@@ -37,18 +38,18 @@ def test_node_boundary_defers_edge_organization_not_embedded_knowledge():
     shared = root.joinpath('incremental_content_shared.md').read_text()
     writer = root.joinpath('incremental_consolidate.md').read_text()
     reviewer = root.joinpath('incremental_node_assess.md').read_text()
-    assert 'Deferring graph organization to Reconciliation does not defer or waive preservation of those facts' in shared
-    assert 'Preserve relationship knowledge embedded in content' in writer
-    assert 'report that concrete loss rather than prescribing deletion of an otherwise valid edge' in reviewer
-    assert 'Pure edge organization belongs to Reconciliation' in reviewer
+    assert '将边组织留到 Reconciliation，不免除本阶段保留嵌入关系知识的责任' in shared
+    assert '保留内容中嵌入的关系、层级和配对事实' in writer
+    assert '报告该具体丢失，不要求删除本来有效的边' in reviewer
+    assert '纯粹的边组织属于 Reconciliation' in reviewer
 
 
 def test_concept_matching_is_not_implicitly_replaced_by_business_edges():
     root = files('cortex.capabilities.graph_merge.llm.prompts')
     shared = root.joinpath('incremental_content_shared.md').read_text()
     reviewer = root.joinpath('incremental_node_assess.md').read_text()
-    assert 'Preserve compatible input matching groups as separate items' in shared
-    assert 'business attribute/representation edge is not an implicit executable matching method' in shared
-    assert 'Grounding ownership concerns direct edges' in shared
-    assert 'Do not blindly union incompatible or exclusive methods' in shared
-    assert 'Complete input meanings, conditions, matching methods' in reviewer
+    assert '相容的输入匹配组保留为独立项' in shared
+    assert '业务属性边或表示边不是隐含可执行匹配方法' in shared
+    assert 'grounding owner 约束针对直接边' in shared
+    assert '不盲目并集不兼容或互斥的方法' in shared
+    assert '完整含义、条件、匹配方法' in reviewer

@@ -522,31 +522,13 @@ async def _online_case(
             record["guidance_content"] = current.downstream_guidance.guidance_content
             record["downstream_guidance"] = current.downstream_guidance.model_dump(mode="json")
     except Exception as exc:  # noqa: BLE001 - one Case must not cancel the batch.
-        detail = str(exc) if isinstance(exc, ValueError) else "online context Case failed"
+        from cortex.infrastructure.workflow.diagnostics import classify_workflow_error
+        failure = classify_workflow_error(exc)
         record["status"] = "error"
-        record["error"] = f"{type(exc).__name__}: {detail}"
-        record["error_chain"] = _sanitized_error_chain(exc)
+        record["error"] = f"{type(exc).__name__}: {failure.pop('safe_message')}"
+        record.update(failure)
     record["organizer_trace"] = list(worker.traces)
     return record
-
-
-def _sanitized_error_chain(exc: BaseException) -> list[dict[str, str | int]]:
-    """Keep useful retry diagnostics without provider payloads or credentials."""
-    chain = []
-    seen = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen and len(chain) < 5:
-        seen.add(id(current))
-        entry: dict[str, str | int] = {"type": type(current).__name__}
-        status = getattr(current, "status_code", None)
-        if isinstance(status, int):
-            entry["http_status"] = status
-        message = str(current)
-        if message.startswith(("LLM credential slot ", "Embedding credential failed ")):
-            entry["sanitized_message"] = message
-        chain.append(entry)
-        current = current.__cause__
-    return chain
 
 
 

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,14 @@ def evaluate_merge_bundle(
     artifact_dir = Path(output_dir or root / "merge_live_review").resolve()
     artifact_dir.mkdir(parents=True, exist_ok=True)
     trace_path = artifact_dir / "llm_traces.jsonl"
+    input_contract = artifact_dir / "input_composition.json"
+    if input_contract.exists():
+        input_version = json.loads(input_contract.read_text())["version"]
+    else:
+        input_version = 1 if run_id and trace_path.exists() and trace_path.stat().st_size else 2
+    if input_version not in (1, 2):
+        raise ValueError("Unsupported merge input composition version")
+    input_contract.write_text(json.dumps({"version": input_version}) + "\n")
     if run_id is None:
         trace_path.unlink(missing_ok=True)
     if existing_state_path is not None and physical_state_path is not None:
@@ -72,6 +81,16 @@ def evaluate_merge_bundle(
         if physical_state_path is not None
         else None
     )
+    from cortex.capabilities.sql_training.physical_catalog import (
+        audit_physical_ids,
+        canonicalize_physical_graph,
+    )
+    if input_version == 2:
+        if baseline is not None:
+            baseline, _ = canonicalize_physical_graph(baseline)
+        if reused_physical is not None:
+            normalized, _ = canonicalize_physical_graph(GraphState(graph=reused_physical))
+            reused_physical = normalized.graph
     evidence_records = _load_evidence(
         root,
         # An incremental baseline can contain canonical nodes supported by cases outside the
@@ -117,7 +136,13 @@ def evaluate_merge_bundle(
         if baseline is not None
         else GraphState(graph=required_physical_graph)
     )
-    incoming = _combined_incoming_state(cases, existing)
+    composition = compose_case_graphs(cases, existing, legacy=input_version == 1)
+    incoming = composition.state
+    if input_version == 2:
+        existing = _augment_existing_physical_graph(existing, composition.catalog)
+    (artifact_dir / "case_input_mappings.json").write_text(
+        json.dumps(composition.mappings, ensure_ascii=False, indent=2) + "\n"
+    )
     input_nodes = len(incoming.graph.nodes)
     input_edges = len(incoming.graph.edges)
     input_source_ids = {case_id for case_id, _ in cases}
@@ -125,6 +150,8 @@ def evaluate_merge_bundle(
     state = result.state
     diagnostic_details = [item.model_dump(mode="json") for item in result.diagnostics]
     validate_graph_state(state, schema)
+    if input_version == 2:
+        audit_physical_ids(state)
     physical_audit = _audit_final_physical_graph(state.graph, physical_manifest)
     output_source_ids = {
         source.case_id
@@ -134,6 +161,7 @@ def evaluate_merge_bundle(
     }
     report = {
         "evaluation_mode": "live_llm",
+        "input_composition_version": input_version,
         "merge_run_id": result.run_id,
         "acceptance_scope": "regression",
         "semantic_pipeline": {
@@ -546,23 +574,50 @@ def _combined_incoming_state(
 ) -> GraphState:
     """Compose all case subgraphs before invoking GraphMergeOperator exactly once."""
 
-    nodes = []
-    edges = []
+    return compose_case_graphs(cases, existing, legacy=True).state
+
+
+@dataclass(frozen=True)
+class CaseGraphComposition:
+    state: GraphState
+    mappings: dict[str, dict[str, dict[str, str]]]
+    catalog: GraphSpace | None
+
+
+def compose_case_graphs(cases, existing, *, legacy=False):
+    """Isolate case evidence and build a shared physical catalog for alignment.
+
+    Physical inputs stay case-local until Identity handles binding contests.
+    Legacy recovery reuses the original inputs without adding a new catalog.
+    """
+    from cortex.capabilities.sql_training.physical_catalog import combine_physical_catalogs
+
+    nodes, edges, fragments = [], [], []
+    mappings = {}
     occupied = existing
     for case_id, graph in cases:
+        if case_id in mappings:
+            raise ValueError(f"Duplicate case source ID: {case_id}")
         case_state = _collision_safe_state(case_id, graph, occupied)
+        mappings[case_id] = {
+            "nodes": {old.id: new.id for old, new in zip(graph.nodes, case_state.graph.nodes, strict=True)},
+            "edges": {old.id: new.id for old, new in zip(graph.edges, case_state.graph.edges, strict=True)},
+        }
         nodes.extend(case_state.graph.nodes)
         edges.extend(case_state.graph.edges)
-        occupied = GraphState(
-            graph=GraphSpace(
-                nodes=(*occupied.graph.nodes, *case_state.graph.nodes),
-                edges=(*occupied.graph.edges, *case_state.graph.edges),
-                relation_contracts=merge_relation_contracts(occupied.graph.relation_contracts, case_state.graph.relation_contracts),
-            ),
-        )
-    return GraphState(
-        graph=GraphSpace(nodes=tuple(nodes), edges=tuple(edges), relation_contracts=occupied.graph.relation_contracts)
-    )
+        fragments.append(case_state)
+        occupied = GraphState(graph=GraphSpace(
+            nodes=(*occupied.graph.nodes, *case_state.graph.nodes),
+            edges=(*occupied.graph.edges, *case_state.graph.edges),
+            relation_contracts=merge_relation_contracts(
+                occupied.graph.relation_contracts, case_state.graph.relation_contracts),
+        ))
+    incoming = GraphState(graph=GraphSpace(
+        nodes=tuple(nodes), edges=tuple(edges),
+        relation_contracts=occupied.graph.relation_contracts,
+    ))
+    catalog = None if legacy else combine_physical_catalogs(fragments)
+    return CaseGraphComposition(incoming, mappings, catalog)
 
 
 def _tree_hash(root: Path) -> str:

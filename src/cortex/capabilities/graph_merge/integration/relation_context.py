@@ -5,7 +5,7 @@ No inferred business edges, field-name classifiers or source broadcasting.
 from collections import defaultdict
 
 from cortex.capabilities.graph_merge.integration.batch import delta
-from cortex.capabilities.graph_merge.integration.context import PHYSICAL, references
+from cortex.capabilities.graph_merge.integration.context import PHYSICAL
 from cortex.schema.relation_contracts import effective_schema
 
 
@@ -70,66 +70,18 @@ def relation_context(context, current, task, *, before=None, assessment=False):
     nodes, edges = indexes(current)
     old_nodes, old_edges = indexes(before) if before is not None else ({}, {})
     changes = delta(before, current) if before is not None else None
-    roots = set(task.targets) & nodes.keys()
-    chosen = set(task.targets) & edges.keys()
+    from cortex.capabilities.graph_merge.integration.signal_scope import signal_scope
+    from cortex.capabilities.graph_merge.integration.signal_effects import modification_scope
+    scope = signal_scope(context, current, task.checks)
+    roots = set(scope.core_node_ids)
+    chosen = set(scope.edge_ids) & edges.keys()
+    selected = set(scope.node_ids) & nodes.keys()
     if assessment:
-        changed_nodes = set(changes["nodes"]["created"] + changes["nodes"]["updated"])
-        changed_edges = set(changes["edges"]["created"] + changes["edges"]["updated"])
-        old_changed_edges = set(changes["edges"]["deleted"] + changes["edges"]["updated"])
-        roots = changed_nodes | {
-            k for eid in changed_edges for k in (edges[eid].from_node_id, edges[eid].to_node_id)
-        } | {
-            k for eid in old_changed_edges
-            for k in (old_edges[eid].from_node_id, old_edges[eid].to_node_id)
-        }
-        from cortex.capabilities.graph_merge.integration.task_context import semantic_review_targets
-        roots.update(semantic_review_targets(before, current, task.targets)['targets'])
-        chosen = changed_edges | {
-            e.id for e in edges.values()
-            if (e.from_node_id in roots and e.to_node_id in roots)
-            or e.from_node_id in changed_nodes or e.to_node_id in changed_nodes
-        }
-        # A grounding repair must show the remaining canonical owner as well
-        # as the deleted assertion; otherwise the reviewer sees false loss.
-        physical_roots = {k for k in roots if k in nodes and nodes[k].node_type in PHYSICAL}
-        chosen |= {e.id for e in edges.values()
-                   if e.edge_type == "grounded_on" and e.to_node_id in physical_roots}
-        # Deleting an incorrect physical input must show the surviving direct
-        # semantic operands too. An unchanged Metric node is not changed_nodes,
-        # so the generic change projection otherwise hides these retained edges.
-        affected_metrics = {k for k in roots if k in nodes and nodes[k].node_type == "metric"}
-        chosen |= {e.id for e in edges.values()
-                   if e.from_node_id in affected_metrics
-                   and e.edge_type in {"depends_on", "grounded_on"}}
-    else:
-        chosen |= {e.id for e in edges.values()
-                   if (e.from_node_id in roots or e.to_node_id in roots)
-                   and nodes[e.from_node_id].node_type not in PHYSICAL
-                   and nodes[e.to_node_id].node_type not in PHYSICAL
-                   and (e.edge_type not in {"applies_to", "depends_on"}
-                        or e.from_node_id in roots)}
-    # Group members are indivisible; metadata refers to authored edge IDs.
-    while True:
-        prior = set(chosen)
-        for n in nodes.values():
-            groups = n.properties.get("relation_metadata", [])
-            for group in groups:
-                members = set(group["edges"])
-                if n.id in roots or members & chosen:
-                    chosen |= members & edges.keys()
-                    roots.add(n.id)
-        if prior == chosen:
-            break
-    selected = roots | {k for eid in chosen for k in
-                        (edges[eid].from_node_id, edges[eid].to_node_id)}
-    # Matching/formula references are necessary premises, even when a direct
-    # grounding edge is intentionally owned by another Concept.
-    physical = {ref for key in selected if key in nodes
-                for ref in references(nodes[key]) if ref in nodes and nodes[ref].node_type in PHYSICAL}
-    physical |= {key for key in selected if key in nodes and nodes[key].node_type in PHYSICAL}
-    chosen |= {edge.id for edge in edges.values()
-               if edge.edge_type == "grounded_on" and edge.to_node_id in physical}
-    selected |= physical | {key for eid in chosen for key in (edges[eid].from_node_id, edges[eid].to_node_id)}
+        affected_nodes, affected_edges = modification_scope(before, current)
+        selected.update(affected_nodes & nodes.keys())
+        chosen.update(affected_edges & edges.keys())
+        for ident in chosen:
+            selected.update((edges[ident].from_node_id, edges[ident].to_node_id))
     refs = {s for k in selected if k in nodes for s in nodes[k].sources}
     refs |= {s for k in selected if k in nodes for a in nodes[k].alternatives for s in a.sources}
     refs |= {s for eid in chosen for s in edges[eid].sources}
@@ -145,11 +97,12 @@ def relation_context(context, current, task, *, before=None, assessment=False):
     contracts = effective_schema(context.schema, current.graph).edge_type_index()
     predicates = {edges[k].edge_type for k in chosen}
     packet = {
+        "relation_sets": scope.queries,
         "view": "light_relations_v1", "phase": task.phase, "task_id": task.id,
         "revision": getattr(context, "workspace_revision", 0),
-        "presentation": "Focus properties are complete; neighbours are summaries. Unshown fields remain readable by exact path.",
+        "presentation": "Signal-specific relation sets are complete within their declared selectors; boundary node content does not grant neighborhood traversal or write permission.",
         "nodes": [
-            (physical_view(nodes[k], nodes, edges.values())
+            (physical_view(nodes[k], nodes, [edges[eid] for eid in chosen])
              if nodes[k].node_type in PHYSICAL else node_view(nodes[k], full=k in roots, evidence_ids=evidence_ids))
             for k in sorted(selected) if k in nodes
         ],
@@ -175,7 +128,7 @@ def relation_context(context, current, task, *, before=None, assessment=False):
                                   if key in roots else semantic_summary(GraphManager.resolve_alternative(nodes[key], alternative))),
              "evidence_ids": sorted({i for ref in alternative.sources for i in evidence_ids.get(ref, ())}),
              "active_outgoing_edge_ids": sorted(
-                 e.id for e in edges.values() if e.from_node_id == key
+                 e.id for e in edges.values() if e.id in chosen and e.from_node_id == key
                  and (not e.properties.get("alternative_ids")
                       or alternative.alternative_id in e.properties["alternative_ids"]))}
             for alternative in nodes[key].alternatives]}
@@ -200,7 +153,7 @@ def relation_context(context, current, task, *, before=None, assessment=False):
         ]
     else:
         packet["scope"] = {"targets": sorted(set(task.targets) & (nodes.keys() | edges.keys())),
-                           "writable_ids": sorted((set(task.targets) & nodes.keys()) | chosen)}
+                           "writable_ids": sorted(scope.writable_node_ids | scope.writable_edge_ids)}
         # Batches were scheduled before previous local writes. Signals recall
         # the current region; retired IDs are not current objects or obligations.
         def current_refs(value):

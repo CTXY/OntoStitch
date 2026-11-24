@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from cortex.application.retrieval import (
     ColumnSemanticContext,
     RelevanceDecision,
@@ -16,7 +18,7 @@ from cortex.application.retrieve_db import (
 )
 from cortex.capabilities.retrieve_db.graph.context import (
     build_retrieved_graph_state,
-    expand_context,
+    select_context,
     without_untrusted_dimension_values,
 )
 from cortex.capabilities.retrieve_db.retrieval.index import RepresentationIndex
@@ -24,11 +26,16 @@ from cortex.schema import GraphState
 
 
 class RetrievalNodes:
-    def __init__(self, *, recall, selector, initial_sql_generator, schema_renderer):
+    def __init__(self, *, recall, selector, initial_sql_generator, schema_renderer,
+                 semantic_node_limit=30, physical_node_limit=50):
+        if any(type(n) is not int or n < 1 for n in (semantic_node_limit, physical_node_limit)):
+            raise ValueError('Final retrieval node limits must be positive integers')
         self.typed_recall = recall
         self.selector = selector
         self.initial_sql_generator = initial_sql_generator
         self.schema_renderer = schema_renderer
+        self.semantic_node_limit = semantic_node_limit
+        self.physical_node_limit = physical_node_limit
 
     async def signals(self, state):
         request = state["request"]
@@ -108,13 +115,22 @@ class RetrievalNodes:
             if decisions[item.document.document_id].status == "relevant"
             and item.document.node_type == "dimension_value"
         }
-        snapshot = (
-            build_retrieved_graph_state(source, expand_context(
-                source, selected,
+        ordered = sorted(items, key=lambda item: (
+            -int('initial_sql_exact' in item.channels),
+            -int('question_exact' in item.channels),
+            -item.score, item.document.canonical_node_id, item.document.document_id))
+        budget = select_context(source, selected,
+                ranked_seed_ids=[item.document.canonical_node_id for item in ordered],
                 # Do not undo the model's relevance decision through a hub.
                 # Mandatory formula/binding references are still completed.
                 excluded_node_ids={item.document.canonical_node_id for item in items} - selected,
-            ))
+                semantic_node_limit=self.semantic_node_limit,
+                physical_node_limit=self.physical_node_limit)
+        selected = budget.seed_ids
+        semantic.intersection_update(selected)
+        grounding.intersection_update(selected)
+        snapshot = (
+            build_retrieved_graph_state(source, budget.node_ids)
             if selected
             else None
         )
@@ -150,7 +166,9 @@ class RetrievalNodes:
                 else "schema"
                 if item.document.node_type in {"table", "column"}
                 else "direct",
-                reason=decisions[item.document.document_id].reason,
+                reason=decisions[item.document.document_id].reason + (
+                    '; excluded by final subgraph node budget (complete dependencies retained for admitted units)'
+                    if item.document.canonical_node_id not in selected and item.document.canonical_node_id in budget.skipped else ''),
             )
             for item in items
         )
@@ -191,6 +209,11 @@ class RetrievalNodes:
                 RetrieveDbTraceStep(
                     action="dependency_closure", observation=f"{len(retained)} nodes"
                 ),
+                RetrieveDbTraceStep(action='final_node_budget', observation=json.dumps({
+                    'semantic_nodes': budget.semantic_nodes, 'semantic_limit': self.semantic_node_limit,
+                    'physical_nodes': budget.physical_nodes, 'physical_limit': self.physical_node_limit,
+                    'skipped_complete_units': budget.skipped,
+                    'rank_order': 'initial_sql_exact, question_exact, recall_score, stable_node_id'}, sort_keys=True)),
             ),
         )
         return {"result": result.model_dump(mode="json")}

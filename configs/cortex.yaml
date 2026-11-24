@@ -30,6 +30,7 @@ services:
     validation:
       dialect: sqlite
   retrieve_db:
+    # New retrieval runtimes default to final caps of 30 semantic / 50 physical nodes.
     concept_limit: 12
     metric_limit: 10
     generation_rule_limit: 10

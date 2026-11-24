@@ -83,6 +83,9 @@ class ScriptedModel:
     def __init__(self, replies):
         self.replies = iter(replies)
 
+    def bind(self,**kwargs):
+        return self
+
     def bind_tools(self, tools, **kwargs):
         return self
 
@@ -93,30 +96,34 @@ class ScriptedModel:
         return reply
 
 
-def test_invalid_model_draft_survives_interruption_and_can_be_completely_withdrawn(tmp_path):
+def test_invalid_atomic_edit_feedback_survives_restart_without_poisoning_draft(tmp_path):
     base = state([*catalog(), concept("A", "a")])
-    invalid = {"node_updates": [{"id": "A", "unsupported": "Invalid field", "explanation": "Invalid draft"}],
-               "explanation": "Save the exact rejected draft."}
-    chat = ScriptedModel([AIMessage(content="", tool_calls=[{"name": "submit_patch", "args": invalid, "id": "bad"}]),
+    invalid={"put_changes":[{"change_id":"bad","kind":"node_update","node_id":"A",
+        "set":{"unsupported":"Invalid field"},"reason":"Reject unknown fields atomically."}]}
+    chat = ScriptedModel([AIMessage(content="", tool_calls=[{"name": "edit_draft", "args": invalid, "id": "bad"}]),
                           RuntimeError("Provider interrupted after validation error")])
     engine, _ = engine_for(base, IncrementalIntegrationAgent(chat), tmp_path / "draft.sqlite")
-    task = LocalTask("local", "reconcile", {"A"})
+    task = LocalTask("local", "reconcile", {"A"}, checks=[{"id": "required", "kind": "node_relation_followup",
+        "node_ids": ["A"], "mode": "required", "observed": "Verify the existing representation is preserved"}])
     with pytest.raises(RuntimeError, match="Provider interrupted"):
         engine._run_task(task, "draft")
     saved = WorkspaceStore(engine.workspace_path).load("draft")
-    assert saved["task_state"]["draft"] == invalid
-    assert saved["task_state"]["stage"] == "validating"
-    assert saved["task_state"]["issues"]
+    assert saved["task_state"]["draft"]["version"] == 0
+    recovery = next(row for key, row in saved["task_state"]["agent_recovery"].items() if key.startswith("simple:"))
+    assert "unsupported" in str(recovery["runtime"]["feedback"]["latest_receipt"])
+    assert recovery["runtime"]["draft"]["version"] == 0
     assert engine.current == base and not engine.history
 
-    replacement = {"explanation": "Withdraw the invalid proposal; baseline already meets the task."}
-    engine.agent = IncrementalIntegrationAgent(ScriptedModel([AIMessage(content="", tool_calls=[
-        {"name": "submit_patch", "args": replacement, "id": "withdraw"}])]))
+    review={"explanation":"The unchanged local graph preserves the required representation and all original knowledge.","feedback":[]}
+    import json
+    engine.agent=IncrementalIntegrationAgent(ScriptedModel([
+        AIMessage(content="",tool_calls=[{"name":"edit_draft","args":{},"id":"submit"}]),
+        AIMessage(content=json.dumps(review))]))
     engine._run_task(task, "draft")
-    assert engine.current == base
-    assert len(engine.history) == 1
+    assert engine.current == base and len(engine.history) == 1
     saved = WorkspaceStore(engine.workspace_path).load("draft")
-    assert saved["task_state"]["draft"] == replacement
+    assert not saved["task_state"]["draft"].get("changes")
+    assert saved["task_state"]["stage"] == "committed"
 
 
 def test_failed_commit_persistence_does_not_advance_accepted_memory_and_can_resume(tmp_path):

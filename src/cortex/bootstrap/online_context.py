@@ -53,6 +53,8 @@ def build_online_context_service(
     embedding_identity: EmbeddingSpaceIdentity | None = None,
     embeddings: Embeddings | None | object = _UNSET,
     filter_database: object = _UNSET,
+    discovery_intra_batch_size: int | None = None,
+    discovery_checkpoint_root: Path | None = None,
 ) -> OnlineContextService:
     resolved = config or load_config(config_path)
     model = llm or create_chat_model(resolved.llm, profile="online_context")
@@ -90,6 +92,7 @@ def build_online_context_service(
             embeddings=resolved_embeddings,
             document_vector_cache=document_vector_cache,
             embedding_identity=embedding_identity,
+            relevance_filter=False,
         ),
         checkpoint_path=resolved.services.online_context.checkpoint_path,
         questions_per_round=resolved.services.online_context.questions_per_round,
@@ -98,10 +101,16 @@ def build_online_context_service(
             "online_profile": resolved.llm.profiles.online_context.model_dump(
                 mode="json"
             ),
-            "retrieval": resolved.services.retrieve_db.model_dump(mode="json"),
+            "retrieval": resolved.services.retrieve_db.model_dump(
+                mode="json", exclude={"workspace"}
+            ),
+            **({"discovery_execution":{"intra_batch_size":discovery_intra_batch_size}}
+               if discovery_intra_batch_size is not None else {}),
         },
         choice_organizer=LlmChoiceOrganizer(
-            model, trace_sink=trace_sink, audit_slots=not settings.enabled
+            model, trace_sink=trace_sink, audit_slots=not settings.enabled,
+            intra_batch_size=discovery_intra_batch_size,
+            intra_checkpoint_root=discovery_checkpoint_root,
         ),
         clarification_filter=(
             ClarificationFilterAgent(

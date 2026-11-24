@@ -12,7 +12,6 @@ Use create_edge/update_edge with the schema-required edge and delete_edge with e
 
 ## Group statements
 
-Optional Concept properties.relation_metadata contains items with id, edges and description. Reference at least two distinct existing adjacent edges with identical predicate and relative direction; inspect both incoming/outgoing when necessary. Read an incoming predicate by edge_type without node_id scope.
 
 Statements apply only to listed edges and supported scope, not future neighbors. Distinguish no exclusion claim, allowed co-membership, observed overlap and exhaustive coverage. Do not require pairwise edges or invent fixed disjoint/compatible flags. New or deleted referenced edges and owner metadata must remain valid in the same edit. This metadata creates no SQL execution or automatic inference.
 

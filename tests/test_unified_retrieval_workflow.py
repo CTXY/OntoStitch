@@ -9,7 +9,7 @@ import pytest
 
 from cortex.application.ontology_graph import GraphManager
 from cortex.application.retrieval import RelevanceDecision, RetrievedRepresentation
-from cortex.application.retrieve_db import RetrieveDbService
+from cortex.application.retrieve_db import RetrieveDbService, RetrievalCheckpointCompatibilityError
 from cortex.capabilities.retrieve_db.engine import RetrieveDbCapability
 from cortex.infrastructure.retrieve.graph import FileSystemGraphSpaceLoader
 from cortex.schema import (
@@ -165,7 +165,7 @@ def test_full_conflict_snapshot_and_durable_replay(tmp_path, source):
         assert inline["merge_status"] == "conflict"
         assert first.relevant_semantic_node_ids == ("concept.amount",)
         assert recall.calls == 1
-        with pytest.raises(ValueError, match="cannot resume"):
+        with pytest.raises(RetrievalCheckpointCompatibilityError, match="cannot resume"):
             await retrieval.run(
                 question="a different question",
                 graph_state=source,
@@ -320,6 +320,6 @@ def test_filter_mode_is_part_of_retrieval_checkpoint_identity(tmp_path, source):
     assert enabled.context_fingerprint != disabled.context_fingerprint
     asyncio.run(enabled.retrieve(question='amount', graph_state=source, graph_fingerprint='fixture',
                                  dialect='sqlite', initial_sql=None, run_id='same'))
-    with pytest.raises(ValueError, match='configuration changed'):
+    with pytest.raises(RetrievalCheckpointCompatibilityError, match='configuration changed'):
         asyncio.run(disabled.retrieve(question='amount', graph_state=source, graph_fingerprint='fixture',
                                       dialect='sqlite', initial_sql=None, run_id='same'))

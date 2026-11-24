@@ -75,6 +75,49 @@ def test_valid_multiline_sse_is_not_split_into_independent_json_objects():
     assert normalize_sse_frames(text).strip() == text.strip()
 
 
+@pytest.mark.parametrize('tool_result', [True, False])
+def test_structured_assessment_stream_accepts_gateway_missing_object_tag(tmp_path, tool_result):
+    """Real first-ten failure: SDK filters every untagged frame, then asserts."""
+    import httpx
+    spec = importlib.util.spec_from_file_location('structured_stream_runner', Path(__file__).parents[1] / 'scripts/run_resilient_training.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    delta = {'role': 'assistant', 'content': ''}
+    if tool_result:
+        delta['tool_calls'] = [{'index': 0, 'id': 'evidence-read', 'type': 'function',
+            'function': {'name': 'read_evidence', 'arguments': '{"ids":["evidence-1"]}'}}]
+    else:
+        delta['content'] = '{"explanation":"Preserved.","feedback":[]}'
+    chunk = {'id': 'real-shape', 'model': 'deepseek-v4-pro', 'created': 1795275799,
+             'choices': [{'index': 0, 'delta': delta,
+                          'finish_reason': 'tool_calls' if tool_result else 'stop'}]}
+    raw = 'data: ' + json.dumps(chunk) + '\n\ndata: [DONE]\n\n'
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200,
+            headers={'content-type': 'text/event-stream'}, stream=httpx.ByteStream(raw.encode())))) as client:
+        model = DeepSeekChatOpenAI(model='deepseek-v4-pro', api_key='offline-secret',
+                                  http_client=client, streaming=True, max_retries=0)
+        runner.observe(model, tmp_path)
+        bound = model.bind_tools([{'type': 'function', 'function': {'name': 'read_evidence',
+            'description': 'Read authorized evidence.', 'parameters': {'type': 'object',
+            'properties': {'ids': {'type': 'array', 'items': {'type': 'string'}}},
+            'required': ['ids'], 'additionalProperties': False}}}], tool_choice='auto', strict=True)
+        message = bound.bind(response_format={'type': 'json_object'}).invoke([HumanMessage('Assess the local candidate.')])
+    if tool_result:
+        assert message.tool_calls[0]['args'] == {'ids': ['evidence-1']}
+    else:
+        assert json.loads(message.content)['feedback'] == []
+    assert (tmp_path / 'wire/000001_stream.sse').read_text() == raw
+    assert runner.read(tmp_path / 'wire/000001_progress.json')['model_complete'] is True
+
+
+def test_chunk_tag_repair_does_not_promote_heartbeat_or_explicit_filter_event():
+    bodies = [{'ping': True}, {'id': 'filter', 'model': 'x', 'created': 1, 'object': '',
+              'choices': [{'index': 0, 'delta': {}}]}]
+    raw = ''.join('data: ' + json.dumps(b) + '\n\n' for b in bodies)
+    assert [json.loads(line[5:]) for line in normalize_sse_frames(raw).splitlines()
+            if line.startswith('data:')] == bodies
+
+
 def test_stream_disconnect_preserves_received_bytes_and_underlying_cause(tmp_path):
     import httpx
     from langchain_core.messages import HumanMessage
@@ -112,7 +155,6 @@ def test_transport_causes_are_preserved_and_credentials_redacted():
 ])
 def test_partial_valid_tool_json_is_never_returned_as_a_completed_result(tmp_path,tail):
     import httpx
-    from cortex.infrastructure.llm.stream_audit import UpstreamResponseIncomplete
     spec=importlib.util.spec_from_file_location('incomplete_stream_runner',Path(__file__).parents[1]/'scripts/run_resilient_training.py')
     runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
     chunk={'id':'partial','choices':[{'index':0,'delta':{'role':'assistant','tool_calls':[{'index':0,'id':'proposal','type':'function','function':{'name':'submit_changes','arguments':'{"patch":{"explanation":"no change"}}'}}]},'finish_reason':None}]}

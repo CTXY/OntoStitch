@@ -1,0 +1,37 @@
+{
+  "triggers": {
+    "type": "object",
+    "required": true,
+    "description": "自然语言短语与 SQL 操作组成的结构化触发信号。",
+    "enum": null,
+    "default": null
+  },
+  "condition": {
+    "type": "string",
+    "required": true,
+    "description": "规则成立和执行的前置条件。",
+    "enum": null,
+    "default": null
+  },
+  "action": {
+    "type": "string",
+    "required": true,
+    "description": "规则触发后执行的确定性查询生成动作。",
+    "enum": null,
+    "default": null
+  },
+  "reason": {
+    "type": "string",
+    "required": true,
+    "description": "将 action 与同一操作意图的另一种合理实现进行比较，并说明可观察的结果差异。",
+    "enum": null,
+    "default": null
+  },
+  "operation_intents": {
+    "type": "string[]",
+    "required": false,
+    "description": "参考 operation registry 划分和标注动作的意图标签，可有多个，也可提出有定义的新标签；不改变规则动作或身份。",
+    "enum": null,
+    "default": null
+  }
+}

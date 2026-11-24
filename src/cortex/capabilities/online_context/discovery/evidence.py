@@ -31,24 +31,25 @@ def _validate_slots(
                 f"candidates={[(o.option_id, o.statement, o.graph_refs) for o in slot.options]}"
             )
         for option in slot.options:
-            if (
-                not option.graph_refs
-                and not (option.initial_sql_evidence or "").strip()
-            ):
-                raise ValueError("candidate has no Graph or Initial SQL evidence")
-            unknown_refs = set(option.graph_refs) - graph_ids
-            invalid_refs = unknown_refs
-            if invalid_refs:
-                raise ValueError(
-                    "candidate references unknown Graph objects: "
-                    + ", ".join(sorted(invalid_refs))
-                )
-            if option.initial_sql_evidence and not _sql_contains(
-                initial_sql, option.initial_sql_evidence
-            ):
-                raise ValueError(
-                    "candidate Initial SQL evidence is not a verbatim fragment of Initial SQL"
-                )
+            _validate_candidate_references(option, graph_ids, initial_sql)
+
+
+def _validate_candidate_references(candidate, graph_ids, initial_sql):
+    key = getattr(candidate, "candidate_id", getattr(candidate, "option_id", "candidate"))
+    if not candidate.graph_refs and not (candidate.initial_sql_evidence or "").strip():
+        raise ValueError(f"{key}: candidate has no Graph or Initial SQL evidence")
+    unknown_refs = set(candidate.graph_refs) - graph_ids
+    if unknown_refs:
+        raise ValueError(
+            f"{key}: candidate references unknown Graph objects: "
+            + ", ".join(sorted(unknown_refs))
+        )
+    if candidate.initial_sql_evidence and not _sql_contains(
+        initial_sql, candidate.initial_sql_evidence
+    ):
+        raise ValueError(
+            f"{key}: Initial SQL evidence is not a verbatim fragment of Initial SQL"
+        )
 
 
 def _graph_ids(state: GraphState) -> set[str]:

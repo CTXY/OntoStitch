@@ -952,7 +952,14 @@ class GraphManager:
                             self.schema.effective_node_fields(node.node_type),
                             f"candidate of {node.id!r}",
                         )
-                        validate_semantic_properties(node.node_type, properties)
+                        validate_semantic_properties(
+                            node.node_type,
+                            properties,
+                            allow_legacy_relation_metadata=(
+                                "relation_metadata"
+                                in self.schema.effective_node_fields(node.node_type)
+                            ),
+                        )
                         if node.node_type in {"concept", "event"}:
                             validate_target_expression_columns(properties, nodes)
                     except (ValueError, TypeError, KeyError) as exc:
@@ -1721,9 +1728,13 @@ class GraphManager:
                                 )
                             ]
                         )
-                    # Derive only branch bookkeeping for an explicitly supplied
-                    # formula edge, never its existence or business predicate.
-                    if source and source.node_type == "metric" and source.alternatives and kind != "delete_edge" and edge.edge_type in {"depends_on", "grounded_on"}:
+                    # A supplied scope is an authored assertion. Matching refs
+                    # constrain its legality; they do not prove the description
+                    # applies to every branch using that operand. Derive legacy
+                    # bookkeeping only when no explicit scope was provided.
+                    if (source and source.node_type == "metric" and source.alternatives
+                            and kind != "delete_edge" and edge.edge_type in {"depends_on", "grounded_on"}
+                            and "alternative_ids" not in edge.properties):
                         matching = [a.alternative_id for a in source.alternatives
                                     if edge.to_node_id in self.resolve_alternative(source, a).properties.get("expression", {}).get("refs", {}).values()]
                         if matching:

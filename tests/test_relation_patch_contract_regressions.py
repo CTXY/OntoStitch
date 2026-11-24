@@ -100,18 +100,18 @@ def test_edge_merge_schema_explains_edge_ids_and_separate_property_update():
     assert 'edge_updates using id' in fields['survivor_id']['description']
 
 
-def test_writer_examples_match_actual_submission_schema():
-    import json
-    import re
-    from importlib.resources import files
-    text = files('cortex.capabilities.graph_merge.llm.prompts').joinpath('incremental_relation_write.md').read_text()
-    from cortex.capabilities.graph_merge.integration.patch import MergePatch
-    examples = [MergePatch.model_validate(json.loads(raw)) for raw in re.findall(r'```json\n(.*?)\n```', text, re.S)]
-    creation = next(e for e in examples if e.create_edges)
-    update = next(e for e in examples if e.edge_updates)
-    assert creation.create_edges[0].evidence_ids and creation.create_edges[0].properties['description']
-    assert update.edge_updates[0].add_evidence and update.edge_updates[0].properties['description']
-    assert all(not hasattr(e, "corrections") for e in examples)
+def test_canonical_edit_examples_match_the_actual_public_tool_schema():
+    from cortex.capabilities.graph_merge.integration.reconciliation_contract import EditDraft
+    edit=EditDraft.model_validate({"put_changes":[
+        {"change_id":"create","kind":"edge_create","edge_id":"new","edge_type":"has_feature",
+         "from_node_id":"A","to_node_id":"B","properties":{"description":"An evidence-supported relationship"},
+         "evidence_ids":["evidence"],"reason":"Create a concrete relation"},
+        {"change_id":"update","kind":"edge_update","edge_id":"existing",
+         "set":{"properties":{"description":"A clarified relation"}},"evidence_ids":["evidence"],
+         "reason":"Preserve and clarify the existing relation"}]})
+    assert edit.put_changes[0].evidence_ids and edit.put_changes[1].evidence_ids
+    assert set(EditDraft.model_json_schema()["properties"])=={"put_changes","remove_changes"}
+    assert not hasattr(edit,"patch") and not hasattr(edit,"corrections")
 
 
 def test_validation_feedback_keeps_all_paths_without_echoing_patch():

@@ -98,6 +98,12 @@ def migrate_checkpoint(source, destination, *, versions: ContractVersions, run_i
         payload["open_tasks"] = [definition, *[task for task in open_tasks if task.get("id") != task_id]]
     payload.pop("revision", None)
     payload["contract_versions"] = versions.to_dict()
+    # Old-policy receipts remain immutable audit records. Policy hashes prevent
+    # their reuse by the new runtime; do not erase accepted history or receipts.
+    if 'signal_receipts' not in payload:
+        if any('reconciliation_receipt_policy_hash' in row for row in payload['history']):
+            raise ValueError('Cannot migrate a receipt-bearing checkpoint whose ledger is missing')
+        payload['signal_receipts'] = []
     payload["pending_review"] = None
     payload["pending_relation_work"] = None
     payload["final"] = False

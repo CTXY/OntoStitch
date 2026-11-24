@@ -44,6 +44,8 @@ def build_retrieve_db_service(
     implementation = engine or RetrieveDbCapability(
         llm=llm or create_chat_model(resolved.llm, profile="retrieve_db"),
         relevance_filter=relevance_filter,
+        semantic_node_limit=settings.semantic_node_limit,
+        physical_node_limit=settings.physical_node_limit,
         embeddings=create_embedding_model(resolved.llm, model=resolved.embedding_model)
         if embeddings is _UNSET
         else embeddings,
@@ -66,7 +68,7 @@ def build_retrieve_db_service(
             "embedding_model": resolved.embedding_model,
             "embedding": resolved.llm.embedding.model_dump(mode="json"),
             "llm": resolved.llm.resolve("retrieve_db").model_dump(
-                mode="json", exclude={"api_key"}
+                mode="json", exclude={"api_key", "base_url", "timeout", "max_retries"}
             ),
         },
     )

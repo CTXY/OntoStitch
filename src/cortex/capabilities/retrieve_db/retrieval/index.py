@@ -38,14 +38,11 @@ class RepresentationIndex:
         column_context: tuple[ColumnSemanticContext, ...] = (),
     ) -> RepresentationIndex:
         documents: list[RetrievalDocument] = []
-        contexts_by_ref = {
-            f"{item.table_name}.{item.column_name}".casefold(): item
-            for item in column_context
-        }
         node_by_id = {node.id: node for node in state.graph.nodes}
+        contexts_by_ref = _index_column_contexts(column_context, node_by_id)
         conflict_by_id = {item.id: item for item in state.conflict_nodes}
         for node in state.graph.nodes:
-            documents.append(_canonical_document(node, contexts_by_ref))
+            documents.append(_canonical_document(node, contexts_by_ref, node_by_id))
             conflict = conflict_by_id.get(node.id)
             if conflict is not None:
                 for alternative in conflict.alternatives:
@@ -234,8 +231,46 @@ class RepresentationIndex:
         return tuple(ranked[:limit])
 
 
+def _index_column_contexts(
+    contexts: tuple[ColumnSemanticContext, ...], nodes: dict[str, GraphNode]
+) -> dict[str, ColumnSemanticContext]:
+    """Prefer exact identifiers; repair unambiguous CSV padding against the catalog."""
+    physical = {}
+    for node in nodes.values():
+        table = nodes.get(node.properties.get("table_ref"))
+        if node.node_type == "column" and table is not None and table.node_type == "table":
+            physical[
+                (
+                    table.properties["table_name"].casefold(),
+                    node.properties["column_name"].casefold(),
+                )
+            ] = (table, node)
+    normalized_physical = defaultdict(list)
+    for key in physical:
+        normalized_physical[tuple(part.strip() for part in key)].append(key)
+    indexed = {(c.table_name.casefold(), c.column_name.casefold()): c for c in contexts}
+    candidates = defaultdict(list)
+    for key, context in indexed.items():
+        if key not in physical:
+            candidates[tuple(part.strip() for part in key)].append(context)
+    for key, matches in candidates.items():
+        owners = normalized_physical.get(key, ())
+        if len(matches) == len(owners) == 1 and owners[0] not in indexed:
+            table, column = physical[owners[0]]
+            context = matches[0]
+            indexed.pop((context.table_name.casefold(), context.column_name.casefold()))
+            indexed[owners[0]] = context.model_copy(
+                update={
+                    "table_name": table.properties["table_name"],
+                    "column_name": column.properties["column_name"],
+                    "column_id": column.id,
+                }
+            )
+    return {f"{table}.{column}": context for (table, column), context in indexed.items()}
+
+
 def _canonical_document(
-    node: GraphNode, contexts_by_ref: dict[str, ColumnSemanticContext]
+    node: GraphNode, contexts_by_ref: dict[str, ColumnSemanticContext], nodes: dict
 ) -> RetrievalDocument:
     kind = (
         "generation_rule" if node.node_type == "generation_rule" else "canonical_node"
@@ -247,7 +282,7 @@ def _canonical_document(
         "properties": node.properties,
     }
     contexts = _contexts_for(content, contexts_by_ref)
-    direct_context = _column_context(node, contexts_by_ref)
+    direct_context = _column_context(node, contexts_by_ref, nodes)
     if direct_context is not None and direct_context not in contexts:
         contexts = (*contexts, direct_context)
     return _content_document(
@@ -260,16 +295,17 @@ def _canonical_document(
 
 
 def _column_context(
-    node: GraphNode, contexts_by_ref: dict[str, ColumnSemanticContext]
+    node: GraphNode, contexts_by_ref: dict[str, ColumnSemanticContext], nodes: dict
 ) -> dict[str, Any] | None:
     if node.node_type != "column":
         return None
-    table_ref = str(node.properties.get("table_ref") or "")
+    table = nodes.get(node.properties.get("table_ref"))
     column_name = str(node.properties.get("column_name") or node.name)
-    if not table_ref.startswith("table.") or not column_name:
+    if table is None or table.node_type != "table" or not column_name:
         return None
+    table_name = table.properties["table_name"]
     context = contexts_by_ref.get(
-        f"{table_ref.removeprefix('table.')}.{column_name}".casefold()
+        f"{table_name}.{column_name}".casefold()
     )
     return context.model_dump(mode="json") if context is not None else None
 

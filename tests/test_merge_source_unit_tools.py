@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from test_graph_integration import catalog, concept, state
-from cortex.capabilities.graph_merge.llm.task_tools import build_read_tools
+from legacy_merge_task_tools import build_read_tools
 
 
 def test_reading_planned_member_returns_full_group_and_keeps_base_unchanged():

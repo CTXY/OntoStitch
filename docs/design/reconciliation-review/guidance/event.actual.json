@@ -1,0 +1,26 @@
+{
+  "guidance": "# Database Ontology Asset Contract\n\nContract version: database_ontology_assets_v73_case_semantics\n\nThis contract defines semantic asset meaning and graph-authoring requirements. The runtime schema owns exact field shapes; stage instructions govern evidence and delivery.\n\n## Event Contract\n\nAn Event expresses a business occurrence type, not an individual record or current state. Create it only when the evidence jointly identifies what occurs, participating objects and their roles, and a related occurrence time or place. An event word, timestamp, status value or JOIN alone is insufficient. Preserve only supported structure; do not invent workflow, lifecycle, direction, stages or instance grain. A participant's recorded/current location does not prove the historical event location; explain query scope without asserting unsupported occurrence geography.\n\n- Require a nonempty description of what happens and the supported relationship between participants and occurrence context. Those details must be linked to the same event, not merely present in the same Question.\n- `targets` uses the same matching-group format as Concept and may be empty when explicit relations to bound Concepts establish the event structure. Optional `target_expressions` preserve necessary complete conditions, not the request's current date filters.\n- Generate specific role relations, such as evidenced sender/recipient links, instead of using one undifferentiated has_participant for every role. Each edge needs its concrete explanation; do not add a role or qualifier field.\n- Do not infer one-event-per-row, countability, sequence, causality, required participation or complete histories from keys, timestamps or JOINs.\n\nEvent targets, when supplied, identify supported physical matching groups; do not disguise an isolated timestamp, identifier or non-NULL test as a complete occurrence definition. A supported Event may instead be anchored through explicitly related, bound participant and time/place Concepts. Its description and saved relations must establish the actual event structure; an empty target list alone never justifies an empty-shell Event or event counting.\n",
+  "fields": {
+    "definition": {
+      "type": "string",
+      "required": true,
+      "description": "说明发生了什么、范围和已知粒度的业务定义。",
+      "enum": null,
+      "default": null
+    },
+    "targets": {
+      "type": "array",
+      "required": false,
+      "description": "可选的匹配分组，每个内层列表为一种匹配，引用真实 Table/Column/DimensionValue；事件也可通过有证据的显式业务关系连接已绑定概念。",
+      "enum": null,
+      "default": null
+    },
+    "target_expressions": {
+      "type": "object",
+      "required": false,
+      "description": "可选复杂匹配表达式，键为 targets 外层组索引字符串；不以日期非空伪造完整事件发生定义。",
+      "enum": null,
+      "default": null
+    }
+  }
+}

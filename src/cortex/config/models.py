@@ -214,6 +214,8 @@ class RetrieveDbConfig(_ConfigModel):
     workspace: Path = Path("workspace/retrieve_db")
     enable_clarification: bool = False
     selection_policy: Literal["training_recall", "unattended"] = "training_recall"
+    semantic_node_limit: int = Field(default=30, ge=1, strict=True, description="Final aggregate Concept/Metric/GenerationRule/Event node cap, including all expansion and dependencies.")
+    physical_node_limit: int = Field(default=50, ge=1, strict=True, description="Final aggregate Table/Column/DimensionValue node cap, including all expansion and dependencies.")
     mention_candidate_limit: int = Field(default=5, ge=1)
     sql_literal_concept_limit: int = Field(default=10, ge=1)
     sql_literal_value_limit: int = Field(default=10, ge=1)

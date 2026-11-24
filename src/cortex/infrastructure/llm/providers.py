@@ -48,11 +48,10 @@ def create_chat_model(
     if missing:
         raise LLMConfigurationError(f"Missing required LLM configuration: {', '.join(missing)}")
 
-    # A proxy changes the host, not the model protocol. DeepSeek's thinking
-    # switch is sufficient; compatible gateways may reject reasoning_effort.
+    # Gateways can implement the thinking switch differently. Preserve explicit
+    # effort settings; an unset effort remains omitted for compatible endpoints.
     deepseek = urlparse(base_url).hostname == "api.deepseek.com" or model.lower().startswith("deepseek-")
     chat_class = DeepSeekChatOpenAI if deepseek else ChatOpenAI
-    reasoning_effort = None if deepseek and resolved.enable_thinking is False else resolved.reasoning_effort
     return chat_class(
         model=model,
         api_key=api_key,
@@ -60,7 +59,7 @@ def create_chat_model(
         temperature=resolved.temperature,
         timeout=resolved.timeout,
         max_retries=resolved.max_retries,
-        reasoning_effort=reasoning_effort,
+        reasoning_effort=resolved.reasoning_effort,
         extra_body=(
             ({"thinking": {"type": "enabled" if resolved.enable_thinking else "disabled"}}
              if deepseek

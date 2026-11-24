@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import ast
-from dataclasses import asdict, dataclass, replace
+import json
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
 from importlib.resources import files
-import json
-from typing import Any
 from types import SimpleNamespace
+from typing import Any
 
 from cortex.schema import GraphState
 
-TASK_STATE_VERSION = 3
-TOOL_CONTRACT_VERSION = "merge-patch-v3-source-units"
-REVIEW_POLICY_VERSION = "accepted-input-preservation-v2"
+TASK_STATE_VERSION = 4
+TOOL_CONTRACT_VERSION = "single-graph-reconciliation-v6"
+REVIEW_POLICY_VERSION = "local-graph-preservation-v7-direct-result"
 
 
 class CheckpointContractMismatch(ValueError):
@@ -64,11 +64,19 @@ class ContractVersions:
 def build_contract_versions(schema, *, tool_schemas=None, review_policy=REVIEW_POLICY_VERSION):
     """Hash actual prompt assets; callers may supply registered public tool schemas."""
     root = files("cortex.capabilities.graph_merge.llm.prompts")
-    names = ("integration_identity.md", "incremental_consolidate.md", "incremental_node_assess.md",
-             "incremental_content_shared.md", "incremental_relation_shared.md",
-             "incremental_relation_write.md", "incremental_relation_assess.md", "incremental_protocol.md",
-             "conflict_contract.md")
+    names = ("integration_identity.md", "incremental_protocol.en.md")
     prompts = {name: root.joinpath(name).read_text() for name in names}
+    prompts["schema-contracts.en.json"] = root.joinpath("schema-contracts.en.json").read_text()
+    from cortex.capabilities.graph_merge.llm.reconciliation_prompts import prompt_assets
+    prompts.update({"reconciliation/" + name: body for name, body in prompt_assets().items()})
+    relation_policy = root.joinpath('relation_merger', 'writer.en.md')
+    if relation_policy.is_file():
+        prompts['relation_merger/writer.en.md'] = relation_policy.read_text()
+    from cortex.capabilities.graph_merge.llm.node_contract import node_prompt_modules, node_output_model, build_node_read_tools
+    for role in ('writer', 'assessment'):
+        for kind in ('concept', 'metric', 'event', 'generation_rule'):
+            for name in node_prompt_modules(role, kind):
+                prompts['node_local/' + name] = root.joinpath('node_local', name).read_text()
     # On-demand guidance is model-visible policy too; its changes must not
     # silently reuse an earlier candidate-bound review.
     guidance_root = files('cortex.capabilities.sql_training.llm')
@@ -76,27 +84,32 @@ def build_contract_versions(schema, *, tool_schemas=None, review_policy=REVIEW_P
     prompts['operation_guidance'] = guidance_root.joinpath('generation_rule_taxonomy.py').read_text()
     if tool_schemas is None:
         from cortex.capabilities.graph_merge.integration.models import IdentityDecision
-        from cortex.capabilities.graph_merge.integration.patch import MergePatch
-        from cortex.capabilities.graph_merge.integration.review import Review
-        from cortex.capabilities.graph_merge.llm.task_tools import build_read_tools
-
-        # Building the read-tool registry does not execute a graph read. Hash
-        # exactly its advertised descriptions/schemas, plus the public results.
-        registry = build_read_tools(SimpleNamespace(evidence=()), {})
-        tool_schemas = {name: {"description": tool.description,
-                              "parameters": tool.args_schema.model_json_schema()}
-                        for name, tool in registry.items()}
-        tool_schemas.update({"IdentityDecision": IdentityDecision.model_json_schema(),
-                             "MergePatch": MergePatch.model_json_schema(), "Review": Review.model_json_schema()})
+        from cortex.capabilities.graph_merge.integration.reconciliation_contract import TOOLS, AssessmentResult
+        tool_schemas = {"reconciliation:" + name: model.model_json_schema() for name, model in TOOLS.items()}
+        tool_schemas['reconciliation:assessment_result'] = AssessmentResult.model_json_schema()
+        tool_schemas["IdentityDecision"] = IdentityDecision.model_json_schema()
         # The final tool lives inside the task loop; extract its actual public
         # docstring without importing that loop back into checkpoint code.
         source = files("cortex.capabilities.graph_merge.llm").joinpath("task_agent.py").read_text()
         final_tool = next(node for node in ast.walk(ast.parse(source))
                           if isinstance(node, ast.FunctionDef) and node.name == "submit_patch")
-        tool_schemas["submit_patch"] = {"description": ast.get_docstring(final_tool),
-                                         "parameters": MergePatch.model_json_schema()}
+        tool_schemas["node_submit_patch"] = {"description": ast.get_docstring(final_tool),
+                                         "parameters": node_output_model('writer').model_json_schema()}
         tool_schemas['source_unit_adapter'] = files('cortex.capabilities.graph_merge.integration').joinpath('source_units.py').read_text()
-        tool_schemas['guidance_adapter'] = files('cortex.capabilities.graph_merge.llm').joinpath('task_tools.py').read_text()
+        local_reads = build_node_read_tools(SimpleNamespace(evidence=()), {'allowed_evidence_ids': []})
+        tool_schemas['node_local_reads'] = {name: {'description': tool.description,
+            'parameters': tool.args_schema.model_json_schema()} for name, tool in local_reads.items()}
+        tool_schemas['node_local_results'] = {role: node_output_model(role).model_json_schema() for role in ('writer', 'assessment')}
+        for name in ('identity_guidance.py', 'prompt_language.py', 'node_contract.py', 'node_context.py', 'packets.py', 'reconciliation_context.py', 'reconciliation_agent.py', 'reconciliation_prompts.py', 'reconciliation_projection.py', 'reconciliation_presentation.py'):
+            tool_schemas[name] = files('cortex.capabilities.graph_merge.llm').joinpath(name).read_text()
+        for name in ('single_graph.py', 'local_validation.py', 'semantic_notes.py', 'patch.py', 'node_revision.py', 'node_relations.py', 'node_relation_repair.py', 'relation_followups.py', 'reconciliation_contract.py', 'reconciliation_compile.py', 'signals.py', 'signal_premises.py', 'signal_scope.py', 'signal_effects.py', 'signal_scope_migration.py', 'signal_receipts.py', 'receipt_ledger.py'):
+            tool_schemas[name] = files('cortex.capabilities.graph_merge.integration').joinpath(name).read_text()
+        for namespace, names in (('integration', ('relation_merger.py', 'relation_merger_stage.py')),
+                                 ('llm', ('relation_merger.py',))):
+            for name in names:
+                path = files('cortex.capabilities.graph_merge.' + namespace).joinpath(name)
+                if path.is_file():
+                    tool_schemas[namespace + '/' + name] = path.read_text()
     return ContractVersions(schema=canonical_hash({"ontology": schema.model_dump(mode="json"),
                                                   "graph_state": GraphState.model_json_schema()}),
                             tools=canonical_hash({"version": TOOL_CONTRACT_VERSION, "schemas": tool_schemas}),
@@ -133,12 +146,18 @@ class TaskState:
     draft_revision: int = 0
     last_valid_candidate: dict | None = None
     candidate_hash: str | None = None
+    candidate_draft_id: str | None = None
+    compilation_binding: str | None = None
     issues: tuple[dict, ...] = ()
+    issues_draft_id: str | None = None
     semantic_issues: tuple[dict, ...] = ()
     semantic_issue_basis: tuple[dict, ...] = ()
     review: dict | None = None
     required_context: tuple[dict, ...] = ()
     recovery: str | None = None
+    agent_recovery: dict[str, dict] = field(default_factory=dict)
+    relation_followups: tuple[dict, ...] = ()
+    coupled_relation: dict | None = None
     version: int = TASK_STATE_VERSION
 
     @classmethod
@@ -151,22 +170,55 @@ class TaskState:
             draft = draft.model_dump(mode="json")
         draft = _detached(draft)
         if not isinstance(draft, dict):
-            raise ValueError("Task draft must be an object")
+            raise TypeError("Task draft must be an object")
+        if draft == self.draft:
+            return self
         revision = self.draft_revision + 1
         token = canonical_hash([self.task_id, self.base_hash, revision, draft])
         return replace(self, draft=draft, draft_id=token, draft_revision=revision,
-                       stage="validating", issues=(), review=None, required_context=(), recovery=None)
+                       stage="validating", issues=(), issues_draft_id=None, review=None, recovery=None,
+                       relation_followups=(), coupled_relation=None,
+                       compilation_binding=None)
 
-    def with_candidate(self, candidate):
+    def with_candidate(self, candidate, *, submitted=True, compilation_binding=None):
+        if self.draft_id is None:
+            raise ValueError("A candidate requires a current task draft")
         graph = GraphState.model_validate(candidate).model_dump(mode="json")
         return replace(self, last_valid_candidate=graph, candidate_hash=canonical_hash(graph),
-                       stage="assessing", issues=(), review=None, recovery=None)
+                       candidate_draft_id=self.draft_id,
+                       compilation_binding=compilation_binding,
+                       stage="assessing" if submitted else "compiled_unsubmitted", issues=(),
+                       issues_draft_id=None, review=None, recovery=None)
+
+    def with_assessment_handoff(self):
+        """Bind the exact compiled Writer action to independent Assessment."""
+        if (self.stage not in {'compiled_unsubmitted', 'assessing'}
+                or self.candidate_hash is None or self.last_valid_candidate is None
+                or self.draft_id is None or self.candidate_draft_id != self.draft_id
+                or not self.compilation_binding):
+            raise ValueError('DRAFT_NOT_COMPILED: Assessment requires the exact current compiled draft')
+        return replace(self, stage='assessing')
 
     def with_issues(self, issues, *, stage="revising"):
-        return replace(self, issues=tuple(_detached(list(issues))), stage=stage, review=None)
+        issues = tuple(_detached(list(issues)))
+        return replace(self, issues=issues, issues_draft_id=self.draft_id if issues else None,
+                       stage=stage, review=None)
+
+    def with_agent_recovery(self, key, value):
+        if not isinstance(key, str) or not key:
+            raise ValueError("Agent recovery key must be a nonempty string")
+        records = _detached(self.agent_recovery)
+        if value is None:
+            records.pop(key, None)
+        else:
+            if not isinstance(value, dict):
+                raise TypeError("Agent recovery record must be an object")
+            records[key] = _detached(value)
+        return replace(self, agent_recovery=records)
 
     def with_review(self, review, *, candidate_hash):
-        if self.stage != "assessing" or not self.candidate_hash or candidate_hash != self.candidate_hash:
+        if (self.stage != "assessing" or not self.candidate_hash or candidate_hash != self.candidate_hash
+                or self.candidate_draft_id is None or self.candidate_draft_id != self.draft_id):
             raise ValueError("Review does not address the current candidate")
         review = _detached(review.model_dump(mode="json") if hasattr(review, "model_dump") else review)
         verdict = review.get("verdict")
@@ -177,6 +229,7 @@ class TaskState:
             raise ValueError("An accepted review cannot retain issues")
         return replace(self, review={**review, "candidate_hash": candidate_hash},
                        issues=tuple(_detached(list(issues))),
+                       issues_draft_id=self.draft_id if issues else None,
                        semantic_issues=(() if verdict == 'accept' else self.semantic_issues
                                         if verdict == 'needs_context' else tuple(_detached(list(issues)))),
                        semantic_issue_basis=(() if verdict == 'accept' else self.semantic_issue_basis),
@@ -190,6 +243,7 @@ class TaskState:
         result['semantic_issues'] = list(self.semantic_issues)
         result['semantic_issue_basis'] = list(self.semantic_issue_basis)
         result['required_context'] = list(self.required_context)
+        result['relation_followups'] = list(self.relation_followups)
         return _detached(result)
 
     @classmethod
@@ -202,13 +256,17 @@ class TaskState:
         value['semantic_issues'] = tuple(value.get('semantic_issues', ()))
         value['semantic_issue_basis'] = tuple(value.get('semantic_issue_basis', ()))
         value['required_context'] = tuple(value.get('required_context', ()))
+        value['relation_followups'] = tuple(value.get('relation_followups', ()))
         result = cls(**value)
         if not result.task_id or not result.phase:
             raise ValueError("Task identity and phase are required")
-        if result.stage not in {"writing", "validating", "assessing", "revising", "blocked", "ready_to_commit", "committed"}:
+        if result.stage not in {"writing", "validating", "compiled_unsubmitted", "assessing", "revising", "blocked", "ready_to_commit", "committed"}:
             raise ValueError("Unknown task stage")
         if not isinstance(result.draft_revision, int) or result.draft_revision < 0:
             raise ValueError("Invalid task draft revision")
+        for binding in (result.candidate_draft_id, result.issues_draft_id):
+            if binding is not None and (not isinstance(binding, str) or not binding):
+                raise ValueError("Draft bindings must be nonempty strings")
         GraphState.model_validate(result.base)
         if canonical_hash(result.base) != result.base_hash:
             raise ValueError("Task base hash mismatch")
@@ -218,12 +276,39 @@ class TaskState:
                 raise ValueError("Task candidate hash mismatch")
         elif result.candidate_hash is not None:
             raise ValueError("Candidate hash has no candidate")
+        if result.candidate_draft_id is not None and not result.candidate_hash:
+            raise ValueError("Candidate draft binding has no candidate")
         if result.draft is not None:
             expected = canonical_hash([result.task_id, result.base_hash, result.draft_revision, result.draft])
             if result.draft_id != expected:
                 raise ValueError("Task draft hash mismatch")
         elif result.draft_id is not None:
             raise ValueError("Draft id has no draft")
+        if (result.candidate_draft_id is not None
+                and result.stage in {"compiled_unsubmitted", "assessing", "ready_to_commit", "committed"}
+                and result.candidate_draft_id != result.draft_id):
+            raise ValueError("Candidate does not compile the current task draft")
+        if result.stage == 'compiled_unsubmitted' and (result.candidate_draft_id is None
+                or result.candidate_hash is None or result.last_valid_candidate is None
+                or not result.compilation_binding):
+            raise ValueError('Compiled preview requires an exact current candidate binding')
+        if result.compilation_binding is not None and (not isinstance(result.compilation_binding, str)
+                or not result.compilation_binding):
+            raise ValueError('Compilation input binding must be a nonempty string')
+        if result.issues_draft_id is not None and (
+            not result.issues or result.issues_draft_id != result.draft_id
+        ):
+            raise ValueError("Task issues address a different draft")
+        if (not isinstance(result.agent_recovery, dict)
+                or any(not isinstance(key, str) or not key or not isinstance(record, dict)
+                       for key, record in result.agent_recovery.items())):
+            raise ValueError("Agent recovery must contain named object records")
+        from cortex.capabilities.graph_merge.llm.node_contract import RelationFollowup
+        for row in result.relation_followups:
+            RelationFollowup.model_validate(row)
+        if result.coupled_relation is not None:
+            if not isinstance(result.coupled_relation, dict) or result.coupled_relation.get('draft_id') != result.draft_id:
+                raise ValueError('Coupled relation repair addresses a different node draft')
         if result.review is not None and result.review.get("candidate_hash") != result.candidate_hash:
             raise ValueError("Stored review addresses a different candidate")
         if result.stage in {"ready_to_commit", "committed"} and (

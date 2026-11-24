@@ -15,6 +15,25 @@ from cortex.capabilities.graph_merge.integration.source_units import SourceRoute
 from cortex.schema import ConflictPoint, GraphSpace, GraphState, NodeContent
 
 
+def _validate_integration_result_mode(integration):
+    """Reject contradictory modes rather than dropping conflict declarations.
+
+    Also called by the compiler: trusted adapters and model_copy/model_construct
+    can bypass Pydantic's submission-time validation.
+    """
+    if (integration.content is None) == (not integration.alternatives):
+        raise ValueError('Supply complete normal content or at least two complete alternatives')
+    if integration.content is not None and integration.conflict_points:
+        raise PatchContractError('normal_content_with_conflict_points',
+            owner_id=integration.owner_id, path='conflict_points',
+            conflict_point_ids=[point.point_id for point in integration.conflict_points],
+            required_action='Choose one consistent result: normal content with no unresolved conflict_points, '
+                'or no content plus at least two complete alternatives and their conflict_points. '
+                'Preserve genuine competing meanings; do not remove a real conflict merely to pass validation.')
+    if integration.alternatives and (len(integration.alternatives) < 2 or not integration.conflict_points):
+        raise ValueError('Conflict integration requires two alternatives and conflict_points')
+
+
 class IdentityIntegration(Model):
     owner_id: str
     member_ids: tuple[str, ...] = Field(min_length=2)
@@ -27,18 +46,22 @@ class IdentityIntegration(Model):
 
     @model_validator(mode='after')
     def complete_result(self):
-        if (self.content is None) == (not self.alternatives):
-            raise ValueError('Supply complete normal content or at least two complete alternatives')
-        if self.alternatives and (len(self.alternatives) < 2 or not self.conflict_points):
-            raise ValueError('Conflict integration requires two alternatives and conflict_points')
+        _validate_integration_result_mode(self)
         if len(set(self.member_ids)) != len(self.member_ids) or self.owner_id not in self.member_ids:
             raise ValueError('Identity members must be distinct and include their planned owner')
         return self
 
 
+class LocalRelationRemoval(Model):
+    edge_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
 class MergePatch(RelationPatch):
     """The complete current draft. Replacing it never inherits an earlier draft."""
     integrate_groups: tuple[IdentityIntegration, ...] = ()
+    keep_separate_ids: tuple[str, ...] = ()
+    relation_removals: tuple[LocalRelationRemoval, ...] = ()
 
 
 @dataclass
@@ -63,7 +86,7 @@ def identity_obligations(base, aliases):
             for owner, members in sorted(groups.items()) if members - {owner}]
 
 
-def _integrate(base, integrations, obligations, context):
+def _integrate(base, integrations, obligations, context, *, removed_edge_ids=(), source_group=None):
     nodes = {n.id: n for n in base.graph.nodes}
     expected = {g['owner_id']: set(g['member_ids']) for g in obligations}
     if len(expected) != len(obligations):
@@ -73,7 +96,11 @@ def _integrate(base, integrations, obligations, context):
         raise ValueError(f'Complete each planned identity group exactly once: {obligations}')
     aliases, changes, branch_map, owners, retained_map = {}, [], {}, {}, {}
     used = set()
+    if source_group is not None:
+        from cortex.capabilities.graph_merge.integration.source_units import source_units
+        fixed_units = source_units(base, source_group['owner_id'], source_group['member_ids'])
     for integration in integrations:
+        _validate_integration_result_mode(integration)
         if used & set(integration.member_ids):
             raise ValueError('Identity groups overlap')
         used.update(integration.member_ids)
@@ -81,7 +108,9 @@ def _integrate(base, integrations, obligations, context):
         owner = nodes[integration.owner_id]
         if len({m.node_type for m in members}) != 1 or owner.node_type in PHYSICAL:
             raise ValueError('Integrations require semantic nodes of the same type')
-        routes = validate_source_routes(base, integration)
+        units = ([unit for unit in fixed_units if unit['node_id'] in integration.member_ids]
+                 if source_group is not None else None)
+        routes = validate_source_routes(base, integration, units=units)
         new_ids = {a.alternative_id for a in integration.alternatives}
         if len(new_ids) != len(integration.alternatives):
             raise ValueError('New alternative IDs must be distinct')
@@ -135,6 +164,8 @@ def _integrate(base, integrations, obligations, context):
                  if n.id not in aliases or aliases[n.id] == n.id]
     new_edges = []
     for edge in base.graph.edges:
+        if edge.id in removed_edge_ids:
+            continue
         updated = remap_edge(edge, aliases)
         original = nodes[edge.from_node_id]
         if original.id in aliases and (original.alternatives or owners[aliases[original.id]].alternatives):
@@ -213,6 +244,17 @@ def _compile_patch(context, base, patch, *, targets, aliases=None, payload=None)
         from cortex.capabilities.graph_merge.integration.engine import IntegrationIncomplete
         raise IntegrationIncomplete(patch.failure)
     obligations = identity_obligations(base, aliases)
+    original_group = None
+    removed_edge_ids = set()
+    if getattr(context, 'node_local_compile', False):
+        from cortex.capabilities.graph_merge.integration.node_revision import partition_groups, validate_internal_removals
+        if len(obligations) != 1:
+            raise ValueError('Local node revision requires one fixed original identity group')
+        original_group = obligations[0]
+        obligations = partition_groups(original_group, patch.integrate_groups, patch.keep_separate_ids)
+        removed_edge_ids = validate_internal_removals(base, original_group, patch.relation_removals)
+    elif patch.keep_separate_ids or patch.relation_removals:
+        raise ValueError('Group separation and local relation removals belong only to node consolidation')
     original_nodes = {n.id: n for n in base.graph.nodes}
     integrations = list(patch.integrate_groups)
     validate_operation_boundaries(patch, obligations)
@@ -237,10 +279,43 @@ def _compile_patch(context, base, patch, *, targets, aliases=None, payload=None)
                 alternatives=conflict.alternatives, common_evidence_ids=conflict.common_evidence_ids,
                 conflict_points=conflict.conflict_points, source_routes=conflict.source_routes,
                 explanation='Rewrite complete branches with explicit source and relation dispositions.'))
-    integrated, changes, node_map, edge_map = _integrate(base, integrations, obligations, context)
+    integrated, changes, node_map, edge_map = _integrate(base, integrations, obligations, context,
+        removed_edge_ids=removed_edge_ids, source_group=original_group)
+    if removed_edge_ids:
+        # An internal relation absorbed by a normal merged identity has an
+        # explicit node successor and carries its exact edge provenance there.
+        # Otherwise this is an explained retraction, independently assessed.
+        old_edges = {edge.id: edge for edge in base.graph.edges}
+        nodes = {node.id: node for node in integrated.graph.nodes}
+        for removal in patch.relation_removals:
+            edge = old_edges[removal.edge_id]
+            source = node_map.get(edge.from_node_id, edge.from_node_id)
+            target = node_map.get(edge.to_node_id, edge.to_node_id)
+            after = ()
+            if source == target and not nodes[source].alternatives:
+                owner = nodes[source]
+                nodes[source] = owner.model_copy(update={'sources': tuple(dict.fromkeys((*owner.sources, *edge.sources)))})
+                after = (Element(kind='node', id=source),)
+            changes.append(Change(before=(Element(kind='edge', id=edge.id),), after=after,
+                                  explanation=removal.reason))
+        integrated = integrated.model_copy(update={'graph': integrated.graph.model_copy(update={'nodes': tuple(nodes.values())})})
+    if getattr(context, 'node_local_compile', False):
+        from cortex.capabilities.graph_merge.integration.node_relations import sync_node_relations, NodeRelationCoordinationRequired
+        try:
+            integrated, edge_map, mechanical = sync_node_relations(base, integrated,
+                node_aliases=node_map, edge_aliases=edge_map,
+                owner_ids=[group.owner_id for group in integrations])
+            changes = [*changes, *mechanical]
+        except NodeRelationCoordinationRequired as error:
+            error.integration_changes = tuple(changes)
+            raise
     validate_owner_edits(patch, obligations)
     live_targets = {node_map.get(key, key) for key in targets}
     batch = ActiveBatch(context, integrated, targets=live_targets)
+    if original_group is not None:
+        from cortex.capabilities.graph_merge.integration.node_revision import structural_diagnostics
+        batch.node_original_group = original_group
+        batch.node_structural_diagnostics = structural_diagnostics(base, integrated, node_map, context.schema)
     if existing_conflicts and admitted:
         batch.scope_events.append({'ids': sorted(admitted), 'reason': 'Explicit coupled conflict rewrite'})
     context.active_batch = batch
@@ -249,7 +324,7 @@ def _compile_patch(context, base, patch, *, targets, aliases=None, payload=None)
     scope = ProposalScope(context, source_payload, EvidencePresentation(context, source_payload.get('evidence', [])))
     scope.visible.update(getattr(context, 'task_visible_ids', ()))
     batch.prepare_submission = scope.prepare
-    local_data = patch.model_dump(mode='json', exclude={'integrate_groups'}, exclude_unset=True)
+    local_data = patch.model_dump(mode='json', exclude={'integrate_groups', 'keep_separate_ids', 'relation_removals'}, exclude_unset=True)
     if any(not a.evidence_ids for c in patch.conflicts if c.node_id not in original_nodes for a in c.alternatives):
         raise PatchContractError('new_conflict_requires_evidence', required_action='A new owner has no input units; cite supporting evidence for every complete branch.')
     local_data['conflicts'] = [c.model_dump(mode='json', exclude_unset=True) for c in patch.conflicts if c.node_id not in original_nodes]

@@ -42,6 +42,8 @@ class RetrieveDbCapability:
         ontology_schema=None,
         checkpoint_root=None,
         limits=None,
+        semantic_node_limit=30,
+        physical_node_limit=50,
         document_vector_cache=None,
         embedding_identity=None,
         context_settings=None,
@@ -68,6 +70,8 @@ class RetrieveDbCapability:
             initial_sql_generator=initial_sql_generator
             or (InitialSqlGenerator(llm) if llm is not None else None),
             schema_renderer=schema_renderer or GraphPhysicalSchemaRenderer(),
+            semantic_node_limit=semantic_node_limit,
+            physical_node_limit=physical_node_limit,
         )
         # Identity includes schemas and model/config metadata, never API credentials.
         identity = context_fingerprint(
@@ -80,7 +84,8 @@ class RetrieveDbCapability:
                 "limits": recall.limits,
                 "settings": context_settings or {},
                 "relevance_filter": relevance_filter,
-                "context_expansion": "one_hop_relevance_preserving_v2",
+                "context_expansion": "budgeted_complete_units_one_hop_v3",
+                "final_node_limits": {'semantic': semantic_node_limit, 'physical': physical_node_limit},
                 "model": getattr(llm, "model_name", getattr(llm, "model", None)),
             }
         )

@@ -65,10 +65,14 @@ def test_same_rejected_candidate_is_not_assessed_again(tmp_path):
     agent=Agent();engine,task=setup_engine(agent,tmp_path/'work.sqlite');engine.max_rounds=5;original=engine.current
     with pytest.raises(IntegrationIncomplete,match="Unchanged.*candidate"):
         engine._run_task(task,'same-candidate')
-    assert agent.reviews==1 and agent.writes==2
+    # The first Review pins complete basis records not all previously visible.
+    # One expanded-context review is allowed; the next exact context is cached
+    # before invoking Assessment again.
+    assert agent.reviews==2 and agent.writes==3
     assert engine.current==original
     saved=WorkspaceStore(engine.workspace_path).load('same-candidate')
     assert saved['task_state']['stage']=='revising'
+    assert saved['task_state']['agent_recovery']['assessment_gate']['cache_reused']
 
 
 def test_true_noop_skips_review(tmp_path):

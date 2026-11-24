@@ -394,7 +394,12 @@ def merge_worker(args):
         SqlTrainingGraphMergeEvidenceResolver,
     )
     from cortex.capabilities.sql_training.merge_evaluation import (
-        _combined_incoming_state,
+        compose_case_graphs,
+        _augment_existing_physical_graph,
+    )
+    from cortex.capabilities.sql_training.physical_catalog import (
+        audit_physical_ids,
+        canonicalize_physical_graph,
     )
     from cortex.infrastructure.artifacts.graph_merge_trace import (
         FileSystemGraphMergeTraceSink,
@@ -407,6 +412,21 @@ def merge_worker(args):
     if base and manifest.get('merge_base_sha256') != hashlib.sha256((args.output / base).read_bytes()).hexdigest():
         raise ValueError('Accepted merge base fingerprint mismatch')
     current = GraphState.model_validate(read(args.output / base)) if base else GraphState(graph=GraphSpace())
+    old_plan = read(args.output / 'merge_plan.json') if (args.output / 'merge_plan.json').exists() else {}
+    has_steps = any((args.output / 'merge').glob('batch-*/input_fingerprint.json'))
+    composition_version = old_plan.get('composition_version', 1 if has_steps else 2)
+    if composition_version not in (1, 2):
+        raise ValueError('Unsupported merge composition version')
+    if composition_version == 2:
+        current, _ = canonicalize_physical_graph(current)
+        catalog_root = getattr(args, 'prepared_catalog', None)
+        if catalog_root and (catalog_root / 'catalog_manifest.json').exists():
+            from cortex.capabilities.sql_training.pipeline.catalog_preflight import validate_prepared_files
+            catalog_manifest = validate_prepared_files(catalog_root)
+            if 'physical_graph.json' in catalog_manifest['files']:
+                physical = GraphState(graph=GraphSpace.model_validate(read(catalog_root / 'physical_graph.json')))
+                audit_physical_ids(physical)
+                current = _augment_existing_physical_graph(current, physical.graph)
     evidence = {}
     for ident in manifest['question_ids']:
         row = read(args.output / 'cases' / str(ident) / 'input.json')
@@ -427,23 +447,18 @@ def merge_worker(args):
     size = manifest.get('merge_batch_size', getattr(args, 'merge_batch_size', 10))
     size = size or max(1, len(remaining))
     batches = [remaining[i:i + size] for i in range(0, len(remaining), size)]
-    write(args.output / 'merge_plan.json', {'base_cases': merged, 'batches': batches, 'omitted': omitted})
+    write(args.output / 'merge_plan.json', {'base_cases': merged, 'batches': batches,
+          'omitted': omitted, 'composition_version': composition_version})
     for index, batch in enumerate(batches, 1):
         ident = f'batch-{index:04}'
         cases = tuple((read(args.output / 'cases' / str(k) / 'input.json')['source_id'],
             GraphState.model_validate(read(args.output / 'cases' / str(k) / 'state.json')).graph) for k in batch)
         out = args.output / 'merge' / str(ident)
         out.mkdir(parents=True, exist_ok=True)
-        incoming = _combined_incoming_state(cases, current)
-        node_offset = edge_offset = 0
-        mappings = {}
-        for source, graph in cases:
-            mappings[source] = {
-                'nodes': {n.id: incoming.graph.nodes[node_offset + i].id for i, n in enumerate(graph.nodes)},
-                'edges': {e.id: incoming.graph.edges[edge_offset + i].id for i, e in enumerate(graph.edges)},
-            }
-            node_offset += len(graph.nodes)
-            edge_offset += len(graph.edges)
+        composition = compose_case_graphs(cases, current, legacy=composition_version == 1)
+        incoming, mappings = composition.state, composition.mappings
+        if composition_version == 2:
+            current = _augment_existing_physical_graph(current, composition.catalog)
         digest = hashlib.sha256(json.dumps([current.model_dump(mode='json'), incoming.model_dump(mode='json')], sort_keys=True).encode()).hexdigest()
         if (out / 'input_fingerprint.json').exists() and read(out / 'input_fingerprint.json')['sha256'] != digest:
             raise ValueError('Merge prefix/input changed; use a new merge output, never reuse an incompatible step')
@@ -496,6 +511,8 @@ def merge_worker(args):
                 'slot': args.slot, 'updated': time.time()})
             try:
                 result = engine.merge(current, incoming, schema, run_id=f'train-merge-{ident}')
+                if composition_version == 2:
+                    audit_physical_ids(result.state)
                 audit = audit_result(current, incoming, result, schema)
                 write(out / 'result.json', result.model_dump(mode='json'))
                 write(out / 'audit.json', audit)

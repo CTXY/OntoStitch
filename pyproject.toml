@@ -36,6 +36,7 @@ packages = ["src/cortex"]
 artifacts = [
   "src/cortex/capabilities/metadata/prompts/**/*.md",
   "src/cortex/capabilities/graph_merge/llm/prompts/**/*.md",
+  "src/cortex/capabilities/graph_merge/llm/prompts/*.json",
   "src/cortex/capabilities/sql_training/**/*.md",
   "src/cortex/capabilities/sql_training/**/*.yaml",
   "src/cortex/capabilities/online_context/**/*.md",

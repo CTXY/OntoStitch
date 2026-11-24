@@ -10,6 +10,23 @@ from cortex.capabilities.online_context.output.guidance import GuidanceAgent
 from cortex.capabilities.online_context.output.sql_handoff import render_sql_handoff
 
 
+def test_all_bounded_graph_definitions_are_exported_without_a_second_filter():
+    assets = [{'node_id': 'patient', 'type': 'concept', 'summary': 'Patient definition'},
+              {'node_id': 'unrelated', 'type': 'concept', 'summary': 'Creatinine definition'}]
+    text = render_sql_handoff({'ontology_assets': assets})
+    assert 'Patient definition' in text and 'Creatinine definition' in text
+    assert len(assets) == 2
+
+
+def test_no_guidance_model_call_without_slots_or_rules():
+    class NoCall:
+        async def ainvoke(self, *args, **kwargs):
+            raise AssertionError('Definitions must not trigger an extra filter call')
+    result = asyncio.run(GuidanceAgent(NoCall()).synthesize(question='test', dialect='sqlite',
+        choice_points=(), answers=()))
+    assert result.guidance_content == '' and result.interaction_guidance == ()
+
+
 def test_filter_cannot_emit_implementation_or_irrelevance():
     for extra in ({"selected_option_id": "x"}, {"outcome": "not_relevant"}):
         with pytest.raises(ValidationError):

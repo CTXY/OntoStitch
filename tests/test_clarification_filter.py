@@ -352,6 +352,122 @@ def test_prompt_requires_properties_and_preserves_uncertain_joins():
     assert "Partial equivalence" in prompt
 
 
+def test_filter_does_not_receive_draft_or_provenance_explanations():
+    point = slot()
+    option = point.options[0].model_copy(update={
+        "initial_sql_evidence": "DRAFT_PROVENANCE_SENTINEL",
+        "evidence_assessment": point.options[0].evidence_assessment.model_copy(
+            update={"explanation": "SOURCE_REASON_SENTINEL"}
+        ),
+    })
+    point = point.model_copy(update={"options": (option, point.options[1])})
+    traces = []
+    agent = ClarificationFilterAgent(
+        llm({"decisions": [keep(point)]}),
+        trace_sink=lambda stage, payload: traces.append((stage, payload)),
+    )
+    result = asyncio.run(agent.filter(
+        question="Count transactions", initial_sql="FULL_DRAFT_SENTINEL",
+        retrieved_graph_state=graph(), choice_points=(point,), dialect="sqlite",
+    ))
+    prompt = next(p["prompt"] for stage, p in traces if stage == "filter_llm")
+    payload = json.loads(prompt[1]["content"])
+    assert "initial_sql" not in payload
+    assert all(s not in str(payload) for s in (
+        "FULL_DRAFT_SENTINEL", "DRAFT_PROVENANCE_SENTINEL", "SOURCE_REASON_SENTINEL",
+    ))
+    assert payload["slots"][0]["options"][0]["statement"] == point.options[0].statement
+    assert payload["slots"][0]["options"][1]["graph_refs"] == ["table.transactions_1k"]
+    assert result.choice_points == (point,)  # The audit originals are unchanged.
+
+
+def test_data_property_proof_inputs_do_not_change_with_attempted_query(database):
+    point = slot()
+    inputs, results = [], []
+    for draft in (
+        "SELECT COUNT(*) FROM transactions_1k WHERE Time < '13:00:00'",
+        "SELECT COUNT(CASE WHEN Time > '23:00:00' THEN 1 END) FROM transactions_1k",
+    ):
+        traces = []
+        agent = ClarificationFilterAgent(
+            llm(request(point), {"decisions": [equivalent(point)]}),
+            database=database,
+            trace_sink=lambda stage, payload, traces=traces: traces.append((stage, payload)),
+        )
+        results.append(asyncio.run(agent.filter(
+            question="Count transactions", initial_sql=draft,
+            retrieved_graph_state=graph(), choice_points=(point,), dialect="sqlite",
+        )))
+        inputs.append([p["prompt"][1]["content"] for stage, p in traces if stage == "filter_llm"])
+    assert inputs[0][0] == inputs[1][0]
+    # Execution timing can differ; the policy inputs and observed data cannot.
+    observed = []
+    for calls in inputs:
+        payload = json.loads(calls[1])
+        observations = payload.pop("observations")
+        observed.append((payload, [(o["sql"], o["result"]["rows"]) for o in observations]))
+    assert observed[0] == observed[1]
+    assert all(result.choice_points == () for result in results)
+    assert results[0].observations[0]["sql"] == results[1].observations[0]["sql"]
+
+
+def test_nullable_relationship_stays_open_based_on_full_data(database):
+    with sqlite3.connect(database.database.path) as db:
+        db.executescript(
+            "CREATE TABLE users(Id INTEGER PRIMARY KEY, Reputation INTEGER);"
+            "CREATE TABLE posts(Id INTEGER PRIMARY KEY, OwnerUserId INTEGER);"
+            "INSERT INTO users VALUES (1,2000),(2,3000);"
+            "INSERT INTO posts VALUES (10,1),(11,2),(12,NULL);"
+        )
+    point = slot("join", (
+        "posts LEFT JOIN users ON posts.OwnerUserId=users.Id",
+        "posts INNER JOIN users ON posts.OwnerUserId=users.Id",
+    ))
+    result = run_filter(llm(
+        request(point, "SELECT COUNT(*),COUNT(OwnerUserId) FROM posts"),
+        {"decisions": [keep(point, "One post has a NULL relationship key. Data alone does not establish total matching coverage; do not assume a task predicate removes it.")]},
+    ), (point,), database)
+    assert result.observations[0]["result"]["rows"] == [[3, 2]]
+    assert result.choice_points == (point,)
+    assert result.decisions[0].outcome == "keep"
+
+
+def test_complete_matching_coverage_can_establish_join_equivalence(database):
+    with sqlite3.connect(database.database.path) as db:
+        db.executescript(
+            "CREATE TABLE users(Id INTEGER PRIMARY KEY);"
+            "CREATE TABLE posts(Id INTEGER PRIMARY KEY, OwnerUserId INTEGER);"
+            "INSERT INTO users VALUES (1),(2);"
+            "INSERT INTO posts VALUES (10,1),(11,2),(12,1);"
+        )
+    point = slot("join", (
+        "posts LEFT JOIN users ON posts.OwnerUserId=users.Id",
+        "posts INNER JOIN users ON posts.OwnerUserId=users.Id",
+    ))
+    probe = "SELECT COUNT(*) FROM posts p WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.Id=p.OwnerUserId)"
+    result = run_filter(llm(
+        request(point, probe),
+        {"decisions": [equivalent(
+            point, data_property="Every post has a matching user; zero unmatched rows, including NULL keys.",
+            applicability_reason="Complete matching coverage makes LEFT and INNER produce the same matched rows and multiplicities for this relationship.",
+        )]},
+    ), (point,), database)
+    assert result.observations[0]["result"]["rows"] == [[0]]
+    assert result.choice_points == ()
+    assert result.decisions[0].outcome == "database_equivalent"
+
+
+def test_prompt_has_positive_and_negative_data_only_proof_examples():
+    prompt = load_prompt("filter_clarifications")
+    assert "Positive example: a sufficient data property" in prompt
+    assert "Counterexample: nullable relationships" in prompt
+    assert "Counterexample: filtered uniqueness" in prompt
+    assert "Counterexample: names are not record identifiers" in prompt
+    assert "WHERE, CASE, HAVING" in prompt
+    assert "Do not inspect or" in prompt
+    assert "Do not borrow" in prompt
+
+
 def test_base_uniqueness_does_not_imply_join_uniqueness(database):
     # Regression data showing why the Agent must explain applicability.
     with sqlite3.connect(database.database.path) as db:

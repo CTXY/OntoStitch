@@ -183,10 +183,15 @@ class ActiveBatch:
         self.extra_check = None
         self.prepare_submission = None
         self.scope_events = []
+        # Only compiler-proved alias-created self-relations may be retained in
+        # an unpublished node candidate for independent Assessment feedback.
+        self.node_structural_diagnostics = []
+        self.node_original_group = None
 
     def submit_atomic(self, result):
         """Keep the last valid draft when a new structured submission is invalid."""
-        fields = ("pending", "changes", "contracts", "edge_merges", "allowed", "targets")
+        fields = ("pending", "changes", "contracts", "edge_merges", "allowed", "targets",
+                  "node_structural_diagnostics")
         saved = {k: deepcopy(getattr(self, k)) for k in fields}
         saved.update({k: getattr(self, k) for k in ("preview", "result", "revision")})
         candidate = self.context.candidate
@@ -616,7 +621,45 @@ class ActiveBatch:
                 raise ValueError(f"Invented source on {n.id}")
         if any(not set(e.sources) <= known for e in edges.values()):
             raise ValueError("Invented edge source")
-        validate_graph_state(candidate, self.context.schema)
+        diagnostics = []
+        indexed_edges = {edge.id: edge for edge in candidate.graph.edges}
+        before = getattr(self.context, 'task_before', None)
+        original_edges = {edge.id: edge for edge in before.graph.edges} if before is not None else {}
+        groups = ([self.node_original_group] if self.node_original_group is not None else
+                  list(getattr(self.context, 'task_identity_groups', ())))
+        for row in self.node_structural_diagnostics:
+            edge = indexed_edges.get(row['edge_id'])
+            # An explicit deletion or a corrected mapping resolves the issue;
+            # historical diagnostics must not follow a repaired candidate.
+            if edge is None or edge.from_node_id != edge.to_node_id:
+                continue
+            original = original_edges.get(edge.id)
+            participants = {row.get('original_from_node_id'), row.get('original_to_node_id'),
+                            row.get('owner_id')}
+            same_group = (any(participants <= set(group['member_ids']) for group in groups)
+                          if groups else bool(self.aliases) and all(
+                              self.aliases.get(key, key) == row.get('owner_id')
+                              for key in (row.get('original_from_node_id'), row.get('original_to_node_id'))))
+            if (not getattr(self.context, 'node_local_compile', False)
+                    or row.get('code') != 'alias_created_self_relation'
+                    or edge.edge_type != 'is_a' or row.get('edge_type') != edge.edge_type
+                    or edge.from_node_id != row.get('owner_id')
+                    or edge.from_node_id != row.get('from_node_id')
+                    or edge.to_node_id != row.get('to_node_id')
+                    or original is None or original.edge_type != edge.edge_type
+                    or original.from_node_id == original.to_node_id
+                    or original.from_node_id != row.get('original_from_node_id')
+                    or original.to_node_id != row.get('original_to_node_id') or not same_group):
+                raise ValueError('Invalid controller diagnostic for a pending node self-relation')
+            diagnostics.append(row)
+        deferred = {row['edge_id'] for row in diagnostics}
+        validation_view = candidate if not deferred else candidate.model_copy(update={
+            'graph': candidate.graph.model_copy(update={
+                'edges': tuple(edge for edge in candidate.graph.edges if edge.id not in deferred)})})
+        # This copy is for validation only. Assessment receives the actual
+        # self-edge candidate; all unrelated structural defects still reject.
+        validate_graph_state(validation_view, self.context.schema)
+        self.node_structural_diagnostics = diagnostics
         if self.extra_check:
             self.extra_check(candidate, tuple(changes), result)
         self.preview = candidate

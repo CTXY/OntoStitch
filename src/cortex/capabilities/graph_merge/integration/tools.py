@@ -154,8 +154,9 @@ def build_tools(context, *, visible_source_ids=()):
                     else context.union_state().graph
                 )
                 contracts = effective_schema(context.schema, graph).edge_types
+                from cortex.capabilities.graph_merge.llm.prompt_language import english_contract
                 items = [
-                    c.model_dump(mode="json")
+                    english_contract(c.model_dump(mode="json"))
                     for c in contracts
                     if not ids or c.id in ids
                 ]

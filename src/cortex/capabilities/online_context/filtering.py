@@ -79,7 +79,7 @@ class ClarificationFilterAgent:
         self.llm, self.database, self.trace_sink = llm, database, trace_sink
         self.max_rounds, self.max_probes = max_rounds, max_probes
         self.context_fingerprint = {
-            "version": 4,
+            "version": 5,
             "max_rounds": max_rounds,
             "max_probes": max_probes,
             "database": getattr(database, "context_fingerprint", None),
@@ -117,8 +117,25 @@ class ClarificationFilterAgent:
             },
             "retrieved_graph_state": evidence,
             "question": question,
-            "initial_sql": initial_sql,
-            "slots": [p.model_dump(mode="json") for p in choice_points],
+            # A draft query is not a premise for removing a clarification.
+            # Keep the exact local alternatives, without draft-query provenance
+            # or model explanations that can import unconfirmed business filters.
+            "slots": [
+                {
+                    "choice_point_id": p.choice_point_id,
+                    "scope": p.scope,
+                    "decision_question": p.decision_question,
+                    "options": [
+                        {
+                            "option_id": o.option_id,
+                            "statement": o.statement,
+                            "graph_refs": o.graph_refs,
+                        }
+                        for o in p.options
+                    ],
+                }
+                for p in choice_points
+            ],
             "database_available": self.database is not None,
         }
         decisions = None

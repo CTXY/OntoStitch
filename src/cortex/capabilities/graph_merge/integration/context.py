@@ -15,7 +15,6 @@ from cortex.capabilities.graph_merge.integration.contracts import isolate_contra
 from cortex.capabilities.graph_merge.integration.packing import bounded_items
 from cortex.schema import GraphSpace, GraphState
 from cortex.schema.references import property_reference_ids, remap_references
-from cortex.schema.relation_metadata import remap_metadata_edges
 
 PHYSICAL = frozenset({"table", "column", "dimension_value"})
 
@@ -35,7 +34,7 @@ def remap_node(node, node_map, edge_map=None):
     """Only declared reference slots; never replace prose or SQL literals."""
 
     def properties(value):
-        return remap_metadata_edges(remap_references(value, node_map), edge_map or {})
+        return remap_references(value,node_map)
 
     return node.model_copy(
         update={

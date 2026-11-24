@@ -77,13 +77,47 @@ A Column can ground a binding Candidate, such as choosing whether one Question m
 
 ## Grounding and selection
 
-- `graph_refs` must be exact supplied handles for objects that support the Candidate statement.
+- Every Candidate must supply actual evidence fields, not only an evidence description:
+  - If `evidence_assessment.source_types` contains `ontology_asset` or
+    `database_schema`, `graph_refs` MUST contain at least one exact supplied handle
+    supporting this Candidate. Otherwise use an empty `graph_refs` list.
+  - If `source_types` contains `initial_sql`, `initial_sql_refs` MUST name one or more supplied S references supporting this Candidate. Otherwise use an empty initial_sql_refs list. Do not copy SQL text.
+  - If both source kinds are declared, fill BOTH evidence fields. They cannot
+    both be empty. `source_types`, optional `sources`, and actual citations must agree.
+  - An `evidence_assessment.explanation` that says "the graph/SQL supports this"
+    is not a citation and cannot replace either evidence field.
+- `graph_refs` must be distinct, nonempty supplied handles for supporting objects.
 - When an expression such as `COUNT(*)` has no direct Column ref, cite the supplied rule, alternative, or parent signal handle that supports it. Never leave a Candidate ungrounded.
-- `initial_sql_evidence` must be a non-empty verbatim fragment of the supplied Initial SQL.
+- Initial SQL references must exist in the supplied immutable catalogue; references to hypothetical SQL are forbidden. Intra-node does not attribute Initial SQL provenance.
 - Evidence location proves provenance, not semantic correctness.
 - Merge equivalent implementations and combine their provenance instead of creating duplicates.
+- Evidence sources are not alternatives. If SQL and Memory both say
+  `ORDER BY drivers.dob DESC LIMIT 1`, they support one implementation, not two
+  Candidates. With no different supported implementation, omit the proposed
+  Slot. Never invent a second implementation to satisfy the two-option contract.
+- When repairing duplicate Candidates, merge their citations first. If fewer
+  than two different implementations remain, remove that item from `new_slots`
+  (or `slots`); do not return a one-option question. For an already handled Slot,
+  add the matching evidence with `provenance_additions`.
 - Do not decide or output a selection mode. Runtime presents every Slot as multiple-selection. Every selected Candidate must be simultaneously applicable, and the selected statements together must completely answer the local decision. Their combined text must retain the relationships needed to use them without guessing which expression applies to which role or SQL position.
 - The interaction always allows selecting no Candidate and providing a free-text answer.
+
+Examples of evidence fields (the handles and fragment must actually be supplied):
+- Memory only: `source_types=["ontology_asset"]`, `graph_refs=["g00012"]`,
+  `initial_sql_refs=[]`.
+- Initial SQL only: `source_types=["initial_sql"]`, `graph_refs=[]`,
+  `initial_sql_refs=["S1"]`.
+- Both: `source_types=["initial_sql","database_schema"]`,
+  `graph_refs=["g00007"]`, `initial_sql_refs=["S1"]`.
+- INVALID: `source_types=["ontology_asset"]`, `graph_refs=[]`,
+  `initial_sql_refs=[]`, even if the explanation names a Graph definition.
+
+For `provenance_additions`, apply the same rules to the evidence being ADDED;
+the runtime combines it with the existing Candidate's citations. Never invent a
+handle or SQL fragment to satisfy validation. If you cannot ground a proposed
+Candidate, withdraw that unsupported proposal explicitly rather than filling fake
+references. A validation error requests a complete corrected output in the same
+conversation; invalid Candidates are not silently treated as "no conflict".
 
 ## Evidence description
 

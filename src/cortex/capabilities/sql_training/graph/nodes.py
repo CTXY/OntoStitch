@@ -77,7 +77,6 @@ def build_node(asset: NodeAsset, formal_id: str | None = None) -> GraphNode:
                 "mapping_type": data.mapping_type,
                 "targets": data.targets,
                 "target_expressions": data.target_expressions,
-                "relation_metadata": [g.model_dump(mode="json") for g in data.relation_metadata] or None,
             }
         )
     elif isinstance(data, EventProperties):

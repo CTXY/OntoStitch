@@ -54,4 +54,3 @@ Only declared inference is allowed. Same-scope is_a inclusion is transitive; ord
 
 Triangles, shared targets, parallel edges and arbitrary cycles are signals, not automatic defects; reject calculation cycles, not all cycles. Duplicate assertions require the same meaning, role and scope. Derivable redundancy requires a declared rule, independent remaining premises, preserved restrictions and consumer support. Keep necessary direct links; do not combine conflicting alternatives as premises or optimize graph size.
 
-Optional relation_metadata records supported statements about listed adjacent same-predicate/same-direction edges, not new inference. Preserve differing supported conditions and interpretations rather than generalizing away a concrete contradiction.

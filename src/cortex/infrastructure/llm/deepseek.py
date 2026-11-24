@@ -6,6 +6,8 @@ from langchain_openai import ChatOpenAI
 
 
 class DeepSeekChatOpenAI(ChatOpenAI):
+    wire_native_thinking_only: bool = False
+
     def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
         if any((c.get("delta") or {}).get("role") == "" for c in chunk.get("choices", [])):
             chunk = deepcopy(chunk)
@@ -40,6 +42,10 @@ class DeepSeekChatOpenAI(ChatOpenAI):
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        if self.wire_native_thinking_only:
+            if self.reasoning_effort != "none" or (self.extra_body or {}).get("thinking",{}).get("type") != "disabled":
+                raise ValueError("Native disabled compatibility requires configured none and thinking=disabled")
+            payload.pop("reasoning_effort", None)
         if (self.extra_body or {}).get("thinking", {}).get("type") == "disabled":
             return payload
         for encoded, message in zip(

@@ -354,11 +354,6 @@
           "description": "复杂匹配的完整表达式，键为 targets 外层组索引的字符串；保留联合条件和关联依据，不替代显式边。",
           "enum": null,
           "default": null
-        },
-        "relation_metadata": {
-          "type": "array",
-          "required": false,
-          "description": "Optional grouped statements over existing adjacent same-type, same-direction edges: id, edges, description. Not new edges or executable axioms."
         }
       },
       "inclusion_criteria": [

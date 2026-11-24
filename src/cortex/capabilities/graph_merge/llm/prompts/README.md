@@ -1,25 +1,30 @@
-# Graph Merge prompts
+# Merge prompts
 
-The production bootstrap and resilient-training runner use `IncrementalIntegrationAgent` from `llm/task_agent.py`. `llm/incremental.py` is its public import boundary. One tool loop handles five roles: Identity, Node Consolidation Writer, Node Assessment, Graph Reconciliation Writer, and Graph Reconciliation Assessment.
+`IncrementalIntegrationAgent` uses these active entry points:
 
-| Role | Prompt | Result |
+| Role | System construction | Public result |
 | --- | --- | --- |
-| Identity | integration_identity.md | IdentityDecision |
-| Content Writer | incremental_consolidate.md | submit_patch with MergePatch fields |
-| Content Assessment | incremental_node_assess.md | Review |
-| Relation Writer | incremental_relation_write.md | submit_patch with MergePatch fields |
-| Relation Assessment | incremental_relation_assess.md | Review |
+| Identity | integration_identity.md + incremental_protocol.md | IdentityDecision |
+| Node Writer | node_local/common-fields.zh.md → writer.system.zh.md → writer-output-contract.zh.md → types/{current type}.zh.md | submit_patch with NodeWriterResult |
+| Node Assessment | node_local/common-fields.zh.md → assessment.system.zh.md → assessment-output-contract.zh.md → types/{current type}.zh.md | Review with NodeAssessmentResult |
+| Relation Writer | reconciliation/prompts/common.zh.md → writer.zh.md → writer-contract.zh.md → current Signal shared/Writer guidance | edit_draft；编译成功自动进入 Assessment |
+| Graph Assessment | reconciliation/prompts/common.zh.md → assessment.zh.md → assessment-contract.zh.md → current Signal shared/Assessment guidance | Review with per-Signal and prior-issue results |
 
-Content roles share `incremental_content_shared.md`; relation roles share `incremental_relation_shared.md`. All roles use `incremental_protocol.md`. Static semantic guidance appears once in the system prompt. User messages carry graph views, task obligations, differences and evidence. Public tool schemas come from Pydantic, and prompt examples are checked against those actual schemas.
+The two node roles expose only `read_evidence` and their result tool. They receive one complete identity group, compact outgoing relations and required endpoint summaries. Type guidance is always last; node tools remain identical across node types. See [node_local/README.md](node_local/README.md) for editable files.
 
-Shared task tools provide inspect_graph(items/relations/consumers/contracts), lookup_catalog, read_evidence, read_guidance and inspect_draft. Identity alone uses the source-node/candidate retrieval adapter. Input, before and candidate are explicit snapshots; only compiled candidates can be independently accepted. Source dictionaries, accumulated lineage, draft versions and candidate hashes are controller-owned.
+The former `incremental_consolidate.md`, `incremental_node_assess.md` and `incremental_content_shared.md` are historical assets retained with prior edits. They are no longer loaded or included in the active contract fingerprint. Review drafts in docs/design/node-consolidation-local-review are also not runtime inputs.
 
-A complete submit_patch replaces the current task draft against its fixed before graph. Omitted operations are withdrawn; omitted object fields retain the before value. Structural properties replace whole values. Rejected proposals remain inspectable drafts and do not create objects. There is no submit_changes envelope, JSON Pointer correction protocol, remove_* output family or StageCompletion in this production path.
+User messages contain controller data. Read evidence is kept once per ID; current candidate/draft and bound diagnostics occupy the final message. Node relation followups are separately persisted and independently assessed before final publication.
 
-Review has verdict and issue objects. Each issue includes refs with explicit views, problem, basis and required_outcome, optionally an exact mechanically checkable absence claim. Candidate hashes are bound by the controller, not copied by the model. Original source knowledge is an integration baseline; source admission and per-Rule extraction audits are not repeated.
+The relation roles expose only read_nodes/read_evidence/request_context plus their own editing/result tools. They reconstruct six messages from current local views and one canonical draft; no graph inspection tool or legacy whole-Patch result is registered. See reconciliation/README.md. Production assets live here, not in design docs.
 
-Stored conflicts may be factored internally. Model-facing focus branches are complete resolved content; common evidence is displayed separately from branch evidence. Physical rows show exact IDs and table/column names, with relevant grounding owners. Necessary focus/dependency fields are not replaced by cross-message position pointers.
+## English runtime policies
 
-Older integration/group workflows remain only where explicitly selected by their legacy API; they do not silently provide fallback tools or prompts for the task protocol. Changes to these production prompts are part of the task contract fingerprint; checkpoint migration must explicitly validate compatibility before reuse.
-
-Write prose paragraphs and list items on one physical line, using editor soft wrapping. Preserve structural newlines in Markdown, JSON and SQL. When changing this contract, run the shared task-read/review, patch/compiler, checkpoint and live-tool-loop tests; mocked replay alone does not prove real model quality.
+Node consolidation, relation merger and reconciliation now load the `.en.md`
+assets. The `.zh.md` copies are earlier review documents, not active policies.
+Node type guidance remains last, after the shared role prefix. Reconciliation
+keeps its fixed system/task prefix and replaces the current-state message each
+round. `schema-contracts.en.json` supplies English prose for known schema
+metadata only; it never rewrites source graphs or QA. The asset and projection
+code are included in checkpoint policy hashes, so old checkpoints require an
+explicit migration. This prompt change does not restart background workers.

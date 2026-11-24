@@ -1,0 +1,18 @@
+{
+  "operation_registry": {
+    "joinability": "Choose the table path or key relationship that connects already-complete meanings. The path may be direct or may use one routing table.",
+    "population_average_comparison": "Compare an already-complete stored meaning or Metric with its average over the same requested population; keep averaging and comparison in the Rule, not a helper Metric.",
+    "count_aggregation": "Return the number of requested entities or values.",
+    "existence_check": "Return whether at least one qualifying result exists.",
+    "boolean_output_encoding": "Return the requested yes/no answer as output labels.",
+    "result_deduplication": "Return each requested output item or output tuple once when the SQL source can produce duplicate rows.",
+    "extreme_value_selection": "Return one scalar minimum or maximum value, not its carrying row.",
+    "top_k_selection": "Return entity rows associated with the leading or trailing K values. K may be one. This fixes ranking and row inclusion, not which physical field representations are output. Passing requested attributes through is allowed; an additional fixed field-set policy is a separate decision. For competition ranking, rank is one plus the number of eligible rows strictly ahead: counting strictly better rows can preserve ties. Check identical eligibility, grouping and NULL ordering before treating an alternative to a window function as incorrect.",
+    "rank_output": "Return an ordinal or tie-aware rank value for each requested result row.",
+    "column_binding_choice": "Choose which supported fields, joint field groups or representations participate in the answer when evidence establishes a consequential choice beyond static Concept matching. This selects content, not its column order, formatting or row/column output shape. Choosing a field set does not also decide how the already-selected values are arranged; that is an independent decision. Do not repeat an already resolved term-to-field/value mapping.",
+    "aggregation_grain": "Preserve the requested counting or aggregation unit across repeated records and joins; distinguish row, object and event grain.",
+    "null_semantics": "Preserve an evidenced NULL meaning in filtering, aggregation or arithmetic rather than treating missing values as a documented value without support.",
+    "temporal_alignment": "Choose the supported occurrence time, interval boundaries and temporal alignment for the requested business event or duration.",
+    "population_scope": "Preserve the requested population and intrinsic metric scope when evidence distinguishes the intended group or side of a calculation."
+  }
+}

@@ -1,0 +1,752 @@
+{
+  "status": "translation_only_local_read_guidance_no_model_call",
+  "generator_sources": {
+    "src/cortex/capabilities/sql_training/llm/prompts/asset_contract.py": "3d66b4e3e9badfe7ad6125f5a52f1ac1a43e5a1601fd866c465508dc6761bafe",
+    "src/cortex/capabilities/sql_training/llm/generation_rule_taxonomy.py": "f683ed5c9167733290915b1db3c8b29d3819c4d18120a1d3cb7ea9d81526025d",
+    "src/cortex/capabilities/graph_merge/llm/task_tools.py": "baa93214e256674ae3e40410595808f3730f5b016e669b7a0ffea834aac89319",
+    "src/cortex/capabilities/graph_merge/integration/tools.py": "42926bd354d0ee16fec52b32f75bfc4b2dd5c3d5a9c69b1d1865e04ef468e8a0"
+  },
+  "topics": [
+    {
+      "topic": "concept",
+      "actual_json": "docs/design/reconciliation-review/guidance/concept.actual.json",
+      "actual_json_sha256": "a0d51f17e65c27f9b5f544838c97c6fc1795d0aed1730db98f3cf4c3aca4a7d7",
+      "actual_canonical_json_sha256": "0302d2f9f088972df89727ba9bb78510d7b05a55984585ce8dbff0456cad4e23",
+      "actual_return_characters": 7583,
+      "translation": "docs/design/reconciliation-review/guidance/concept.zh.md",
+      "translation_characters": 2785,
+      "translation_sha256": "565b3ac099e989fa6d3cea5e4bc93718def0cd44ae3a208a6f0af9d9a35e5479",
+      "guidance_source_characters": 6640,
+      "guidance_translation_characters": 2785,
+      "guidance_source_sha256": "aaae95aff6b39350fe0e545cc8974e7cfc360d94ab3ba45f861a6a3966989c14",
+      "paragraph_alignment": [
+        {
+          "paragraph": 1,
+          "source_lines": [
+            1,
+            1
+          ],
+          "translation_lines": [
+            1,
+            1
+          ],
+          "source_characters": 35,
+          "translation_characters": 12
+        },
+        {
+          "paragraph": 2,
+          "source_lines": [
+            3,
+            3
+          ],
+          "translation_lines": [
+            3,
+            3
+          ],
+          "source_characters": 62,
+          "translation_characters": 49
+        },
+        {
+          "paragraph": 3,
+          "source_lines": [
+            5,
+            5
+          ],
+          "translation_lines": [
+            5,
+            5
+          ],
+          "source_characters": 172,
+          "translation_characters": 55
+        },
+        {
+          "paragraph": 4,
+          "source_lines": [
+            7,
+            7
+          ],
+          "translation_lines": [
+            7,
+            7
+          ],
+          "source_characters": 20,
+          "translation_characters": 14
+        },
+        {
+          "paragraph": 5,
+          "source_lines": [
+            9,
+            9
+          ],
+          "translation_lines": [
+            9,
+            9
+          ],
+          "source_characters": 1820,
+          "translation_characters": 771
+        },
+        {
+          "paragraph": 6,
+          "source_lines": [
+            11,
+            11
+          ],
+          "translation_lines": [
+            11,
+            11
+          ],
+          "source_characters": 39,
+          "translation_characters": 14
+        },
+        {
+          "paragraph": 7,
+          "source_lines": [
+            13,
+            15
+          ],
+          "translation_lines": [
+            13,
+            15
+          ],
+          "source_characters": 1242,
+          "translation_characters": 393
+        },
+        {
+          "paragraph": 8,
+          "source_lines": [
+            18,
+            18
+          ],
+          "translation_lines": [
+            18,
+            18
+          ],
+          "source_characters": 33,
+          "translation_characters": 12
+        },
+        {
+          "paragraph": 9,
+          "source_lines": [
+            20,
+            26
+          ],
+          "translation_lines": [
+            20,
+            26
+          ],
+          "source_characters": 1960,
+          "translation_characters": 835
+        },
+        {
+          "paragraph": 10,
+          "source_lines": [
+            28,
+            28
+          ],
+          "translation_lines": [
+            28,
+            28
+          ],
+          "source_characters": 25,
+          "translation_characters": 14
+        },
+        {
+          "paragraph": 11,
+          "source_lines": [
+            30,
+            30
+          ],
+          "translation_lines": [
+            30,
+            30
+          ],
+          "source_characters": 184,
+          "translation_characters": 92
+        },
+        {
+          "paragraph": 12,
+          "source_lines": [
+            32,
+            36
+          ],
+          "translation_lines": [
+            32,
+            36
+          ],
+          "source_characters": 236,
+          "translation_characters": 175
+        },
+        {
+          "paragraph": 13,
+          "source_lines": [
+            38,
+            38
+          ],
+          "translation_lines": [
+            38,
+            38
+          ],
+          "source_characters": 373,
+          "translation_characters": 172
+        },
+        {
+          "paragraph": 14,
+          "source_lines": [
+            41,
+            41
+          ],
+          "translation_lines": [
+            41,
+            41
+          ],
+          "source_characters": 25,
+          "translation_characters": 9
+        },
+        {
+          "paragraph": 15,
+          "source_lines": [
+            43,
+            43
+          ],
+          "translation_lines": [
+            43,
+            43
+          ],
+          "source_characters": 398,
+          "translation_characters": 152
+        }
+      ],
+      "untranslated_field_schema": "docs/design/reconciliation-review/guidance/concept.fields.actual.json",
+      "illustration_preservation": "School IDs, targets syntax and grounded_on predicates unchanged; natural-language edge explanations translated."
+    },
+    {
+      "topic": "metric",
+      "actual_json": "docs/design/reconciliation-review/guidance/metric.actual.json",
+      "actual_json_sha256": "a781a27725494952a7850a63d10175b45349bdaacf700e4a550b95eae476f035",
+      "actual_canonical_json_sha256": "062063462e70d6fc3689c1b5eddc2645e2d779242b754f3171e0dfaa3f867cc8",
+      "actual_return_characters": 3963,
+      "translation": "docs/design/reconciliation-review/guidance/metric.zh.md",
+      "translation_characters": 1469,
+      "translation_sha256": "4ae507b9ebd46b7238bd03a31b3f89ef3685dca43d9f3b1f794c9a522284d12d",
+      "guidance_source_characters": 3481,
+      "guidance_translation_characters": 1469,
+      "guidance_source_sha256": "b048636d7207614368cfcd0c30edd48b1b9fc5422a2e344b9cd25da29c09dc49",
+      "paragraph_alignment": [
+        {
+          "paragraph": 1,
+          "source_lines": [
+            1,
+            1
+          ],
+          "translation_lines": [
+            1,
+            1
+          ],
+          "source_characters": 35,
+          "translation_characters": 12
+        },
+        {
+          "paragraph": 2,
+          "source_lines": [
+            3,
+            3
+          ],
+          "translation_lines": [
+            3,
+            3
+          ],
+          "source_characters": 62,
+          "translation_characters": 49
+        },
+        {
+          "paragraph": 3,
+          "source_lines": [
+            5,
+            5
+          ],
+          "translation_lines": [
+            5,
+            5
+          ],
+          "source_characters": 172,
+          "translation_characters": 55
+        },
+        {
+          "paragraph": 4,
+          "source_lines": [
+            7,
+            7
+          ],
+          "translation_lines": [
+            7,
+            7
+          ],
+          "source_characters": 19,
+          "translation_characters": 13
+        },
+        {
+          "paragraph": 5,
+          "source_lines": [
+            9,
+            9
+          ],
+          "translation_lines": [
+            9,
+            9
+          ],
+          "source_characters": 1657,
+          "translation_characters": 665
+        },
+        {
+          "paragraph": 6,
+          "source_lines": [
+            11,
+            11
+          ],
+          "translation_lines": [
+            11,
+            11
+          ],
+          "source_characters": 29,
+          "translation_characters": 11
+        },
+        {
+          "paragraph": 7,
+          "source_lines": [
+            13,
+            17
+          ],
+          "translation_lines": [
+            13,
+            17
+          ],
+          "source_characters": 1087,
+          "translation_characters": 477
+        },
+        {
+          "paragraph": 8,
+          "source_lines": [
+            19,
+            19
+          ],
+          "translation_lines": [
+            19,
+            19
+          ],
+          "source_characters": 413,
+          "translation_characters": 180
+        }
+      ],
+      "untranslated_field_schema": "docs/design/reconciliation-review/guidance/metric.fields.actual.json"
+    },
+    {
+      "topic": "event",
+      "actual_json": "docs/design/reconciliation-review/guidance/event.actual.json",
+      "actual_json_sha256": "87a46ac62277952f385b1d0aa5fd10ab3231e6fcd8a0d1b24a486af8968a20ea",
+      "actual_canonical_json_sha256": "8c01c1517f38b0fb6c4862cc557bd9ebad988bd6efdab8eabdb06597a63fab82",
+      "actual_return_characters": 2666,
+      "translation": "docs/design/reconciliation-review/guidance/event.zh.md",
+      "translation_characters": 848,
+      "translation_sha256": "f82a18276557dccec5e9a3d13cb81bbf63d0a4a4fa1489432f845447597ef316",
+      "guidance_source_characters": 2165,
+      "guidance_translation_characters": 848,
+      "guidance_source_sha256": "9d04898fdcbe6cdf9f2b00e3a2e7add540bfd4f859a1411979145c9f9634ad90",
+      "paragraph_alignment": [
+        {
+          "paragraph": 1,
+          "source_lines": [
+            1,
+            1
+          ],
+          "translation_lines": [
+            1,
+            1
+          ],
+          "source_characters": 35,
+          "translation_characters": 12
+        },
+        {
+          "paragraph": 2,
+          "source_lines": [
+            3,
+            3
+          ],
+          "translation_lines": [
+            3,
+            3
+          ],
+          "source_characters": 62,
+          "translation_characters": 49
+        },
+        {
+          "paragraph": 3,
+          "source_lines": [
+            5,
+            5
+          ],
+          "translation_lines": [
+            5,
+            5
+          ],
+          "source_characters": 172,
+          "translation_characters": 55
+        },
+        {
+          "paragraph": 4,
+          "source_lines": [
+            7,
+            7
+          ],
+          "translation_lines": [
+            7,
+            7
+          ],
+          "source_characters": 18,
+          "translation_characters": 12
+        },
+        {
+          "paragraph": 5,
+          "source_lines": [
+            9,
+            9
+          ],
+          "translation_lines": [
+            9,
+            9
+          ],
+          "source_characters": 571,
+          "translation_characters": 182
+        },
+        {
+          "paragraph": 6,
+          "source_lines": [
+            11,
+            14
+          ],
+          "translation_lines": [
+            11,
+            14
+          ],
+          "source_characters": 847,
+          "translation_characters": 349
+        },
+        {
+          "paragraph": 7,
+          "source_lines": [
+            16,
+            16
+          ],
+          "translation_lines": [
+            16,
+            16
+          ],
+          "source_characters": 454,
+          "translation_characters": 183
+        }
+      ],
+      "untranslated_field_schema": "docs/design/reconciliation-review/guidance/event.fields.actual.json"
+    },
+    {
+      "topic": "generation_rule",
+      "actual_json": "docs/design/reconciliation-review/guidance/generation_rule.actual.json",
+      "actual_json_sha256": "f40632aaccb0ff124ee0eab82d5332342fa3e3f665bb0dce03dd888e6597a1a1",
+      "actual_canonical_json_sha256": "d56e6c8620cbc96bbff3cede0af3922f8475656fbd492ce2939ea729743f5be4",
+      "actual_return_characters": 4797,
+      "translation": "docs/design/reconciliation-review/guidance/generation_rule.zh.md",
+      "translation_characters": 1737,
+      "translation_sha256": "5c894dd14c440a03f87e1a189ec8bb230a57b6b499b15b7e5b576cd830a1883a",
+      "guidance_source_characters": 4065,
+      "guidance_translation_characters": 1737,
+      "guidance_source_sha256": "7500dc0e9884b548d03632ff6dd10317b68b12ea9c8463c0e4faffc6a49d6032",
+      "paragraph_alignment": [
+        {
+          "paragraph": 1,
+          "source_lines": [
+            1,
+            1
+          ],
+          "translation_lines": [
+            1,
+            1
+          ],
+          "source_characters": 35,
+          "translation_characters": 12
+        },
+        {
+          "paragraph": 2,
+          "source_lines": [
+            3,
+            3
+          ],
+          "translation_lines": [
+            3,
+            3
+          ],
+          "source_characters": 62,
+          "translation_characters": 49
+        },
+        {
+          "paragraph": 3,
+          "source_lines": [
+            5,
+            5
+          ],
+          "translation_lines": [
+            5,
+            5
+          ],
+          "source_characters": 172,
+          "translation_characters": 55
+        },
+        {
+          "paragraph": 4,
+          "source_lines": [
+            7,
+            7
+          ],
+          "translation_lines": [
+            7,
+            7
+          ],
+          "source_characters": 28,
+          "translation_characters": 22
+        },
+        {
+          "paragraph": 5,
+          "source_lines": [
+            9,
+            9
+          ],
+          "translation_lines": [
+            9,
+            9
+          ],
+          "source_characters": 213,
+          "translation_characters": 116
+        },
+        {
+          "paragraph": 6,
+          "source_lines": [
+            11,
+            11
+          ],
+          "translation_lines": [
+            11,
+            11
+          ],
+          "source_characters": 283,
+          "translation_characters": 100
+        },
+        {
+          "paragraph": 7,
+          "source_lines": [
+            13,
+            13
+          ],
+          "translation_lines": [
+            13,
+            13
+          ],
+          "source_characters": 440,
+          "translation_characters": 169
+        },
+        {
+          "paragraph": 8,
+          "source_lines": [
+            15,
+            15
+          ],
+          "translation_lines": [
+            15,
+            15
+          ],
+          "source_characters": 192,
+          "translation_characters": 92
+        },
+        {
+          "paragraph": 9,
+          "source_lines": [
+            17,
+            17
+          ],
+          "translation_lines": [
+            17,
+            17
+          ],
+          "source_characters": 21,
+          "translation_characters": 10
+        },
+        {
+          "paragraph": 10,
+          "source_lines": [
+            19,
+            22
+          ],
+          "translation_lines": [
+            19,
+            22
+          ],
+          "source_characters": 726,
+          "translation_characters": 272
+        },
+        {
+          "paragraph": 11,
+          "source_lines": [
+            25,
+            25
+          ],
+          "translation_lines": [
+            25,
+            25
+          ],
+          "source_characters": 24,
+          "translation_characters": 10
+        },
+        {
+          "paragraph": 12,
+          "source_lines": [
+            27,
+            33
+          ],
+          "translation_lines": [
+            27,
+            33
+          ],
+          "source_characters": 1563,
+          "translation_characters": 710
+        },
+        {
+          "paragraph": 13,
+          "source_lines": [
+            35,
+            35
+          ],
+          "translation_lines": [
+            35,
+            35
+          ],
+          "source_characters": 293,
+          "translation_characters": 107
+        }
+      ],
+      "untranslated_field_schema": "docs/design/reconciliation-review/guidance/generation_rule.fields.actual.json"
+    },
+    {
+      "topic": "relations",
+      "actual_json": "docs/design/reconciliation-review/guidance/relations.actual.json",
+      "actual_json_sha256": "b49b5fa59827efaf5b97c5107c4ad9b991651a336cbbe6110a295ebe0ee5953f",
+      "actual_canonical_json_sha256": "680a6cfab998806d0db123fac1720bb0830c7221f8f1df0f2e1a5a17c22d00f6",
+      "actual_return_characters": 2630,
+      "translation": "docs/design/reconciliation-review/guidance/relations.zh.md",
+      "translation_characters": 948,
+      "translation_sha256": "a86f2eb300acf39bbe1b439fefa1a980cd8b5b259814a80b41d29421bd5c1e44",
+      "guidance_source_characters": 2440,
+      "guidance_translation_characters": 850,
+      "guidance_source_sha256": "37809887e0cdc7a92d350153da29fc702f95a0c311ced2f1aa562eccc6b940e9",
+      "paragraph_alignment": [
+        {
+          "paragraph": 1,
+          "source_lines": [
+            1,
+            1
+          ],
+          "translation_lines": [
+            1,
+            1
+          ],
+          "source_characters": 2440,
+          "translation_characters": 850
+        }
+      ],
+      "extra_translated_fields": {
+        "relation_metadata": {
+          "source": "Optional Concept groups: id, edges, description; at least two adjacent edges of the same predicate and direction. No implicit inference or expansion.",
+          "translation": "可选的 Concept 关系组：id、edges、description；至少包含两条同谓词、同方向的相邻边。不会隐式推理或展开。"
+        }
+      }
+    },
+    {
+      "topic": "operations",
+      "actual_json": "docs/design/reconciliation-review/guidance/operations.actual.json",
+      "actual_json_sha256": "b255eb277905011aff0406c4a631bb6f88a6302228fcf02c0852ba84b2538444",
+      "actual_canonical_json_sha256": "35bb732eb80cf24b68ee1adf39ea18ce693b704cb6f4e69821a82cf1f378b05c",
+      "actual_return_characters": 2601,
+      "translation": "docs/design/reconciliation-review/guidance/operations.zh.md",
+      "translation_characters": 1162,
+      "translation_sha256": "5924d41d572859fe1aa8c5863334fe6666ae86dd8599fa8855cc4ab7ac7237b0",
+      "intent_count": 14,
+      "intent_alignment": [
+        {
+          "intent_id": "joinability",
+          "source": "Choose the table path or key relationship that connects already-complete meanings. The path may be direct or may use one routing table.",
+          "translation": "选择连接已完整表达的含义所需的表路径或键关系。路径可以是直接路径，也可以使用一张路由表。"
+        },
+        {
+          "intent_id": "population_average_comparison",
+          "source": "Compare an already-complete stored meaning or Metric with its average over the same requested population; keep averaging and comparison in the Rule, not a helper Metric.",
+          "translation": "将已完整表达的存储含义或 Metric 与同一请求总体上的平均值比较；平均计算与比较留在 Rule 中，不创建辅助 Metric。"
+        },
+        {
+          "intent_id": "count_aggregation",
+          "source": "Return the number of requested entities or values.",
+          "translation": "返回请求实体或取值的数量。"
+        },
+        {
+          "intent_id": "existence_check",
+          "source": "Return whether at least one qualifying result exists.",
+          "translation": "返回是否至少存在一个满足条件的结果。"
+        },
+        {
+          "intent_id": "boolean_output_encoding",
+          "source": "Return the requested yes/no answer as output labels.",
+          "translation": "使用输出标签返回请求的 yes/no 答案。"
+        },
+        {
+          "intent_id": "result_deduplication",
+          "source": "Return each requested output item or output tuple once when the SQL source can produce duplicate rows.",
+          "translation": "当 SQL 来源可能产生重复行时，每个请求输出项或输出元组只返回一次。"
+        },
+        {
+          "intent_id": "extreme_value_selection",
+          "source": "Return one scalar minimum or maximum value, not its carrying row.",
+          "translation": "返回一个标量最小值或最大值，不返回承载该值的行。"
+        },
+        {
+          "intent_id": "top_k_selection",
+          "source": "Return entity rows associated with the leading or trailing K values. K may be one. This fixes ranking and row inclusion, not which physical field representations are output. Passing requested attributes through is allowed; an additional fixed field-set policy is a separate decision. For competition ranking, rank is one plus the number of eligible rows strictly ahead: counting strictly better rows can preserve ties. Check identical eligibility, grouping and NULL ordering before treating an alternative to a window function as incorrect.",
+          "translation": "返回与排在最前或最后 K 个取值对应的实体行。K 可以是一。它决定排名和行是否纳入，不决定输出哪些物理字段表示。允许透传请求属性；额外固定字段集合策略属于单独决策。对于竞赛排名，rank 等于严格排在前面的合格行数加一：统计严格更优行可以保留并列。将窗口函数的某个替代实现判断为错误前，检查是否使用相同的入选条件、分组与 NULL 排序。"
+        },
+        {
+          "intent_id": "rank_output",
+          "source": "Return an ordinal or tie-aware rank value for each requested result row.",
+          "translation": "为每个请求结果行返回序数排名或考虑并列的排名值。"
+        },
+        {
+          "intent_id": "column_binding_choice",
+          "source": "Choose which supported fields, joint field groups or representations participate in the answer when evidence establishes a consequential choice beyond static Concept matching. This selects content, not its column order, formatting or row/column output shape. Choosing a field set does not also decide how the already-selected values are arranged; that is an independent decision. Do not repeat an already resolved term-to-field/value mapping.",
+          "translation": "当证据表明存在超出静态 Concept 匹配、且会产生实质结果差别的选择时，决定哪些受支持字段、联合字段组或表示参与答案。它选择内容，不选择列顺序、格式或行/列输出形状。选择字段集合，不同时决定如何排列已选取的值；排列是独立决策。不要重复已经解决的术语到字段/值映射。"
+        },
+        {
+          "intent_id": "aggregation_grain",
+          "source": "Preserve the requested counting or aggregation unit across repeated records and joins; distinguish row, object and event grain.",
+          "translation": "在重复记录与连接中保留请求的计数或聚合单位；区分行、对象与事件粒度。"
+        },
+        {
+          "intent_id": "null_semantics",
+          "source": "Preserve an evidenced NULL meaning in filtering, aggregation or arithmetic rather than treating missing values as a documented value without support.",
+          "translation": "保留筛选、聚合或算术中有证据支持的 NULL 含义，不得无依据地把缺失值当成已记录值。"
+        },
+        {
+          "intent_id": "temporal_alignment",
+          "source": "Choose the supported occurrence time, interval boundaries and temporal alignment for the requested business event or duration.",
+          "translation": "为请求的业务事件或时长选择有依据的发生时间、区间边界与时间对齐方式。"
+        },
+        {
+          "intent_id": "population_scope",
+          "source": "Preserve the requested population and intrinsic metric scope when evidence distinguishes the intended group or side of a calculation.",
+          "translation": "当证据区分了计算中所指的组或某一侧时，保留请求总体与固有 Metric 范围。"
+        }
+      ]
+    }
+  ]
+}

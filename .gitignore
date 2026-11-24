@@ -31,7 +31,16 @@ usecase/
 !/docs/design/
 /tests/*
 !/tests/*.py
+!/tests/fixtures/
+/tests/fixtures/*
+!/tests/fixtures/merge_output_protocol_failure/
 /baseline/tests/
 /datasets/
 /output/
 /artifacts/
+
+# Portable reconciliation receipt regression records.
+!/tests/fixtures/reconciliation_signal_receipts/
+
+# Portable signal-specific scope regressions.
+!/tests/fixtures/reconciliation_signal_subgraphs/

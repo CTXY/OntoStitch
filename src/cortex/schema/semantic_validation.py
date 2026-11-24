@@ -44,7 +44,17 @@ def validate_event_predicate(expression: str) -> None:
         raise ValueError(message)
 
 
-def validate_semantic_properties(node_type, properties):
+def validate_semantic_properties(
+    node_type, properties, *, allow_legacy_relation_metadata=False
+):
+    if "relation_metadata" in properties:
+        if not allow_legacy_relation_metadata:
+            raise ValueError("Unsupported property relation_metadata; preserve business meaning in the node definition and individual relation descriptions")
+        if node_type != "concept":
+            raise ValueError("Legacy relation_metadata is only supported on Concept")
+        from cortex.schema.relation_metadata import validate_metadata_items
+
+        validate_metadata_items(properties["relation_metadata"])
     if node_type == "table":
         keys = properties.get("unique_keys", [])
         if not isinstance(keys, list) or any(

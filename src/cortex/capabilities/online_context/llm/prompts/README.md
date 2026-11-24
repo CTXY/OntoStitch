@@ -8,6 +8,6 @@ Question and confirmed answers express intent. Ontology nodes and each alternati
 
 `load_prompt`, `prompt_fingerprint`, and `prompt_version` read packaged files using importlib.resources. Version hashes cover assembled production text, including shared fragments. Online workflow identity also covers choice, answer and guidance output schemas, retrieval implementation identity, graph schema, and behavior settings. A changed identity refuses pending recovery.
 
-These roles retain the existing LangChain chat-model JSON extraction helper with Pydantic validation and bounded repair. Its output envelope is `<result>...</result>`. Do not also request ToolStrategy output in the same call. A future tool-calling role must use a separate adapter and remove this text protocol.
+Discovery Intra-node, Initial-SQL/Memory and Cross-node use direct root JSON objects with response_format=json_object, strict Pydantic validation and one bounded repair. They do not use result wrappers, XML tags or Markdown fences. Other roles retain their existing <result> text protocol. Do not combine either path with ToolStrategy output.
 
 Run `tests/test_online_workflow_review.py`, `tests/test_online_projection.py`, and `tests/test_retrieval_online_handoff.py` after prompt or contract changes. Model behavior needs additional live evaluation; deterministic tests establish routing, preservation and projection, not language-model accuracy.

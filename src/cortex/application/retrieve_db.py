@@ -36,6 +36,12 @@ class RetrieveDbError(ApplicationError):
     """Raised when database retrieval violates its public contract."""
 
 
+class RetrievalCheckpointCompatibilityError(RetrieveDbError):
+    error_code = "checkpoint_incompatible"
+    error_stage = "retrieval_checkpoint"
+    retryable = False
+
+
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

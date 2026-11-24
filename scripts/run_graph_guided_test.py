@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse, asyncio, dataclasses, hashlib, json, os, sqlite3, threading, time
 from pathlib import Path
 from types import SimpleNamespace
+from collections import Counter
 import yaml
 from dotenv import load_dotenv
 from langchain_core.callbacks import BaseCallbackHandler
@@ -59,7 +60,9 @@ def audit_http(model, folder):
         write(folder/f'{key:06}_request.json',{'time':time.time(),'body':json.loads(req.content)})
     def response(resp):
         key=resp.request.extensions.get('local_audit_id',0)
-        write(folder/f'{key:06}_response.json',{'status':resp.status_code,'seconds':time.monotonic()-starts.get(key,time.monotonic()),'body':resp.json()})
+        try:body=resp.json()
+        except ValueError:body={'non_json_body':resp.text[:2400]}
+        write(folder/f'{key:06}_response.json',{'status':resp.status_code,'seconds':time.monotonic()-starts.get(key,time.monotonic()),'body':body})
     def sync_response(resp):resp.read();response(resp)
     async def async_request(req):await req.aread();request(req)
     async def async_response(resp):await resp.aread();response(resp)
@@ -68,6 +71,8 @@ def audit_http(model, folder):
 
 
 def is_transport_failure(record):
+    if record.get('error_code'):
+        return record.get('retryable',False)
     detail=json.dumps(record.get('error_chain',[]))+' '+str(record.get('error') or '')
     return any(x in detail for x in ('Connection','Timeout','RateLimit','APIError','LLMInvocationError','502','503','504','429','Broken pipe'))
 
@@ -77,7 +82,17 @@ def baseline(case, guidance, mode, folder, model, args):
     from nl2sql_baseline.generation import SqlGenerator
     from nl2sql_baseline.workflow import Workflow
     saved=folder/f'{mode}_prediction.json'
-    if saved.exists():return read(saved)
+    resume_attempts=[]
+    if saved.exists():
+        previous=read(saved)
+        attempts=previous.get('sql_attempts') or []
+        if not (previous.get('error_stage')=='generation' and previous.get('error') and len(attempts)<3 and all(a.get('error') for a in attempts)):
+            return previous
+        # A generation transport failure consumed no extra SQL execution. Keep
+        # prior failed executions and continue their correction budget.
+        resume_attempts=attempts
+        digest=hashlib.sha256(saved.read_bytes()).hexdigest()
+        write(folder/'transport_resume_history'/f'{mode}_{digest}.json',previous)
     path=folder/'baseline_cases.json';write(path,[case])
     cfg={'dataset':{'type':'bird'},'test_set_path':str(path.absolute()),'workspace_root':str((folder/mode).absolute()),
          'database':{'root':str(args.database_root.absolute())},'schema_linking':{'type':'full_schema'},
@@ -87,12 +102,15 @@ def baseline(case, guidance, mode, folder, model, args):
     config=folder/f'{mode}.yaml';config.write_text(yaml.safe_dump(cfg,sort_keys=False))
     generator=SqlGenerator(model=args.model,api_key='injected-model',base_url=None,temperature=0,timeout=3600,llm=model)
     workflow=Workflow(load_settings(config,env_file=Path('.env')),generator=generator)
-    # Only transport failures may retry. Incorrect SQL is retained, never resampled.
-    for attempt in range(3):
+    # Only generation transport failures retry the run. SQL execution has its
+    # own fixed two-retry budget; result mismatches never retry.
+    transport_attempts=getattr(args,'generation_transport_attempts',3)
+    for attempt in range(transport_attempts):
         next_attempt=len(list(folder.glob(f'{mode}_attempt_*')))+1
-        run, report=workflow.evaluate(output=folder/f'{mode}_attempt_{next_attempt}')
+        resume_kwargs={'resume_sql_attempts':{str(case['source_id']):resume_attempts}} if resume_attempts else {}
+        run, report=workflow.evaluate(output=folder/f'{mode}_attempt_{next_attempt}',**resume_kwargs)
         prediction=json.loads((run/'predictions.jsonl').read_text().splitlines()[0])
-        if prediction.get('error') and is_transport_failure(prediction) and attempt<2:
+        if not prediction.get('sql_attempts') and prediction.get('error_stage') in (None, 'generation') and prediction.get('error') and is_transport_failure(prediction) and attempt<transport_attempts-1:
             time.sleep(15);continue
         write(saved,prediction);return prediction
 
@@ -167,6 +185,9 @@ async def evaluate(args):
                 guided=await asyncio.to_thread(baseline,case,item,'guided',folder,model,args)
                 plain=await asyncio.to_thread(baseline,case,item,'plain',folder,model,args) if args.control else None
                 records[str(case['source_id'])]={'online':record['status'],'guided':guided,'plain':plain}
+            from cortex.infrastructure.workflow.diagnostics import case_outcome
+            records[str(case['source_id'])]['outcome']=case_outcome(record,records[str(case['source_id'])].get('guided'))
+            records[str(case['source_id'])]['error_code']=record.get('error_code')
             await model.root_async_client.close();model.root_client.close()
             write(args.output/'progress.json',{'total':len(cases),'completed':len(records),'results':records,'updated':time.time()})
             print(json.dumps({'source_id':case['source_id'],'completed':len(records),'online':record.get('status'),'exec':records[str(case['source_id'])].get('guided',{}).get('evaluation',{}).get('exec')},ensure_ascii=False),flush=True)
@@ -181,6 +202,8 @@ async def evaluate(args):
         (args.output/f'{name}.jsonl').write_text(''.join(json.dumps(x,ensure_ascii=False)+'\n' for x in rows))
     summary={'total':len(cases),'guidance_cases':sum(bool(x.get('guidance_content')) for x in online),'guided_correct':sum(x['evaluation']['exec']==1 for x in predictions),'plain_correct':sum(x['evaluation']['exec']==1 for x in plain),'predictions':len(predictions),'control_predictions':len(plain),'evaluator':'complete result-row set equality; all test cases remain denominator','protocol':'Gold SQL only to simulated user after system-generated questions exist, and SQL evaluator. No per-case selection or correctness retries.'}
     summary['guided_ea']=summary['guided_correct']/len(cases);summary['plain_ea']=summary['plain_correct']/len(cases) if args.control else None
+    summary['outcomes']=dict(Counter(r['outcome'] for r in records.values()))
+    summary['actual_paired_sql_cases']=sum(r.get('guided') is not None and r.get('plain') is not None for r in records.values())
     write(args.output/'summary.json',summary);print(json.dumps(summary,ensure_ascii=False),flush=True)
 
 

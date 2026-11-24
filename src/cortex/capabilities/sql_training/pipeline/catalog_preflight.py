@@ -79,9 +79,10 @@ def prepare_physical_catalog(config, database, schema, root, *, dimension_values
         graph = build_graph(workspace.read_all_draft_assets(), workspace.read_catalog_edges(), schema)
         if _identity(config, schema, dimension_values_path) != identity:
             raise ValueError('Database changed during catalog preparation; no catalog published')
+        write_json_atomic(root / 'physical_graph.json', graph.model_dump(mode='json'))
         files = {str(p.relative_to(root)): _hash(p) for p in sorted(workspace.draft_dir.glob('*.json'))}
+        files['physical_graph.json'] = _hash(root / 'physical_graph.json')
         manifest = {'identity': identity, 'files': files, 'summary': summary,
                     'nodes': len(graph.nodes), 'edges': len(graph.edges)}
-        write_json_atomic(root / 'physical_graph.json', graph.model_dump(mode='json'))
         write_json_atomic(marker, manifest)
         return {**manifest, 'reused': False}

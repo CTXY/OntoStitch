@@ -67,7 +67,12 @@ Return JSON matching:
 
 {template_output}
 
-Compatibility field `sources` does not replace `graph_refs` or `initial_sql_evidence`. Return exactly one JSON object inside `<result>...</result>`, with no Markdown fence or extra text.
+Compatibility field `sources` does not replace `graph_refs` or `initial_sql_evidence`. Return exactly one JSON object directly at the root. No result wrapper, XML tags, Markdown fences, encoded JSON strings or surrounding text.
 
 
 Candidate definitions use common content once plus whole-field `overrides`. A path such as `properties.expression` replaces the entire expression object; lists replace whole lists. A null property override removes that optional field. Combine common content and one candidate’s overrides when reasoning; never combine different candidates’ overrides or treat the partial common node as an executable default. Missing candidate details can be read explicitly.
+
+CandidateDraft accepts sources, not candidate_sources. Internal source categories are derived from graph_refs and initial_sql_evidence; omit optional sources rather than copying internal fields.
+
+# SQL provenance
+Use supplied initial_sql_refs (S0 or exact fragment IDs), never copy or reconstruct initial_sql_evidence. References identify evidence, not hypothetical SQL. Intra-node proposes memory/schema candidates only; the Initial-SQL/Memory stage assigns actual SQL provenance. Keep one actual-SQL candidate per controlled decision.

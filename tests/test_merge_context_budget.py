@@ -4,7 +4,10 @@ from test_graph_integration import catalog, concept, state
 
 from cortex.capabilities.graph_merge.integration.context import IntegrationContext
 from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-from cortex.capabilities.graph_merge.integration.node_review import ReviewInputTooLarge, review_packets
+from cortex.capabilities.graph_merge.integration.node_review import (
+    ReviewInputTooLarge,
+    review_packets,
+)
 from cortex.capabilities.graph_merge.integration.task_context import LocalTask
 from cortex.config.models import GraphMergeConfig
 from cortex.schema import load_root_schema
@@ -47,8 +50,10 @@ def test_relation_agent_checks_the_configured_complete_request_budget(budget):
     from langchain_core.messages import AIMessage
     from test_incremental_agent import Chat
 
+    from cortex.capabilities.graph_merge.llm.incremental import (
+        IncrementalIntegrationAgent,
+    )
     from cortex.capabilities.graph_merge.llm.input_budget import RequestInputTooLarge
-    from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
 
     ctx = IntegrationContext(state(), state([*catalog(), concept("N", "a")]), load_root_schema())
     ctx.candidate = ctx.union_state()
@@ -62,3 +67,27 @@ def test_relation_agent_checks_the_configured_complete_request_budget(budget):
     else:
         assert agent.invoke("graph_assess", ctx, payload).verdict == "accept"
         assert len(model.requests) == 1
+
+
+def test_oversized_request_reports_components_and_never_retries_or_modifies_the_input():
+    import json
+    from copy import deepcopy
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from cortex.capabilities.graph_merge.llm.input_budget import (
+        RequestInputTooLarge,
+        check_request,
+    )
+    payload = {'draft': {'explanation': 'x' * 500}, 'nodes': [{'id': 'N', 'name': 'Exact original content'}],
+               'semantic_issue_basis': [{'record': {'name': 'Original source meaning'}}]}
+    original = deepcopy(payload)
+    measurements = []
+    with pytest.raises(RequestInputTooLarge) as caught:
+        check_request([SystemMessage('Contract'), HumanMessage(json.dumps(payload))], [],
+                      max_characters=100, on_measure=measurements.append)
+    assert caught.value.retryable is False
+    assert caught.value.details == measurements[0]
+    assert caught.value.details['components']['draft'] > 500
+    assert caught.value.details['components']['diagnostics_and_basis'] > 0
+    assert payload == original

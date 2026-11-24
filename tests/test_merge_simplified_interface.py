@@ -4,19 +4,32 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
+from test_graph_integration import catalog, concept, edge, state
+from test_incremental_agent import Chat
 
 from cortex.capabilities.graph_merge.integration.batch import ActiveBatch, BatchResult
 from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation
-from cortex.capabilities.graph_merge.models import EvidenceItem
-from cortex.capabilities.graph_merge.integration.proposal_scope import ProposalScope, ScopeContextRequired
-from cortex.capabilities.graph_merge.integration.relation_context import relation_context
-from cortex.capabilities.graph_merge.integration.relation_edits import RelationPatch, submit_patch
+from cortex.capabilities.graph_merge.integration.evidence_refs import (
+    EvidencePresentation,
+)
+from cortex.capabilities.graph_merge.integration.proposal_scope import (
+    ProposalScope,
+    ScopeContextRequired,
+)
+from cortex.capabilities.graph_merge.integration.relation_context import (
+    relation_context,
+)
+from cortex.capabilities.graph_merge.integration.relation_edits import (
+    RelationPatch,
+    submit_patch,
+)
 from cortex.capabilities.graph_merge.integration.task_context import LocalTask
-from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent, NodeReview
+from cortex.capabilities.graph_merge.llm.incremental import (
+    IncrementalIntegrationAgent,
+    NodeReview,
+)
+from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import SourceReference, load_root_schema
-from test_graph_integration import catalog, concept, edge, state
-from test_incremental_agent import Chat
 
 
 def region(visible=True):
@@ -162,9 +175,11 @@ def test_writer_scope_feedback_finishes_in_two_outputs_without_extension_call():
     chat = Chat([AIMessage(content='', tool_calls=[{'name': 'submit_patch', 'id': key, 'args': args}])
                  for key in ('initial', 'corrected')])
     IncrementalIntegrationAgent(chat).invoke('reconcile', ctx, payload)
-    feedback = json.loads(chat.requests[1][-1].content)
+    feedback = json.loads(chat.requests[1][1].content)['issues'][0]
     assert feedback['status'] == 'rejected_unapplied'
-    assert feedback['required_context']['nodes'][0]['id'] == ids['B']
+    ref = feedback['required_context']['repair_fact_ref']
+    fact = next(f for f in json.loads(chat.requests[1][1].content)['repair_facts'] if f['fact_id'] == ref)
+    assert fact['facts']['nodes'][0]['id'] == ids['B']
     assert len(chat.requests) == 2
     assert ctx.active_batch.preview is not None
     assert 'extend_task' not in {getattr(t, 'name', None) for t in chat.tools}
@@ -184,31 +199,21 @@ def test_edge_only_evidence_is_supplied_once_at_end():
     assert not any('sources' in r for r in payload['nodes'] + payload['edges'])
 
 
-@pytest.mark.parametrize('phase,result_name', [('consolidate', 'submit_patch'), ('node_assess', 'Review')])
-def test_node_roles_receive_same_preservation_guide_without_old_audit_lists(phase, result_name):
-    from cortex.capabilities.graph_merge.integration.task_context import build_task_context
-    from cortex.capabilities.graph_merge.integration.node_context import compact_task_context
-    ctx, ids, _, _ = region()
-    task = LocalTask('content', phase, {ids['A']})
-    payload = build_task_context(ctx, ctx.candidate, task, before=ctx.candidate)
-    payload = compact_task_context(payload, ctx, ctx.candidate, task.targets, [], for_review=phase == 'node_assess')
-    args = {'verdict': 'accept'} if phase == 'node_assess' else {'explanation': 'No changes needed.'}
-    chat = Chat([AIMessage(content='', tool_calls=[{'name': result_name, 'id': 'result', 'args': args}])])
-    IncrementalIntegrationAgent(chat).invoke(phase, ctx, payload)
-    prompt, packet = chat.requests[0][:2]
-    packet = json.loads(packet.content)
-    assert list(packet)[-1] == 'evidence'
-    assert 'rationale_review_ids' not in packet and 'decision_review_ids' not in packet
-    assert 'guidance' not in packet['node_guidance']
-    assert prompt.content.count('Accepted-node integration contract') == 1
-    assert 'Input nodes have already been assessed' in prompt.content
-    assert 'source text is not self-validating' not in prompt.content.lower()
-    assert 'extend_task' not in {getattr(t, 'name', None) for t in chat.tools}
-    assert len(chat.requests) == 1
+@pytest.mark.parametrize('phase', ['consolidate', 'node_assess'])
+def test_node_roles_refuse_unplanned_singleton_without_widening_tools(phase):
+    # The former broad node interface accepted arbitrary singleton/whole-graph
+    # packets. The new two-role contract requires a complete identity group.
+    ctx, _, _, _ = region()
+    ctx.task_before = ctx.candidate
+    ctx.task_identity_groups = []
+    chat = Chat([])
+    with pytest.raises(ValueError, match='exactly one complete identity group'):
+        IncrementalIntegrationAgent(chat).invoke(phase, ctx, {'task_id': 'unplanned'})
+    assert not chat.requests
 
 
 def test_new_endpoint_context_is_required_without_granting_endpoint_write_access():
-    ctx, ids, scope, _ = region()
+    ctx, ids, _scope, _ = region()
     patch = RelationPatch(edge_updates=[{'id': ctx.input_edge_map['ab'], 'to_node_id': ids['X']}],
                           explanation='A proposed relation to a previously unseen endpoint.')
     with pytest.raises(ScopeContextRequired) as error:

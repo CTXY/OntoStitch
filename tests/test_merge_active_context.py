@@ -3,12 +3,18 @@ import json
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
-from test_incremental_agent import Chat
 from test_graph_integration import state
+from test_incremental_agent import Chat
 
 from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.llm.packets import TaskDialogue, compact_node_packet
-from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent, TaskNoProgress
+from cortex.capabilities.graph_merge.llm.packets import (
+    TaskDialogue,
+    compact_node_packet,
+)
+from cortex.capabilities.graph_merge.llm.task_agent import (
+    IncrementalIntegrationAgent,
+    TaskNoProgress,
+)
 from cortex.schema import load_root_schema
 
 
@@ -55,8 +61,8 @@ def test_many_replacements_keep_one_draft_all_semantic_issues_and_unique_reads()
         sizes.append(len(json.dumps([m.model_dump(mode='json') for m in messages])))
         body = json.loads(messages[1].content)
         assert body['semantic_issues'] == payload['semantic_issues']
-        assert 'draft' not in body
-        assert len([m for m in messages if isinstance(m, AIMessage) and m.tool_calls[0]['name'] == 'submit_patch']) == 1
+        assert body['draft'] == draft
+        assert not any(c['name'] == 'submit_patch' for m in messages if isinstance(m, AIMessage) for c in m.tool_calls)
         assert any(isinstance(m, ToolMessage) and 'Necessary premise' in m.content for m in messages)
     assert max(sizes) - min(sizes) < 20
     assert payload['draft']['explanation'] == 'old checkpoint draft'
@@ -112,7 +118,7 @@ def test_plain_json_failures_do_not_echo_raw_narration_or_accumulate_schemas():
         dialogue.plain_failure(AIMessage(content='Unstructured narration ' * 1000), {'error': f'error-{i}'})
         dialogue.use_fallback({'type': 'object'})
     messages = dialogue.messages()
-    assert len(messages) == 4
+    assert len(messages) == 3
     assert sum('plain JSON' in m.content for m in messages) == 1
     assert 'Unstructured narration' not in str(messages)
     assert json.loads(messages[1].content)['semantic_issues']
@@ -121,6 +127,7 @@ def test_plain_json_failures_do_not_echo_raw_narration_or_accumulate_schemas():
 def test_five_real_thrombosis_patches_rebuild_instead_of_accumulating():
     import gzip
     from pathlib import Path
+
     from cortex.capabilities.graph_merge.llm.input_budget import check_request
     folder = Path(__file__).parent / 'fixtures/thrombosis_contract_failure'
     with gzip.open(folder / 'initial_packet.json.gz', 'rt') as stream:
@@ -140,8 +147,8 @@ def test_five_real_thrombosis_patches_rebuild_instead_of_accumulating():
         messages = dialogue.messages()
         sizes.append(check_request(messages, [], max_characters=400000))
         active = [call for m in messages if isinstance(m, AIMessage) for call in m.tool_calls]
-        assert len([call for call in active if call['name'] == 'submit_patch']) == 1
-        assert active[-1]['args'] == draft
+        assert not any(call['name'] == 'submit_patch' for call in active)
+        assert json.loads(messages[1].content)['draft'] == draft
         assert not any(call['name'] == 'inspect_draft' for call in active)
         assert json.loads(messages[1].content)['evidence'] == packet['evidence']
     assert len(failures) == 5
@@ -158,7 +165,8 @@ def test_malformed_tool_context_keeps_ids_without_replaying_large_raw_output():
         'id': 'broken', 'name': 'submit_patch', 'args': 'Malformed JSON ' * 10000, 'error': 'Invalid JSON'}])
     dialogue.exchange(response, [('broken', 'Malformed tool JSON; no proposal was applied.')], result_name='submit_patch')
     messages = dialogue.messages()
-    assert messages[-1].tool_call_id == 'broken'
+    assert 'Malformed tool JSON' in messages[1].content
+    assert not any(isinstance(m, ToolMessage) for m in messages)
     assert len(str(messages)) < 2000
     assert len(response.content) > 100000
 
@@ -180,7 +188,7 @@ def test_later_format_error_never_loses_latest_complete_draft_or_its_validation(
     messages = dialogue.messages()
     packet = json.loads(messages[1].content)
     assert packet['draft'] == draft
-    assert packet['draft_validation_issues'] == feedback
+    assert packet['issues'] == [feedback]
     assert packet['semantic_issues']
 
 

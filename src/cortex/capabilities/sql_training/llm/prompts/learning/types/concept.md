@@ -8,7 +8,6 @@ Apply the shared business-referent and NL minimality rules. A name/label is not 
 - Use target_expressions with zero-based group index keys only for a necessary executable condition/correlation. Use catalog SQL names, not graph IDs or undeclared aliases.
 - Reuse verified Values; propose missing ones via edit_graph.values and use returned IDs.
 - Author grounded_on explicitly where this Concept owns the direct binding. Targets do not create edges.
-- Optional relation_metadata groups existing adjacent edges; use the relation guide when needed.
 
 ### Illustration: School
 
@@ -32,4 +31,3 @@ Author grounded_on explicitly when this Concept owns the direct binding. Targets
 
 Business relations between Concepts must express supported meanings. A shared target alone does not prove equivalence, hierarchy or overlap of actual records. Keep related nodes and their explicit relations in one coherent edit.
 
-Optional relation_metadata: group existing edges; inspect both directions and read the relation guide.

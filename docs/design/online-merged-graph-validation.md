@@ -1,5 +1,25 @@
 # Merged graph 的 Online 验证
 
+## 最终检索子图的硬上限
+
+`services.retrieve_db.semantic_node_limit: 30` 统一计数 Concept、Metric、
+GenerationRule、Event；`physical_node_limit: 50` 统一计数 Table、Column、
+DimensionValue。上限约束最终子图，包含初始选中节点、一跳邻居、公式/targets
+依赖、完整 alternatives、JOIN 支撑表与列。精确命中和依赖补全不能绕过上限。
+
+先按 SQL 精确命中、Question 精确命中、召回分数和稳定 ID 排序选取种子，
+每次计算与已选内容合并后的完整引用闭包；一个完整单元放不下就整体跳过，
+不裁剪公式、target groups 或竞争分支。再用剩余额度加入一跳邻居与至多两跳
+物理 JOIN 路由。邻居不能继续展开业务邻域。原图不变，排除原因保存到
+`final_node_budget` trace；原始候选池可大于80，不能与实际注入子图的节点数混淆。
+数量策略及上限进入 checkpoint 身份，旧配置下的 checkpoint 不可冒充新结果。
+
+## Guidance 中的定义适用性判断
+
+按用户要求，删除此前新增的 Concept/Metric/Event 定义导出筛选，相关输出字段、
+prompt 和辅助代码均移除。通过30/50最终子图上限控制输入规模。原有澄清和
+GenerationRule适用性判断保持原有职责；不新增定义筛选或因定义触发的模型调用。
+
 ## 检索范围
 
 使用一个已冻结的 GraphState，不向图写入 test 知识。先做已有的召回和相关性判断，再取所有已选节点的一跳显式关系；业务谓词不需要加入遍历白名单。新增邻居不能成为下一跳起点。所有已召回表示均被排除的节点不因共享枢纽被重新引入。
@@ -73,3 +93,28 @@ SQL handoff 分为确认行为、适用规则、业务定义。Filter 证据仅�
 模型的输出可能符合静态JSON schema，却遗漏某个输入Rule。之前这种错误在run_llm_extraction返回后才校验，直接终止流程。Guidance现在将输入相关的Rule ID覆盖（缺失、未知、重复）、适用Rule instruction、Slot覆盖与确认行为格式校验作为output_validator传入异步解析器，复用已有的一次输出纠错。纠错保留原system/user输入与模型首次结果，反馈具体ID/错误，不重复注入schema，不补造适用性判定，也不删除未返回Rule。纠错仍失败则保留报错，不能生成部分guidance。
 
 financial的case95通过原checkpoint保存的retrieval、三条points和三条已确认answers重放finalize；原checkpoint/workflow identity不修改，恢复使用的新prompt/runtime单独记录。其他52条SQL预测沿用缓存；只对此前无预测的case生成一次baseline SQL。该机制不依赖case内容，不根据EA进行重采样。
+
+## 候选证据与数据性质等价性契约
+
+Candidate和provenance addition按实际来源填写证据：Memory/Schema必须有非空
+`graph_refs`，Initial SQL必须有非空逐字`initial_sql_evidence`，同时声明两类来源时
+两者都填。解释文字不代替引用；来源声明与实际证据必须一致。公开schema至少要求
+一类证据，运行时进一步校验来源条件、已提供的handle和原始SQL片段。
+
+三个Organizer阶段都先验证原始草稿，再物化或合并候选。原始addition中的错误证据
+不能被同一Candidate已有的正确证据掩盖。无效输出触发现有的一次上下文纠错；仍无效
+则明确失败，不能静默删除为零个Slot。合法空输出不受影响。不再额外启动一整轮格式
+重试，也不根据模型的解释自动补造证据。
+
+Clarification Filter不接收整条Initial SQL、候选的SQL来源片段或来源解释，只保留
+局部候选原文、ID、必要memory证据、问题和数据库探测结果。问题用于explicit-intent
+判断；database-equivalence的前提只能是完整数据快照的性质，不能借问题过滤条件、
+尝试SQL的WHERE/CASE/HAVING位置或预期答案补足证明。`applicability_reason`只解释
+数据性质如何保证所比较操作等价。Filter策略版本相应更新，旧语义checkpoint不混用。
+
+正例是同一基础对象中全量无NULL保证COUNT(*)与COUNT(col)一致。反例包括：仅非NULL
+关系键全匹配但仍有NULL键，不足以证明LEFT/INNER等价；仅某年份的ID唯一，不是全量
+唯一；同名多ID不支持默认等同两种分组。关系覆盖探测可以使用关系本身的键，不能
+复制尝试SQL的业务JOIN或过滤条件。发现反例性质不等于所有任务答案必然不同，但
+缺少数据本身的充分保证时必须keep。prompt包含这些正反例；语义蕴含仍由Agent判断，
+成功执行一个probe本身不构成形式化证明。

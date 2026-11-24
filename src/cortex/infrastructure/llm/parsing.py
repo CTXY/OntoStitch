@@ -54,9 +54,10 @@ def build_prompt_messages(
     human_payload: Mapping[str, Any],
     *,
     human_content: str | None = None,
+    output_schema: dict | None = None,
 ) -> list[dict[str, str]]:
     """Build the historical system/user prompt pair with a Pydantic JSON Schema."""
-    schema = json.dumps(output_model.model_json_schema(), ensure_ascii=False, indent=2)
+    schema = json.dumps(output_schema or output_model.model_json_schema(), ensure_ascii=False, indent=2)
     if "{template_output}" in prompt:
         system_content = prompt.replace("{template_output}", schema)
     else:
@@ -65,10 +66,18 @@ def build_prompt_messages(
             "Return JSON matching this schema inside <result>...</result>:\n"
             f"{schema}"
         )
+    # SQL-signal calls share the physical schema across questions. Keep it ahead
+    # of the variable question without changing other callers' payload layout.
+    ordered_payload = human_payload
+    if "physical_schema" in human_payload:
+        ordered_payload = {
+            **{key: human_payload[key] for key in ("dialect", "physical_schema") if key in human_payload},
+            **{key: value for key, value in human_payload.items() if key not in {"dialect", "physical_schema"}},
+        }
     rendered_human = (
         human_content
         if human_content is not None
-        else json.dumps(human_payload, ensure_ascii=False, default=str)
+        else json.dumps(ordered_payload, ensure_ascii=False, default=str)
     )
     return [
         {"role": "system", "content": system_content},
@@ -86,6 +95,9 @@ async def run_llm_extraction(
     trace_capture: dict[str, Any] | None = None,
     allow_repair: bool = True,
     repair_with_context: bool = False,
+    json_mode: bool = False,
+    output_schema: dict | None = None,
+    validation_context: dict | None = None,
     output_validator: Callable[[OutputModelT], None] | None = None,
 ) -> OutputModelT:
     """Invoke the model and validate a structured response, with one repair attempt."""
@@ -94,7 +106,11 @@ async def run_llm_extraction(
         output_model,
         human_payload,
         human_content=human_content,
+        output_schema=output_schema,
     )
+    if json_mode:
+        llm = llm.bind(response_format={"type": "json_object"})
+    parse = (lambda text, model: _parse_json_object(text, model, context=validation_context)) if json_mode else _parse_output
     if trace_capture is not None:
         trace_capture["prompt"] = messages
     raw_response = await _invoke(llm, messages)
@@ -102,7 +118,7 @@ async def run_llm_extraction(
         trace_capture["response"] = raw_response
     first_error: json.JSONDecodeError | ValidationError | ValueError | None = None
     try:
-        value = _parse_output(raw_response, output_model)
+        value = parse(raw_response, output_model)
         if output_validator is not None:
             output_validator(value)
         return value
@@ -125,11 +141,17 @@ async def run_llm_extraction(
             {"role": "assistant", "content": raw_response},
             {"role": "user", "content": f"Correct the reported output errors using the original inputs and schema above. Return the complete corrected result. Validation errors: {first_error}"},
         ]
+    if json_mode:
+        instruction = ("Return the complete root JSON object directly, without result wrappers, tags, "
+                       "Markdown or a JSON-encoded string. Preserve grounded content; correct all listed errors. "
+                       f"Expected root fields: {list(output_model.model_fields)}. Errors: {first_error}.")
+        repair_messages = [*messages, {"role":"assistant","content":raw_response},
+                           {"role":"user","content":instruction}]
     repaired_response = await _invoke(llm, repair_messages)
     if trace_capture is not None:
         trace_capture["repair_response"] = repaired_response
     try:
-        value = _parse_output(repaired_response, output_model)
+        value = parse(repaired_response, output_model)
         if output_validator is not None:
             output_validator(value)
         return value
@@ -209,6 +231,25 @@ def _invoke_sync(llm: BaseChatModel, messages: list[dict[str, str]]) -> str:
     except Exception as exc:
         raise LLMInvocationError("LLM invocation failed") from exc
     return response_text(response)
+
+
+def _parse_json_object(text, output_model, *, context=None):
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result: raise ValueError('Duplicate JSON key: '+key)
+            result[key] = value
+        return result
+    value = json.loads(text, object_pairs_hook=pairs)
+    if not isinstance(value, dict):
+        raise ValueError('Return the root object, not an encoded string or array')
+    if set(value) == {'result'} and isinstance(value['result'], dict):
+        try:
+            output_model.model_validate(value['result'])
+        except ValidationError as error:
+            raise ValueError('Remove result wrapper. Inner schema errors: '+str(error)) from error
+        raise ValueError('Remove result wrapper; return its object directly')
+    return output_model.model_validate(value, context=context)
 
 
 def _parse_output(text: str, output_model: type[OutputModelT]) -> OutputModelT:

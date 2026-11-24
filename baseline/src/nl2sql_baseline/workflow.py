@@ -16,7 +16,11 @@ from nl2sql_baseline.evaluation import evaluate_results
 from nl2sql_baseline.generation import SqlGenerator
 from nl2sql_baseline.io import load_qa_records, write_json, write_jsonl
 from nl2sql_baseline.models import QARecord, RetrievedExample
-from nl2sql_baseline.retrieval import BM25Retriever, CharacterTfidfRetriever, EmbeddingRetriever
+from nl2sql_baseline.retrieval import (
+    BM25Retriever,
+    CharacterTfidfRetriever,
+    EmbeddingRetriever,
+)
 from nl2sql_baseline.schema_linking import select_schema
 from nl2sql_baseline.tk_boost import TkBoostRepairRuleAdapter
 
@@ -77,7 +81,12 @@ class Workflow:
             "missing_guidance": self._missing_guidance(tests, guidance),
         }
 
-    def evaluate(self, output: Path | None = None) -> tuple[Path, dict[str, Any]]:
+    def evaluate(
+        self,
+        output: Path | None = None,
+        *,
+        resume_sql_attempts: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> tuple[Path, dict[str, Any]]:
         examples = self._load_examples()
         tests = load_qa_records(self.settings.test_set_path)
         guidance = self._load_downstream_guidance(tests)
@@ -124,8 +133,16 @@ class Workflow:
                 }
             )
             predicted_sql = ""
+            sql_attempts = [dict(item) for item in (resume_sql_attempts or {}).get(record.source_id, [])]
+            if len(sql_attempts) > 2 or any(
+                not isinstance(item.get("sql"), str) or not item.get("error")
+                for item in sql_attempts
+            ):
+                raise ValueError("Only unfinished SQL correction attempts may be resumed")
             evaluation: dict[str, Any]
             error: str | None = None
+            error_stage: str | None = None
+            stage = "generation"
             try:
                 case_guidance = guidance.get(record.source_id, "")
                 if self.settings.memory_type == "amem_retrieval":
@@ -134,36 +151,63 @@ class Workflow:
                 elif self.settings.memory_type == "tk_boost_repair_rules":
                     assert self._tk_boost is not None
                     case_guidance = self._tk_boost.memory_for(record)
-                predicted_sql, messages = self._generate_with_retries(
-                    question=record.question,
-                    evidence=record.evidence,
-                    schema_ddl=selection.ddl,
-                    examples=retrieved,
-                    reference_time=self.settings.reference_time,
-                    dialect=schema.catalog["dialect"],
-                    downstream_guidance=(
+                generation_args = {
+                    "question": record.question,
+                    "evidence": record.evidence,
+                    "schema_ddl": selection.ddl,
+                    "examples": retrieved,
+                    "reference_time": self.settings.reference_time,
+                    "dialect": schema.catalog["dialect"],
+                    "downstream_guidance": (
                         case_guidance
                         if self.settings.memory_type == "downstream_guidance"
                         else ""
                     ),
-                    reference_memory=(
+                    "reference_memory": (
                         case_guidance
                         if self.settings.memory_type
                         in {"reference_guidance", "amem_retrieval", "tk_boost_repair_rules"}
                         else ""
                     ),
-                )
+                }
                 prompt_name = _artifact_name(record)
-                write_json(run / "prompts" / f"{prompt_name}.json", messages)
                 (run / "linked_schemas").mkdir(parents=True, exist_ok=True)
                 (run / "linked_schemas" / f"{prompt_name}.sql").write_text(
                     selection.ddl + "\n", encoding="utf-8"
                 )
+                if sql_attempts:
+                    generation_args.update(
+                        previous_sql=sql_attempts[-1]["sql"],
+                        execution_error=sql_attempts[-1]["error"],
+                    )
+                for attempt in range(len(sql_attempts), 3):
+                    stage = "generation"
+                    predicted_sql, messages = self._generate_with_retries(**generation_args)
+                    write_json(run / "prompts" / f"{prompt_name}.json", messages)
+                    write_json(
+                        run / "prompts" / f"{prompt_name}-attempt-{attempt + 1}.json",
+                        messages,
+                    )
+                    stage = "sql_execution"
+                    try:
+                        predicted = database.execute_read_only(predicted_sql)
+                    except Exception as exc:  # SQL errors, never EA feedback, request a correction.
+                        sql_attempts.append({"sql": predicted_sql, "error": str(exc)})
+                        write_json(run / "sql_attempts" / f"{prompt_name}.json", sql_attempts)
+                        if attempt == 2:
+                            raise
+                        generation_args.update(previous_sql=predicted_sql, execution_error=str(exc))
+                    else:
+                        sql_attempts.append({"sql": predicted_sql, "error": None})
+                        write_json(run / "sql_attempts" / f"{prompt_name}.json", sql_attempts)
+                        break
+                stage = "gold_execution"
                 gold = database.execute_read_only(record.sql)
-                predicted = database.execute_read_only(predicted_sql)
+                stage = "evaluation"
                 evaluation = evaluate_results(predicted, gold)
-            except Exception as exc:  # noqa: BLE001 - one failed case must remain reportable.
+            except Exception as exc:  # noqa: BLE001 - keep one failed case reportable.
                 error = str(exc)
+                error_stage = stage
                 evaluation = {"exec": 0, "reason": error}
             predictions.append(
                 {
@@ -172,9 +216,11 @@ class Workflow:
                     "question": record.question,
                     "gold_sql": record.sql,
                     "predicted_sql": predicted_sql,
+                    "sql_attempts": sql_attempts,
                     "evaluator": "row_set_equality",
                     "evaluation": evaluation,
                     "error": error,
+                    "error_stage": error_stage,
                     "guidance_available": bool(guidance.get(record.source_id)),
                     "latency_seconds": round(perf_counter() - started, 6),
                 }
@@ -227,7 +273,7 @@ class Workflow:
         for attempt in range(1, 6):
             try:
                 return self.generator.generate(**kwargs)
-            except Exception as exc:  # noqa: BLE001 - classify transient provider failures.
+            except Exception as exc:
                 if not _is_transient_generation_error(exc) or attempt == 5:
                     raise
                 last_error = exc

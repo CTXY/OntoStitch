@@ -20,14 +20,30 @@ def validate_stream_completion(body):
 
 
 def normalize_sse_frames(text):
-    """Separate consecutive complete data objects when a gateway omits a blank line."""
+    """Repair gateway framing and an omitted standard completion-chunk tag.
+
+    SDK structured streaming filters chunks by ``object`` before accumulating
+    them. Only recognize a complete chat-chunk envelope; heartbeats, errors and
+    explicitly tagged filter events must remain untouched. This function is
+    applied to the SDK buffer, never to the saved original wire response.
+    """
     lines, complete = [], False
     for line in text.splitlines():
         valid = False
         if line.startswith("data:"):
             data = line[5:].strip()
             try:
-                valid = data == "[DONE]" or isinstance(json.loads(data), dict)
+                body = None if data == "[DONE]" else json.loads(data)
+                valid = data == "[DONE]" or isinstance(body, dict)
+                if (isinstance(body, dict) and body.get('object') is None
+                    and isinstance(body.get('id'), str) and isinstance(body.get('model'), str)
+                    and isinstance(body.get('created'), int) and isinstance(body.get('choices'), list)
+                    and (body['choices'] or isinstance(body.get('usage'), dict))
+                    and all(isinstance(c, dict) and isinstance(c.get('index'), int)
+                            and isinstance(c.get('delta'), dict) for c in body['choices'])
+                    and not body.get('error')):
+                    body['object'] = 'chat.completion.chunk'
+                    line = 'data: ' + json.dumps(body, ensure_ascii=False)
             except ValueError:
                 pass
             if complete and valid:

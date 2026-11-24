@@ -6,7 +6,6 @@ from pydantic import Field, field_validator, model_validator
 
 from cortex.capabilities.sql_training.core.ids import normalize_refs
 from cortex.capabilities.sql_training.models.base import NodeModel
-from cortex.schema.relation_metadata import RelationMetadata, validate_metadata_items
 from cortex.schema.semantic_validation import validate_matching_targets
 
 # One list is one jointly interpreted match, not a list of graph edges.
@@ -14,17 +13,6 @@ SemanticMappingTarget = list[str]
 
 
 class ConceptProperties(NodeModel):
-    relation_metadata: list[RelationMetadata] = Field(
-        default_factory=list, exclude_if=lambda value: not value,
-        description="Optional group-level statements: id, at least two adjacent same-type/same-direction edge IDs, description. Not inferred edges or executable axioms.",
-    )
-
-    @field_validator("relation_metadata")
-    @classmethod
-    def unique_metadata(cls, items):
-        validate_metadata_items(items)
-        return items
-
     mapping_type: str | None = Field(
         default=None,
         description="Optional mapping classification; it does not define Concept identity.",

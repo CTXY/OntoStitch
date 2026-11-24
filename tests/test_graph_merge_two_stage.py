@@ -474,6 +474,7 @@ def test_selection_signal_uses_sql_dialect_and_preserves_implicit_source_choice(
     # Lineage lookup has identical selection semantics but is performed only
     # once for each current Concept, independent of evidence/source count.
     from collections import Counter
+
     from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
 
     lineage = LineageIndex(ctx, preview.node_map, preview.edge_map)
@@ -649,4 +650,4 @@ def test_deepseek_thinking_protocol_survives_proxy_host(monkeypatch, enabled):
         enable_thinking=enabled, reasoning_effort="high",
     ))
     assert model["extra_body"] == {"thinking": {"type": "enabled" if enabled else "disabled"}}
-    assert model["reasoning_effort"] == ("high" if enabled else None)
+    assert model["reasoning_effort"] == "high"

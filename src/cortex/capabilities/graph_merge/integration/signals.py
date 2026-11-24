@@ -50,9 +50,13 @@ def inspection_signals(context, preview, *, origins=None):
     ]
     signals = []
 
-    def add(kind, keys, **details):
+    def add(kind, keys, *, ordered=False, **details):
+        from cortex.capabilities.graph_merge.integration.task_state import canonical_hash
+        # Ordered paths/pairs are directional identities. Hash structured data,
+        # so legal IDs containing commas cannot alias a different path.
+        identity = canonical_hash(list(keys)) if ordered else ','.join(sorted(keys))
         signals.append(
-            {"id": kind + ":" + ",".join(sorted(keys)), "kind": kind, **details}
+            {"id": kind + ":" + identity, "kind": kind, **details}
         )
 
     owners = defaultdict(set)
@@ -88,8 +92,22 @@ def inspection_signals(context, preview, *, origins=None):
         neighbors[e.from_node_id, e.edge_type].append(e)
         adj[e.from_node_id].append(e)
     for (a, b), group in sorted(pairs.items()):
-        if len(group) > 1:
-            add("parallel_assertions", [a, b], edge_ids=[e.id for e in group])
+        # Different predicates are ordinary independent roles. Description
+        # consolidation happens before this scan; only overlapping same-role
+        # residual assertions need a semantic check. Disjoint source branches
+        # do not compete with each other.
+        related = set()
+        for index, left in enumerate(group):
+            for right in group[index + 1:]:
+                if left.edge_type != right.edge_type:
+                    continue
+                ls = set(left.properties.get('alternative_ids', ()))
+                rs = set(right.properties.get('alternative_ids', ()))
+                if ls and rs and not ls & rs:
+                    continue
+                related.update((left.id, right.id))
+        if related:
+            add("parallel_assertions", [a, b], ordered=True, edge_ids=sorted(related))
     triangles = defaultdict(set)
     for e in edges:
         for second in adj[e.to_node_id]:
@@ -101,7 +119,7 @@ def inspection_signals(context, preview, *, origins=None):
                     [e.id, second.id, *[d.id for d in direct]]
                 )
     for chain, ids in sorted(triangles.items()):
-        add("triangle", list(chain), node_ids=list(chain), edge_ids=sorted(ids))
+        add("triangle", list(chain), ordered=True, node_ids=list(chain), edge_ids=sorted(ids))
     for (owner, predicate), group in sorted(neighbors.items()):
         if (
             nodes[owner].node_type in {"concept", "event"}
@@ -129,48 +147,18 @@ def inspection_signals(context, preview, *, origins=None):
                 node_ids=sorted(members),
                 shared_operands=[operand],
             )
-    # Resolve the unchanged lineage once per scan, not inside the
-    # evidence × source-node × current-node loop. This is only an index over
-    # recorded provenance; it neither infers identity nor changes signals.
-    origin_concepts = defaultdict(set)
-    if origins is not None:
-        for key, node in nodes.items():
-            if node.node_type == "concept":
-                for ref in origins.origin_refs("node", key):
-                    if ref.kind == "node":
-                        origin_concepts[ref.id].add(key)
-    choices = defaultdict(dict)
+    # Evidence differences are derived from the current graph alone. No
+    # archived source-node graph, alias projection or historical target is read.
+    choices=defaultdict(dict)
     for evidence in context.evidence:
-        selected = projected_columns(
-            evidence.content.get("sql", ""),
-            context.nodes,
-            getattr(context, "sql_dialect", None),
-        )
-        if not selected:
-            continue
-        for source in context.raw_nodes.values():
-            if source.node_type != "concept" or not any(
-                s.source_id == evidence.source.source_id for s in source.sources
-            ):
-                continue
-            candidates = {preview.node_map.get(source.id, source.id)}
-            if origins is not None:
-                candidates.update(origin_concepts[source.id])
-            refs = {
-                context.physical_map.get(ref, ref)
-                for group in source.properties.get("targets", [])
-                for ref in group
-            }
-            chosen = selected & refs
-            for canonical in sorted(candidates & nodes.keys()):
-                if not chosen or nodes[canonical].node_type != "concept":
-                    continue
-                choices[canonical][evidence.source.source_id] = {
-                    "source_id": evidence.source.source_id,
-                    "source_node_id": source.id,
-                    "selected_physical_inputs": sorted(chosen),
-                    "evidence_id": evidence.id,
-                }
+        selected=projected_columns(evidence.content.get('sql',''),nodes,getattr(context,'sql_dialect',None))
+        if not selected:continue
+        for node in nodes.values():
+            if node.node_type!='concept' or evidence.source not in node.sources:continue
+            refs={ref for group in node.properties.get('targets',[]) for ref in group}
+            chosen=selected & refs
+            if chosen:choices[node.id][evidence.id]={'node_id':node.id,
+                'selected_physical_inputs':sorted(chosen),'evidence_id':evidence.id}
     for canonical, variants in sorted(choices.items()):
         if len({tuple(v["selected_physical_inputs"]) for v in variants.values()}) > 1:
             add(

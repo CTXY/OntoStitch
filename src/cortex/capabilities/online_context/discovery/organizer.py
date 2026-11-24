@@ -21,6 +21,7 @@ from cortex.capabilities.online_context.discovery.evidence import (
     _replace_refs,
     _residual_graph_payload,
     _union,
+    _validate_candidate_references,
     _validate_slots,
 )
 from cortex.capabilities.online_context.discovery.join_paths import (
@@ -36,7 +37,7 @@ from cortex.capabilities.online_context.discovery.models import (
     SlotRelevanceOutput,
 )
 from cortex.capabilities.online_context.llm.prompts import load_prompt
-from cortex.infrastructure.llm import LLMStructuredOutputError, run_llm_extraction
+from cortex.infrastructure.llm import run_llm_extraction
 from cortex.schema import GraphState
 from cortex.schema.bindings import target_groups
 
@@ -66,15 +67,30 @@ class LlmChoiceOrganizer:
     """Accumulate grounded choices, including JOINs, through three discovery stages."""
 
     def __init__(
-        self, llm: BaseChatModel, *, trace_sink=None, audit_slots: bool = False
+        self, llm: BaseChatModel, *, trace_sink=None, audit_slots: bool = False,
+        intra_batch_size: int | None = None, intra_checkpoint_root=None,
     ) -> None:
         self._llm = llm
         self._trace_sink = trace_sink
         self._audit_slots = audit_slots
+        self._intra_batch_size = intra_batch_size
+        self._intra_checkpoint_root = intra_checkpoint_root
 
     def _trace(self, stage, payload):
         if self._trace_sink is not None:
             self._trace_sink(stage, payload)
+
+    def _normalize_proposals(self, output, state, initial_sql):
+        normalized = _normalize_proposed_slots(output, state, initial_sql)
+        field = "slots" if isinstance(output, IntraNodeOutput) else "new_slots"
+        before, after = getattr(output, field), getattr(normalized, field)
+        if before != after:
+            self._trace("proposal_normalization", {
+                "reason": "Exact duplicate implementations merge provenance; fewer than two distinct implementations is not a choice",
+                "proposed": [s.model_dump(mode="json") for s in before],
+                "retained_slot_ids": [s.slot_id for s in after],
+            })
+        return normalized
 
     async def organize(
         self,
@@ -100,12 +116,57 @@ class LlmChoiceOrganizer:
                 "join_candidates": join_candidates,
             },
         )
+        from .sql_fragments import sql_fragments, citation_schema
+        fragments = sql_fragments(initial_sql)
         intra_trace = {}
         self._trace("intra_llm", intra_trace)
-        intra = await run_llm_extraction(
+
+        def validate_intra_draft(result):
+            decoded = IntraNodeOutput.model_validate(
+                handles.decode(result.model_dump(mode="json"))
+            )
+            if any(c.initial_sql_evidence for slot in decoded.slots for c in slot.candidates):
+                raise ValueError("Intra-node candidates cite memory/schema only; Initial-SQL attribution belongs to the comparison stage")
+            _validate_intra(decoded, signals)
+            decoded = _normalize_proposed_slots(decoded, retrieved_graph_state, initial_sql)
+            _validate_slots(
+                tuple(_materialize_slot(item) for item in decoded.slots),
+                retrieved_graph_state,
+                initial_sql,
+            )
+
+        def validate_augmentation_draft(result):
+            decoded = type(result).model_validate(
+                handles.decode(result.model_dump(mode="json"))
+            )
+            if any(d.slot_id in {s.choice_point_id for s in slots} for d in decoded.new_slots):
+                raise ValueError("new_slots cannot replace a handled Slot; use slot_augmentations")
+            decoded = _normalize_proposed_slots(decoded, retrieved_graph_state, initial_sql)
+            if isinstance(decoded, InitialSqlMemoryOutput):
+                _validate_initial_memory_new_slots(decoded)
+            # Validate raw additions before a merge can mask a bad new SQL
+            # fragment with an older valid citation on the same Candidate.
+            evidence_items = [c for slot in decoded.new_slots for c in slot.candidates]
+            for addition in decoded.slot_augmentations:
+                evidence_items.extend(addition.new_candidates)
+                evidence_items.extend(addition.provenance_additions)
+            graph_ids = _graph_ids(retrieved_graph_state)
+            for item in evidence_items:
+                _validate_candidate_references(item, graph_ids, initial_sql)
+            _validate_slots(
+                _apply_augmentations(slots, decoded),
+                retrieved_graph_state,
+                initial_sql,
+            )
+
+        intra_arguments = dict(
             llm=self._llm,
             prompt=load_prompt("intra_node_conflicts"),
             output_model=IntraNodeOutput,
+            output_schema=citation_schema(IntraNodeOutput),validation_context={"sql_fragments":{}},
+            json_mode=True,
+            repair_with_context=True,
+            output_validator=validate_intra_draft,
             trace_capture=intra_trace,
             human_payload={
                 "question": question,
@@ -115,23 +176,30 @@ class LlmChoiceOrganizer:
                 "join_candidates": join_candidates,
             },
         )
+        if self._intra_batch_size is not None and len(signals)>self._intra_batch_size:
+            from .intra_batches import extract_intra_batches
+            intra = await extract_intra_batches(
+                llm=self._llm,prompt=intra_arguments['prompt'],
+                human_payload=intra_arguments['human_payload'],
+                output_validator=validate_intra_draft,batch_size=self._intra_batch_size,
+                checkpoint_root=self._intra_checkpoint_root,trace_sink=self._trace,
+            )
+        else:
+            intra = await run_llm_extraction(**intra_arguments)
         self._trace("intra_raw", intra.model_dump(mode="json"))
         intra = IntraNodeOutput.model_validate(
             handles.decode(intra.model_dump(mode="json"))
         )
+        intra = self._normalize_proposals(intra, retrieved_graph_state, initial_sql)
         intra = _render_intra_columns(intra, retrieved_graph_state)
-        intra = _reconcile_intra_slot_ids(intra)
         self._trace("intra_rendered", intra.model_dump(mode="json"))
         _validate_intra(intra, signals)
         slots = tuple(
             _materialize_slot(item)
             for item in intra.slots
-            if _draft_slot_has_provenance(item)
         )
         slots = _deduplicate_slots(slots)
-        slots = self._retain_valid_slots(
-            "intra_rejected_slot", slots, retrieved_graph_state, initial_sql
-        )
+        _validate_slots(slots, retrieved_graph_state, initial_sql)
         if initial_sql:
             initial_memory_trace = {}
             self._trace("initial_sql_memory_llm", initial_memory_trace)
@@ -140,40 +208,27 @@ class LlmChoiceOrganizer:
                 "initial_sql": initial_sql,
                 "join_candidates": join_candidates,
                 "handled_slots": handles.encode(
-                    [item.model_dump(mode="json") for item in slots]
+                    [_discovery_slot(item.model_dump(mode="json")) for item in slots]
                 ),
                 "residual_graph_state": handles.encode(
                     _residual_graph_payload(graph_payload, intra)
                 ),
             }
-            for attempt in range(2):
-                try:
-                    initial_memory = await run_llm_extraction(
-                        llm=self._llm,
-                        prompt=load_prompt("initial_sql_memory_conflicts"),
-                        output_model=InitialSqlMemoryOutput,
-                        repair_with_context=True,
-                        output_validator=lambda result: _apply_augmentations(slots, result),
-                        trace_capture=initial_memory_trace,
-                        human_payload=initial_memory_payload,
-                    )
-                    initial_memory = InitialSqlMemoryOutput.model_validate(
-                        handles.decode(initial_memory.model_dump(mode="json"))
-                    )
-                    break
-                except LLMStructuredOutputError:
-                    if attempt == 1:
-                        raise
-                    self._trace(
-                        "initial_sql_memory_structured_retry", {"attempt": attempt + 2}
-                    )
-                    initial_memory_payload = {
-                        **initial_memory_payload,
-                        "format_feedback": (
-                            "Every new Slot must contain at least two grounded, substitutable "
-                            "Candidates. If only one Candidate is available, remove that Slot."
-                        ),
-                    }
+            initial_memory = await run_llm_extraction(
+                llm=self._llm,
+                prompt=load_prompt("initial_sql_memory_conflicts"),
+                output_model=InitialSqlMemoryOutput,
+                output_schema=citation_schema(InitialSqlMemoryOutput),validation_context={"sql_fragments":fragments},
+                json_mode=True,
+                repair_with_context=True,
+                output_validator=validate_augmentation_draft,
+                trace_capture=initial_memory_trace,
+                human_payload={**initial_memory_payload,"initial_sql_fragments":fragments},
+            )
+            initial_memory = InitialSqlMemoryOutput.model_validate(
+                handles.decode(initial_memory.model_dump(mode="json"))
+            )
+            initial_memory = self._normalize_proposals(initial_memory, retrieved_graph_state, initial_sql)
             self._trace(
                 "initial_sql_memory_raw", initial_memory.model_dump(mode="json")
             )
@@ -181,12 +236,7 @@ class LlmChoiceOrganizer:
             slots = _apply_augmentations(slots, initial_memory)
             slots = _render_choice_point_columns(slots, retrieved_graph_state)
             slots = _deduplicate_slots(slots)
-            slots = self._retain_valid_slots(
-                "initial_sql_memory_rejected_slot",
-                slots,
-                retrieved_graph_state,
-                initial_sql,
-            )
+            _validate_slots(slots, retrieved_graph_state, initial_sql)
 
         cross_trace = {}
         self._trace("cross_llm", cross_trace)
@@ -194,38 +244,27 @@ class LlmChoiceOrganizer:
             "question": question,
             "join_candidates": join_candidates,
             "handled_slots": handles.encode(
-                [item.model_dump(mode="json") for item in slots]
+                [_discovery_slot(item.model_dump(mode="json")) for item in slots]
             ),
             "residual_graph_state": handles.encode(
                 _residual_graph_payload(graph_payload, intra)
             ),
         }
-        for attempt in range(2):
-            try:
-                cross = await run_llm_extraction(
-                    llm=self._llm,
-                    prompt=load_prompt("cross_node_conflicts"),
-                    output_model=CrossNodeOutput,
-                        repair_with_context=True,
-                        output_validator=lambda result: _apply_augmentations(slots, result),
-                    trace_capture=cross_trace,
-                    human_payload=cross_payload,
-                )
-                cross = CrossNodeOutput.model_validate(
-                    handles.decode(cross.model_dump(mode="json"))
-                )
-                break
-            except LLMStructuredOutputError:
-                if attempt == 1:
-                    raise
-                self._trace("cross_structured_retry", {"attempt": attempt + 2})
-                cross_payload = {
-                    **cross_payload,
-                    "format_feedback": (
-                        "Every new Slot must contain at least two grounded, substitutable "
-                        "Candidates. If only one Candidate is available, remove that Slot."
-                    ),
-                }
+        cross = await run_llm_extraction(
+            llm=self._llm,
+            prompt=load_prompt("cross_node_conflicts"),
+            output_model=CrossNodeOutput,
+            output_schema=citation_schema(CrossNodeOutput),validation_context={"sql_fragments":fragments},
+            json_mode=True,
+            repair_with_context=True,
+            output_validator=validate_augmentation_draft,
+            trace_capture=cross_trace,
+            human_payload={**cross_payload,"initial_sql_fragments":fragments},
+        )
+        cross = CrossNodeOutput.model_validate(
+            handles.decode(cross.model_dump(mode="json"))
+        )
+        cross = self._normalize_proposals(cross, retrieved_graph_state, initial_sql)
         self._trace("cross_raw", cross.model_dump(mode="json"))
         combined = _apply_augmentations(slots, cross)
         combined = _render_choice_point_columns(combined, retrieved_graph_state)
@@ -233,9 +272,7 @@ class LlmChoiceOrganizer:
             "slots_before_validation", [s.model_dump(mode="json") for s in combined]
         )
         combined = _deduplicate_slots(combined)
-        combined = self._retain_valid_slots(
-            "cross_rejected_slot", combined, retrieved_graph_state, initial_sql
-        )
+        _validate_slots(combined, retrieved_graph_state, initial_sql)
         assessments = intra.assessments
         if combined and self._audit_slots:
             audit = await run_llm_extraction(
@@ -268,27 +305,6 @@ class LlmChoiceOrganizer:
             intra_node_assessments=assessments,
         )
 
-    def _retain_valid_slots(
-        self,
-        stage: str,
-        slots: tuple[ChoicePoint, ...],
-        state: GraphState,
-        initial_sql: str | None,
-    ) -> tuple[ChoicePoint, ...]:
-        retained: list[ChoicePoint] = []
-        for slot in slots:
-            try:
-                _validate_slots((slot,), state, initial_sql)
-            except ValueError as error:
-                self._trace(
-                    stage,
-                    {"slot_id": slot.choice_point_id, "error": str(error)},
-                )
-                continue
-            retained.append(slot)
-        return tuple(retained)
-
-
 def _intra_node_signal_ids(state: GraphState) -> tuple[str, ...]:
     conflict_ids = {item.id for item in state.conflict_nodes}
     multi_target_ids = {
@@ -301,6 +317,56 @@ def _intra_node_signal_ids(state: GraphState) -> tuple[str, ...]:
     return tuple(sorted(conflict_ids | multi_target_ids))
 
 
+def _normalize_proposed_slots(output, state, initial_sql):
+    """Validate every original citation before merging exact textual duplicates.
+
+    This is not semantic equivalence or answer selection. The final ChoicePoint
+    still requires at least two implementations. Never erase invalid evidence
+    merely because its containing proposal would otherwise be omitted.
+    """
+    field = "slots" if isinstance(output, IntraNodeOutput) else "new_slots"
+    proposals = getattr(output, field)
+    if len({s.slot_id for s in proposals}) != len(proposals):
+        raise ValueError("proposed slot IDs must be unique")
+    ids = _graph_ids(state)
+    kept = []
+    for slot in proposals:
+        if len({c.candidate_id for c in slot.candidates}) != len(slot.candidates):
+            raise ValueError("candidate IDs must be unique within a slot")
+        grouped = {}
+        for candidate in slot.candidates:
+            _validate_candidate_references(candidate, ids, initial_sql)
+            key = candidate.statement.strip()
+            if not key:
+                raise ValueError("candidate statement must not be empty")
+            previous = grouped.get(key)
+            if previous is None:
+                grouped[key] = candidate
+                continue
+            refs = _union((previous.graph_refs, candidate.graph_refs))
+            fragment = previous.initial_sql_evidence or candidate.initial_sql_evidence
+            grouped[key] = previous.model_copy(update={
+                "graph_refs": refs,
+                "initial_sql_evidence": fragment,
+                "sources": tuple(s for s, present in (
+                    ("memory_graph", bool(refs)), ("initial_sql", bool(fragment))
+                ) if present),
+                "evidence_assessment": _merge_evidence_assessments(
+                    previous.evidence_assessment, candidate.evidence_assessment
+                ),
+            })
+        if len(grouped) >= 2:
+            kept.append(slot.model_copy(update={"candidates": tuple(grouped.values())}))
+    updates = {field: tuple(kept)}
+    if isinstance(output, IntraNodeOutput):
+        retained = {s.slot_id for s in kept}
+        updates["assessments"] = tuple(a.model_copy(update={
+            "slot_ids": tuple(s for s in a.slot_ids if s in retained),
+            **({"status": "not_conflicting"} if a.slot_ids and not set(a.slot_ids) & retained else {}),
+        }) for a in output.assessments)
+    return output.model_copy(update=updates)
+
+
 def _validate_intra(
     output: IntraNodeOutput,
     signal_ids: tuple[str, ...],
@@ -311,25 +377,6 @@ def _validate_intra(
     for assessment in output.assessments:
         if not set(assessment.slot_ids) <= slot_ids:
             raise ValueError("intra-node assessment references an unknown slot")
-
-
-def _reconcile_intra_slot_ids(output: IntraNodeOutput) -> IntraNodeOutput:
-    """Keep usable Slots when an assessment retains a stale, un-emitted Slot ID."""
-    emitted = {item.slot_id for item in output.slots}
-    return output.model_copy(
-        update={
-            "assessments": tuple(
-                item.model_copy(
-                    update={
-                        "slot_ids": tuple(
-                            ref for ref in item.slot_ids if ref in emitted
-                        )
-                    }
-                )
-                for item in output.assessments
-            )
-        }
-    )
 
 
 def _materialize_candidate(item: CandidateDraft) -> InteractionOption:
@@ -347,16 +394,6 @@ def _materialize_candidate(item: CandidateDraft) -> InteractionOption:
         graph_refs=item.graph_refs,
         initial_sql_evidence=item.initial_sql_evidence,
         evidence_assessment=item.evidence_assessment,
-    )
-
-
-def _draft_candidate_has_provenance(item: CandidateDraft) -> bool:
-    return bool(item.graph_refs or (item.initial_sql_evidence or "").strip())
-
-
-def _draft_slot_has_provenance(item: SlotDraft) -> bool:
-    return all(
-        _draft_candidate_has_provenance(candidate) for candidate in item.candidates
     )
 
 
@@ -493,8 +530,6 @@ def _apply_augmentations(
                 }
             )
         for draft in augmentation.new_candidates:
-            if not _draft_candidate_has_provenance(draft):
-                continue
             option = _materialize_candidate(draft)
             if draft.candidate_id in options:
                 options[option.option_id] = _merge_options(
@@ -506,11 +541,11 @@ def _apply_augmentations(
             update={"options": tuple(options.values())}
         )
     for draft in output.new_slots:
-        if not _draft_slot_has_provenance(draft):
-            continue
         slot = _materialize_slot(draft)
         if slot.choice_point_id in by_id:
-            continue
+            raise ValueError(
+                f"{slot.choice_point_id}: new_slots cannot replace a handled Slot; use slot_augmentations"
+            )
         by_id[slot.choice_point_id] = slot
     from .contracts import validate_initial_sql_sources
     validate_initial_sql_sources(tuple(by_id.values()))
@@ -534,3 +569,10 @@ def _validate_initial_memory_new_slots(output: InitialSqlMemoryOutput) -> None:
 
 
 __all__ = ["LlmChoiceOrganizer"]
+
+
+def _discovery_slot(value):
+    if isinstance(value, dict):
+        return {k: _discovery_slot(v) for k,v in value.items() if k != 'candidate_sources'}
+    if isinstance(value, list): return [_discovery_slot(v) for v in value]
+    return value

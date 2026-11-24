@@ -45,6 +45,16 @@ def _normalize(payload):
         if not isinstance(value, (list, tuple)):
             raise TypeError(f"Workspace {key} must be a list")
         normalized[key] = list(value)
+    if 'signal_receipts' in payload:
+        from cortex.capabilities.graph_merge.integration.receipt_ledger import validate_receipt_ledger
+        normalized['signal_receipts'] = validate_receipt_ledger(
+            payload['signal_receipts'], history=normalized['history'], current=normalized['current'])
+    elif any('reconciliation_receipt_policy_hash' in h for h in normalized['history']):
+        raise ValueError('Missing receipt ledger for a workspace with accepted reconciliation receipts')
+    if 'signal_scope_migrations' in payload:
+        from cortex.capabilities.graph_merge.integration.signal_scope_migration import validate_scope_migrations
+        normalized['signal_scope_migrations'] = validate_scope_migrations(
+            payload['signal_scope_migrations'], ledger=normalized.get('signal_receipts', []))
     if payload.get("task_state") is not None:
         from cortex.capabilities.graph_merge.integration.task_state import TaskState, canonical_hash
 

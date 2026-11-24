@@ -120,13 +120,15 @@ def test_malformed_tool_json_receives_matching_tool_error_before_retry():
     IncrementalIntegrationAgent(model).invoke("identity", ctx, {})
     assert len(model.requests) == 2
     replies = [m for m in model.requests[1] if isinstance(m, ToolMessage)]
-    assert len(replies) == 1 and replies[0].tool_call_id == "broken"
+    assert not replies
+    assert "Malformed tool JSON" in model.requests[1][1].content
     assert "plain JSON" in model.requests[1][-1].content
     assert all(getattr(t, "__name__", None) != "IdentityDecision" for t in model.tools)
 
 
 def test_empty_draft_is_inspectable_without_advertising_legacy_pending_tools():
     import json
+
     from cortex.capabilities.graph_merge.integration.batch import ActiveBatch
     ctx = IntegrationContext(state(), state(), load_root_schema())
     ctx.candidate = ctx.union_state()
@@ -137,13 +139,14 @@ def test_empty_draft_is_inspectable_without_advertising_legacy_pending_tools():
     ])
     IncrementalIntegrationAgent(model).invoke('consolidate', ctx, {})
     reply = next(json.loads(m.content) for m in model.requests[1] if isinstance(m, ToolMessage))
-    assert reply == {'status':'no_draft'}
+    assert reply == {'status':'no_draft', 'draft_id': None, 'issues': [], 'issues_draft_id': None}
     names = {getattr(tool, 'name', None) for tool in model.tools}
     assert 'inspect_draft' in names and 'inspect_pending' not in names
 
 
 def test_review_repairs_exact_reference_paths_without_rule_checklists():
     import json
+
     from test_light_reconciliation import setup
     ctx, base, a, _, _ = setup()
     ctx.task_before = base
@@ -158,6 +161,6 @@ def test_review_repairs_exact_reference_paths_without_rule_checklists():
     ])
     result = IncrementalIntegrationAgent(model).invoke('node_assess', ctx, {'evidence':[]})
     assert result.verdict == 'revise'
-    reply = next(json.loads(m.content) for m in model.requests[1] if isinstance(m, ToolMessage))
-    assert 'Unknown review field' in reply['error']
+    reply = json.loads(model.requests[1][1].content)
+    assert 'Unknown review field' in reply['issues'][0]['error']
     assert ctx.candidate == base

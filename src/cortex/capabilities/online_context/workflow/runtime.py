@@ -9,6 +9,7 @@ from langgraph.types import Command
 
 from cortex.application.online_context import (
     OnlineContextError,
+    OnlineCheckpointCompatibilityError,
     OnlineContextResult,
     calculate_graph_state_fingerprint,
 )
@@ -33,7 +34,7 @@ class OnlineWorkflow:
 
     async def resume(self, graph_state, pending, answers):
         if not pending.run_id or pending.workflow_fingerprint != self.identity:
-            raise OnlineContextError(
+            raise OnlineCheckpointCompatibilityError(
                 "pending workflow, prompts or configuration changed; start a new online-context run"
             )
         if (
@@ -69,22 +70,30 @@ class OnlineWorkflow:
                             snapshot.values.get("request") != request
                             or snapshot.values.get("identity") != self.identity
                         ):
-                            raise OnlineContextError(
+                            raise OnlineCheckpointCompatibilityError(
                                 "cannot reuse run ID with changed graph, question, prompts or configuration"
                             )
-                        if not snapshot.next or any(
+                        if (not snapshot.next and not snapshot.tasks) or any(
                             task.interrupts for task in snapshot.tasks
                         ):
+                            if "result" not in snapshot.values:
+                                raise OnlineCheckpointCompatibilityError(
+                                    "checkpoint has no result or resumable task"
+                                )
                             return OnlineContextResult.model_validate(
                                 snapshot.values["result"]
                             )
+                        # Empty `next` can mean the tasks have committed pending
+                        # writes, while their successor routing is not committed.
+                        # Native replay applies those writes without rerunning
+                        # the completed tasks. Do not manually reschedule nodes.
                         inputs = None
                     else:
                         inputs = {"request": request, "identity": self.identity}
                 else:
                     state = snapshot.values
                     if not state or state.get("identity") != self.identity:
-                        raise OnlineContextError(
+                        raise OnlineCheckpointCompatibilityError(
                             "checkpoint is missing or incompatible"
                         )
                     saved_pending = state.get("result", {}).get("pending")
@@ -95,7 +104,7 @@ class OnlineWorkflow:
                         history.get(a["question_id"]) == a for a in supplied
                     )
                     if replay:
-                        if not snapshot.next or waiting:
+                        if (not snapshot.next and not snapshot.tasks) or waiting:
                             return OnlineContextResult.model_validate(state["result"])
                         # The answer was committed but a downstream node failed.
                         # Resume that node without consuming the answer a second time.
@@ -120,4 +129,8 @@ class OnlineWorkflow:
                     )
                     raise
                 saved = await graph.aget_state(config)
+                if "result" not in saved.values:
+                    raise OnlineCheckpointCompatibilityError(
+                        "native checkpoint replay did not reach a public result"
+                    )
                 return OnlineContextResult.model_validate(saved.values["result"])

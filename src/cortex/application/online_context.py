@@ -50,6 +50,14 @@ class OnlineContextError(ApplicationError):
     """Raised when online context construction violates its public contract."""
 
 
+class OnlineCheckpointCompatibilityError(OnlineContextError):
+    """Existing execution cannot resume without an explicit compatible migration."""
+
+    error_code = "checkpoint_incompatible"
+    error_stage = "online_checkpoint"
+    retryable = False
+
+
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -131,8 +139,14 @@ class ClarificationFilterDecision(_Model):
     question_evidence: str = ""
     excluded_options: dict[str, str] = Field(default_factory=dict)
     covered_option_ids: tuple[str, ...] = ()
-    data_property: str = ""
-    applicability_reason: str = ""
+    data_property: str = Field(
+        default="",
+        description="A sufficient property observed over the complete database snapshot; not an assumption from Initial SQL or task filters.",
+    )
+    applicability_reason: str = Field(
+        default="",
+        description="Explain why the observed database property makes all compared operations equivalent. Do not use draft query blocks, WHERE/CASE/HAVING positions or task restrictions as premises.",
+    )
     probe_ids: tuple[str, ...] = ()
 
 

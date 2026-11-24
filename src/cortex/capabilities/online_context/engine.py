@@ -73,7 +73,7 @@ class OnlineContextCapability:
             Path(checkpoint_path),
             {
                 "prompts": prompt_version(),
-                "sql_handoff": "filter_questions_applicable_rules_v2",
+                "sql_handoff": "filter_questions_applicable_rules_bounded_graph_v4",
                 "schemas": {
                     "choice": ChoicePoint.model_json_schema(),
                     "answer": InteractionAnswer.model_json_schema(),

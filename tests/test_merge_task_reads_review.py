@@ -2,18 +2,27 @@
 from types import SimpleNamespace
 
 import pytest
+from test_graph_integration import catalog, concept, edge, state
 
 from cortex.capabilities.graph_merge.integration.context import IntegrationContext
-from cortex.capabilities.graph_merge.integration.evidence_refs import EvidencePresentation, compact_attribution
-from cortex.capabilities.graph_merge.integration.relation_context import relation_context
+from cortex.capabilities.graph_merge.integration.evidence_refs import (
+    EvidencePresentation,
+    compact_attribution,
+)
+from cortex.capabilities.graph_merge.integration.relation_context import (
+    relation_context,
+)
 from cortex.capabilities.graph_merge.integration.review import (
-    AbsenceClaim, Review, ReviewFactError, absence_counterexamples, validate_review,
+    AbsenceClaim,
+    Review,
+    ReviewFactError,
+    absence_counterexamples,
+    validate_review,
 )
 from cortex.capabilities.graph_merge.integration.task_context import LocalTask
 from cortex.capabilities.graph_merge.llm.relation_reads import RelationReads
-from cortex.capabilities.graph_merge.llm.task_tools import build_read_tools
+from legacy_merge_task_tools import build_read_tools
 from cortex.schema import GraphNode, SourceReference, load_root_schema
-from test_graph_integration import catalog, concept, edge, state
 
 
 def context():
@@ -147,11 +156,14 @@ def test_explicit_rereads_are_complete_and_common_support_is_not_broadcast():
     ident = ctx.input_node_map["A"]
     args = {"mode": "items", "ids": [ident], "fields": ["properties.targets"]}
     assert tools["inspect_graph"].invoke(args) == tools["inspect_graph"].invoke(args)
-    assert tools["inspect_draft"].invoke({}) == {"status": "no_draft"}
+    assert tools["inspect_draft"].invoke({}) == {
+        "status": "no_draft", "draft_id": None, "issues": [], "issues_draft_id": None}
 
 
 def test_repair_fields_keep_before_and_candidate_values_separate():
-    from cortex.capabilities.graph_merge.integration.edit_feedback import current_repair_fields
+    from cortex.capabilities.graph_merge.integration.edit_feedback import (
+        current_repair_fields,
+    )
     ctx = context()
     baseline = ctx.candidate
     ident = ctx.input_node_map["A"]
@@ -180,4 +192,4 @@ def test_current_conflict_guidance_uses_public_patch_not_storage_schema():
     assert 'MergePatch.conflicts' in result['guidance']
     assert 'common_evidence_ids' in result['guidance']
     assert 'node_schema' not in result
-    assert 'Code compacts storage' in result['guidance']
+    assert '代码只存一份公共字段与整个字段的 overrides' in result['guidance']

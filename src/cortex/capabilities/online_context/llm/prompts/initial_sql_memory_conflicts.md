@@ -21,6 +21,13 @@ This stage owns only Initial-SQL-versus-Memory analysis. Do not analyze Memory-o
 6. Before emitting any `new_slots` item, compare its semantic role and SQL position with every `handled_slots` item. If the decision already exists, use `provenance_additions` or `new_candidates`; do not repeat the Slot with a new ID or different wording.
 7. Audit every proposed decision against the shared contract.
 
+Agreement is not a finding for `new_slots`. For example, if Initial SQL and
+Memory both use `WHERE results.time IS NOT NULL`, combine evidence on a matching
+handled Candidate if one exists; otherwise emit no Slot for that agreement.
+`{"slot_augmentations": [], "new_slots": []}` is correct when there are no
+remaining grounded differences. A repair that merges identical Candidates must
+remove a new Slot left with only that one implementation.
+
 Initial SQL evidence must be the smallest sufficient verbatim fragment. Never use the full query as a Candidate or copy neighboring filters, joins, projections, or calculations into the Slot.
 
 For a new Slot, the contrast must have at least one Candidate from `initial_sql` and at least one Candidate from Memory. Label Memory from a Concept, Metric, Generation Rule, or Conflict Alternative as `ontology_asset`. Label Memory from a Column, Value, or physical JOIN path as `database_schema`. Assess an Initial SQL Candidate as directly matching (1.0) or related-context guidance (0.5), using the same relevance criteria as every other Candidate. Its presence in the attempt does not establish relevance or correctness.
@@ -65,4 +72,9 @@ Return JSON matching:
 
 {template_output}
 
-Return exactly one JSON object inside `<result>...</result>`, with no Markdown fence or extra text.
+Return exactly one JSON object directly at the root. No result wrapper, XML tags, Markdown fences, encoded JSON strings or surrounding text.
+
+CandidateDraft accepts sources, not candidate_sources. Internal source categories are derived from graph_refs and initial_sql_evidence; omit optional sources rather than copying internal fields.
+
+# SQL provenance
+Use supplied initial_sql_refs (S0 or exact fragment IDs), never copy or reconstruct initial_sql_evidence. References identify evidence, not hypothetical SQL. Intra-node proposes memory/schema candidates only; the Initial-SQL/Memory stage assigns actual SQL provenance. Keep one actual-SQL candidate per controlled decision.

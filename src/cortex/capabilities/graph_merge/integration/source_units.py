@@ -77,8 +77,10 @@ def source_unit_manifest(base, groups=None, owner_ids=()):
     return rows
 
 
-def validate_source_routes(base, integration):
-    units = source_units(base, integration.owner_id, integration.member_ids)
+def validate_source_routes(base, integration, *, units=None):
+    # A local partition keeps handles from the fixed INPUT manifest, even when
+    # an output subgroup has a different owner. Only the controller supplies it.
+    units = source_units(base, integration.owner_id, integration.member_ids) if units is None else units
     index = {u['unit_id']: u for u in units}
     counts = Counter(r.source_unit_id for r in integration.source_routes)
     missing, extra = sorted(index.keys() - counts.keys()), sorted(counts.keys() - index.keys())
