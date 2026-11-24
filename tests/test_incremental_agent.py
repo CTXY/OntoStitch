@@ -126,30 +126,34 @@ def test_malformed_tool_json_receives_matching_tool_error_before_retry():
     assert all(getattr(t, "__name__", None) != "IdentityDecision" for t in model.tools)
 
 
-def test_empty_draft_is_inspectable_without_advertising_legacy_pending_tools():
-    import json
+def test_node_writer_exposes_only_evidence_and_submission_without_legacy_draft_tools():
+    from types import SimpleNamespace
+    from test_node_local_context import context
 
-    from cortex.capabilities.graph_merge.integration.batch import ActiveBatch
-    ctx = IntegrationContext(state(), state(), load_root_schema())
-    ctx.candidate = ctx.union_state()
-    ctx.active_batch = ActiveBatch(ctx, ctx.candidate, targets=set())
-    model = Chat([
-        AIMessage(content='', tool_calls=[{'name':'inspect_draft','id':'read','args':{}}]),
-        AIMessage(content='', tool_calls=[{'name':'submit_patch','id':'done','args':{'explanation':'No changes needed.'}}]),
-    ])
-    IncrementalIntegrationAgent(model).invoke('consolidate', ctx, {})
-    reply = next(json.loads(m.content) for m in model.requests[1] if isinstance(m, ToolMessage))
-    assert reply == {'status':'no_draft', 'draft_id': None, 'issues': [], 'issues_draft_id': None}
-    names = {getattr(tool, 'name', None) for tool in model.tools}
-    assert 'inspect_draft' in names and 'inspect_pending' not in names
+    ctx = context()
+    compiled = SimpleNamespace(state=ctx.task_before)
+    drafts = []
+    def compile_draft(value):
+        drafts.append(value)
+        return compiled
+    ctx.compile_task_patch = compile_draft
+    model = Chat([AIMessage(content='', tool_calls=[{'name':'submit_patch','id':'done',
+        'args':{'keep_separate_ids':['N1','N2'], 'explanation':'Keep both supplied meanings unchanged.'}}])])
+    result = IncrementalIntegrationAgent(model).invoke('consolidate', ctx, {'task_id':'node-group'})
+    assert result.keep_separate_ids == ('N1', 'N2') and not result.integrate_groups
+    assert drafts == [result] and ctx.last_compiled_patch is compiled
+    assert ctx.candidate == ctx.task_before
+    assert len(model.requests) == 1
+    names = {getattr(tool, 'name', getattr(tool, '__name__', None)) for tool in model.tools}
+    assert names == {'read_evidence', 'submit_patch'}
 
 
 def test_review_repairs_exact_reference_paths_without_rule_checklists():
     import json
 
-    from test_light_reconciliation import setup
-    ctx, base, a, _, _ = setup()
-    ctx.task_before = base
+    from test_node_local_context import context
+    ctx = context()
+    base, a = ctx.task_before, 'N1'
     issue = {'refs':[{'kind':'node','id':a,'fields':['meaning']}],
              'basis':[{'kind':'node','id':a,'view':'before'}],
              'problem':'The recorded definition was distorted.',
@@ -161,6 +165,9 @@ def test_review_repairs_exact_reference_paths_without_rule_checklists():
     ])
     result = IncrementalIntegrationAgent(model).invoke('node_assess', ctx, {'evidence':[]})
     assert result.verdict == 'revise'
-    reply = json.loads(model.requests[1][1].content)
-    assert 'Unknown review field' in reply['issues'][0]['error']
+    assert len(model.requests) == 2
+    reply = json.loads(model.requests[1][-1].content.split('\n', 1)[1])
+    assert "Unknown review field 'meaning'" in reply['issues'][0]['error']
+    assert reply['draft']['issues'][0]['refs'][0]['fields'] == ['meaning']
+    assert result.issues[0].refs[0].fields == ('properties.definition',)
     assert ctx.candidate == base

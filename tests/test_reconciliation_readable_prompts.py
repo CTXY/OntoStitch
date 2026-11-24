@@ -12,10 +12,11 @@ def test_role_specific_user_prompts_explain_task_and_material(phase):
     rt=runtime(phase=phase);messages=rt.messages()
     assert [m.type for m in messages]==['system','human','human']
     assert 'task for this round' in messages[1].content.lower() and '# Local graph before modification' in messages[1].content
-    assert '# Original evidence and historical material' in messages[1].content
+    assert '# Original evidence' in messages[1].content
+    assert 'No historical case graph or retired node snapshot is available.' in messages[1].content
     assert ('# Assessment task for this round' if phase=='graph_assess' else '# Task for this round') in messages[1].content
     forbidden=('initial_complete_bundle','immutable_task','read_supplements','canonical_draft','content_change',
-               'bundle_ready','snapshot','before_hash','candidate_hash','latest_receipt','id_to_body','coverage')
+               'bundle_ready','source_snapshot_id','before_hash','candidate_hash','latest_receipt','id_to_body','coverage')
     assert not any(key in ''.join(m.content for m in messages[1:]) for key in forbidden)
     assert len(user_assets())==4
 
@@ -74,13 +75,18 @@ def test_hidden_bookkeeping_does_not_create_new_visible_facts():
     assert rt.premise_hash()!=old
 
 
-def test_history_is_explicit_and_has_no_snapshot_ledger():
-    rt=runtime(signals=[{'id':'history','kind':'source_selection_variants','variants':[{'source_node_id':'N1'}]}])
-    if not rt._source_handles: return
-    handle=next(iter(rt._source_handles));rt.read_nodes(ids=[handle])
-    state=rt.messages()[2].content
-    assert handle in state and 'Read-only basis' in state
-    assert 'source_snapshot_id' not in state and 'input-source:' not in state
+def test_source_selection_evidence_is_explicit_without_historical_graph_reads():
+    rt=runtime(signals=[{'id':'history','kind':'source_selection_variants',
+        'node_ids':['N1'], 'variants':[{'node_id':'N1', 'evidence_id':'ev-A',
+                                     'selected_physical_inputs':['a']}]}])
+    assert not hasattr(rt, '_source_handles')
+    assert 'ev-A' in ''.join(message.content for message in rt.messages())
+    rt.read_evidence(ids=['ev-A'])
+    assert rt.evidence_view['id_to_body']['ev-A']
+    assert 'original' in rt.messages()[2].content
+    with pytest.raises(ValueError, match='OUT_OF_SCOPE'):
+        rt.read_nodes(ids=['source:N1'])
+    assert 'source_snapshot_id' not in rt.messages()[2].content
 
 
 def test_supplemental_original_fact_not_falsely_reported_deleted():
@@ -92,13 +98,20 @@ def test_supplemental_original_fact_not_falsely_reported_deleted():
     rt.working['candidate']['nodes']['N1']=original
 
 
-def test_history_signal_replaces_internal_snapshot_binding_with_readable_handle():
+def test_source_selection_keeps_current_node_content_without_source_handles():
     from test_reconciliation_context import node_context
-    ctx=node_context();ctx.raw_nodes={n.id:n for n in ctx.task_before.graph.nodes};ctx.raw_edges={}
-    rt=runtime(ctx=ctx,signals=[{'id':'source','kind':'source_selection_variants','variants':[{'source_node_id':'N1'}]}])
-    text=rt.messages()[1].content
-    assert next(iter(rt._source_handles)) in text and 'source_handle' in text
-    assert 'source_snapshot_id' not in text and 'input-source:' not in text
+    ctx=node_context()
+    current=next(node for node in ctx.task_before.graph.nodes if node.id=='N1')
+    ctx.raw_nodes={'N1':current.model_copy(update={'name':'ARCHIVED_SOURCE_MEANING'})}
+    ctx.raw_edges={}
+    rt=runtime(ctx=ctx,signals=[{'id':'source','kind':'source_selection_variants',
+        'node_ids':['N1'], 'variants':[{'node_id':'N1', 'evidence_id':'ev-A',
+                                     'selected_physical_inputs':['a']}]}])
+    text=''.join(message.content for message in rt.messages())
+    assert rt.working['before']['nodes']['N1']['name']==current.name
+    assert 'ARCHIVED_SOURCE_MEANING' not in text
+    assert 'source_handle' not in text and 'source_snapshot_id' not in text
+    assert 'input-source:' not in text
 
 
 def test_required_outcome_and_original_task_are_explicit_even_when_unchanged():

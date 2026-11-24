@@ -158,7 +158,8 @@ def force_relation_handoff(monkeypatch):
 
     def handoff(base, integrated, *, node_aliases, edge_aliases, owner_ids):
         raise NodeRelationCoordinationRequired(integrated, owner_ids=owner_ids,
-            diagnostics=[{'code': 'explicit_test_relation_outcome', 'owner_id': 'A'}],
+            diagnostics=[{'code': 'explicit_test_relation_outcome', 'owner_id': 'A',
+                          'edge_id': 'e-A'}],
             node_aliases=node_aliases, edge_aliases=edge_aliases)
     monkeypatch.setattr('cortex.capabilities.graph_merge.integration.node_relations.sync_node_relations', handoff)
 
@@ -215,10 +216,16 @@ def test_coupled_checkpoint_corruption_stops_without_node_writer_retry(tmp_path,
 def test_mandatory_noop_assessment_receives_current_owner_and_relations(tmp_path):
     from cortex.capabilities.graph_merge.integration.relation_context import relation_context
     engine, _ = fixture(tmp_path, NodeChat())
-    task = LocalTask('obligation', 'graph_assess', {'A'}, feedback=[{'kind': 'node_relation_followup'}])
+    task = LocalTask('obligation', 'graph_assess', {'A'}, checks=[{
+        'id': 'retain-current-representation', 'kind': 'node_relation_followup',
+        'mode': 'required', 'node_ids': ['A'], 'edge_ids': ['e-A'],
+        'required_outcome': 'Retain the current valid representation.',
+    }])
     packet = relation_context(engine.ctx, engine.current, task, before=engine.current, assessment=True)
     assert 'A' in {node['id'] for node in packet['nodes']}
     assert 'e-A' in {edge['id'] for edge in packet['edges']}
+    assert 'B' not in {node['id'] for node in packet['nodes']}
+    assert 'e-B' not in {edge['id'] for edge in packet['edges']}
 
 
 def test_nested_real_controller_feedback_repairs_same_writer_without_node_replay(tmp_path,monkeypatch):
@@ -243,10 +250,15 @@ def test_nested_real_controller_feedback_repairs_same_writer_without_node_replay
                         'reason':'Clarify the retained original representation without changing its scope.'}]}}])
             return super().invoke(messages,config)
     chat=Feedback();engine,task=fixture(tmp_path,chat)
+    before=engine.current
     engine._run_task(task,'nested-feedback',aliases={'A':'A','B':'A'})
     assert len(engine.history)==1
     assert sum('node integration Writer' in request[0].content for request,_ in chat.requests)==1
     assert next(e for e in engine.current.graph.edges if e.id=='e-A').properties['description'].startswith('The accepted object')
+    assert engine.ctx.task_before==before
+    assert engine.ctx.active_task is task
+    assert 'integrate_groups' in engine.ctx.active_draft
+    assert 'changes' not in engine.ctx.active_draft
 
 
 @pytest.mark.parametrize('window',['action_saved','compiled'])

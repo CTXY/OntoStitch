@@ -1,0 +1,1351 @@
+{
+  "provenance": {
+    "source": "output/node_consolidation_smoke_20261120_live/carcinogenic_molecule_count",
+    "source_files_sha256": {
+      "before.json": "87f6a88ad1c4e5815090272664768120735c499c2cfc1a4f1771c5cc04aec703",
+      "task_state.json": "9e900afe7302c94e4614c6406e550b91d0d7996b4adf8dc48349440deb7cf602",
+      "evidence.json": "a4a916c749e9bafe937e2b44ea2e544529df36e97481662b9c49ad0880ef44db"
+    },
+    "note": "Exact 20-node/19-edge before snapshot retained to preserve the original source-unit handles and accepted repair checkpoint hashes. No agent transcript, model configuration, credentials or API headers included."
+  },
+  "before": {
+    "graph": {
+      "nodes": [
+        {
+          "id": "column.atom.atom_id",
+          "node_type": "column",
+          "name": "atom_id",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.atom",
+            "column_name": "atom_id",
+            "data_type": "TEXT",
+            "sample_values": [
+              "TR458_18",
+              "TR266_19",
+              "TR088_3"
+            ],
+            "source_metadata": {
+              "external:atom.csv": {
+                "business_name": "atom id",
+                "description": "the unique id of atoms",
+                "data_format": "text"
+              }
+            },
+            "unit": "NONE",
+            "nullable": false,
+            "semantic_role": "IDENTIFIER",
+            "key_role": "PRIMARY_KEY"
+          },
+          "sources": [
+            {
+              "source_id": "atom.atom_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "atom.atom_id"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.atom.element",
+          "node_type": "column",
+          "name": "element",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.atom",
+            "column_name": "element",
+            "data_type": "TEXT",
+            "sample_values": [
+              "h",
+              "b",
+              "i"
+            ],
+            "source_metadata": {
+              "external:atom.csv": {
+                "description": "the element of the toxicology",
+                "data_format": "text",
+                "value_description": " cl: chlorine\n c: carbon\n h: hydrogen\n o: oxygen\n s: sulfur\n n: nitrogen\n p: phosphorus\n na: sodium\n br: bromine\n f: fluorine\n i: iodine\n sn: Tin\n pb: lead\n te: tellurium\n ca: Calcium"
+              }
+            },
+            "unit": "NONE",
+            "nullable": true,
+            "semantic_role": "DIMENSION",
+            "key_role": "NONE"
+          },
+          "sources": [
+            {
+              "source_id": "atom.element",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "atom.element"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.atom.molecule_id",
+          "node_type": "column",
+          "name": "molecule_id",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.atom",
+            "column_name": "molecule_id",
+            "data_type": "TEXT",
+            "sample_values": [
+              "TR355",
+              "TR386",
+              "TR180"
+            ],
+            "source_metadata": {
+              "external:atom.csv": {
+                "business_name": "molecule id",
+                "description": "identifying the molecule to which the atom belongs",
+                "data_format": "text",
+                "value_description": "commonsense evidence:\nTRXXX_i represents ith atom of molecule TRXXX"
+              }
+            },
+            "unit": "NONE",
+            "nullable": true,
+            "semantic_role": "IDENTIFIER",
+            "key_role": "FOREIGN_KEY"
+          },
+          "sources": [
+            {
+              "source_id": "atom.molecule_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "atom.molecule_id"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.bond.bond_id",
+          "node_type": "column",
+          "name": "bond_id",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.bond",
+            "column_name": "bond_id",
+            "data_type": "TEXT",
+            "sample_values": [
+              "TR010_1_5",
+              "TR069_15_16",
+              "TR031_3_19"
+            ],
+            "source_metadata": {
+              "external:bond.csv": {
+                "description": "unique id representing bonds",
+                "data_format": "text",
+                "value_description": "TRxxx_A1_A2:\nTRXXX refers to which molecule\nA1 and A2 refers to which atom"
+              }
+            },
+            "unit": "NONE",
+            "nullable": false,
+            "semantic_role": "IDENTIFIER",
+            "key_role": "PRIMARY_KEY"
+          },
+          "sources": [
+            {
+              "source_id": "bond.bond_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "bond.bond_id"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.bond.bond_type",
+          "node_type": "column",
+          "name": "bond_type",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.bond",
+            "column_name": "bond_type",
+            "data_type": "TEXT",
+            "sample_values": [
+              "#",
+              "-",
+              "="
+            ],
+            "source_metadata": {
+              "external:bond.csv": {
+                "description": "type of the bond",
+                "data_format": "text",
+                "value_description": "commonsense evidence:\n-: single bond\n'=': double bond\n'#': triple bond"
+              }
+            },
+            "unit": "NONE",
+            "nullable": true,
+            "semantic_role": "DIMENSION",
+            "key_role": "NONE"
+          },
+          "sources": [
+            {
+              "source_id": "bond.bond_type",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "bond.bond_type"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.bond.molecule_id",
+          "node_type": "column",
+          "name": "molecule_id",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.bond",
+            "column_name": "molecule_id",
+            "data_type": "TEXT",
+            "sample_values": [
+              "TR163",
+              "TR190",
+              "TR379"
+            ],
+            "source_metadata": {
+              "external:bond.csv": {
+                "description": "identifying the molecule in which the bond appears",
+                "data_format": "text"
+              }
+            },
+            "unit": "NONE",
+            "nullable": true,
+            "semantic_role": "IDENTIFIER",
+            "key_role": "FOREIGN_KEY"
+          },
+          "sources": [
+            {
+              "source_id": "bond.molecule_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "bond.molecule_id"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.connected.atom_id",
+          "node_type": "column",
+          "name": "atom_id",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.connected",
+            "column_name": "atom_id",
+            "data_type": "TEXT",
+            "sample_values": [
+              "TR242_29",
+              "TR338_103",
+              "TR083_6"
+            ],
+            "source_metadata": {
+              "external:connected.csv": {
+                "business_name": "atom id",
+                "description": "id of the first atom",
+                "data_format": "text"
+              }
+            },
+            "unit": "NONE",
+            "nullable": false,
+            "semantic_role": "IDENTIFIER",
+            "key_role": "PRIMARY_KEY"
+          },
+          "sources": [
+            {
+              "source_id": "connected.atom_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "connected.atom_id"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.connected.atom_id2",
+          "node_type": "column",
+          "name": "atom_id2",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.connected",
+            "column_name": "atom_id2",
+            "data_type": "TEXT",
+            "sample_values": [
+              "TR394_8",
+              "TR350_1",
+              "TR387_6"
+            ],
+            "source_metadata": {
+              "external:connected.csv": {
+                "business_name": "atom id 2",
+                "description": "id of the second atom",
+                "data_format": "text"
+              }
+            },
+            "unit": "NONE",
+            "nullable": false,
+            "semantic_role": "IDENTIFIER",
+            "key_role": "PRIMARY_KEY"
+          },
+          "sources": [
+            {
+              "source_id": "connected.atom_id2",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "connected.atom_id2"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.connected.bond_id",
+          "node_type": "column",
+          "name": "bond_id",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.connected",
+            "column_name": "bond_id",
+            "data_type": "TEXT",
+            "sample_values": [
+              "TR348_31_44",
+              "TR430_42_43",
+              "TR133_4_5"
+            ],
+            "source_metadata": {
+              "external:connected.csv": {
+                "business_name": "bond id",
+                "description": "bond id representing bond between two atoms",
+                "data_format": "text"
+              }
+            },
+            "unit": "NONE",
+            "nullable": true,
+            "semantic_role": "IDENTIFIER",
+            "key_role": "FOREIGN_KEY"
+          },
+          "sources": [
+            {
+              "source_id": "connected.bond_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "connected.bond_id"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.molecule.label",
+          "node_type": "column",
+          "name": "label",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.molecule",
+            "column_name": "label",
+            "data_type": "TEXT",
+            "sample_values": [
+              "+",
+              "-"
+            ],
+            "source_metadata": {
+              "external:molecule.csv": {
+                "description": "whether this molecule is carcinogenic or not",
+                "data_format": "text"
+              }
+            },
+            "unit": "NONE",
+            "nullable": true,
+            "semantic_role": "DIMENSION",
+            "key_role": "NONE"
+          },
+          "sources": [
+            {
+              "source_id": "molecule.label",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "molecule.label"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "column.molecule.molecule_id",
+          "node_type": "column",
+          "name": "molecule_id",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_ref": "table.molecule",
+            "column_name": "molecule_id",
+            "data_type": "TEXT",
+            "sample_values": [
+              "TR319",
+              "TR361",
+              "TR206"
+            ],
+            "source_metadata": {
+              "external:molecule.csv": {
+                "business_name": "molecule id",
+                "description": "unique id of molecule",
+                "data_format": "text",
+                "value_description": "\"+\" --> this molecule / compound is carcinogenic\n'-' this molecule is not / compound carcinogenic"
+              }
+            },
+            "unit": "NONE",
+            "nullable": false,
+            "semantic_role": "IDENTIFIER",
+            "key_role": "PRIMARY_KEY"
+          },
+          "sources": [
+            {
+              "source_id": "molecule.molecule_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "molecule.molecule_id"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "case266::concept.carcinogenic_molecule",
+          "node_type": "concept",
+          "name": "carcinogenic molecule",
+          "description": "A molecule classified as carcinogenic, i.e. one whose label value is '+'.",
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "definition": "A molecule classified as carcinogenic, i.e. one whose label value is '+'.",
+            "targets": [
+              [
+                "column.molecule.molecule_id",
+                "dimension_value.molecule.label.%2B"
+              ]
+            ],
+            "target_expressions": {}
+          },
+          "sources": [
+            {
+              "source_id": "bird-toxicology-266",
+              "chunk_id": null,
+              "locator": "qa",
+              "case_id": "bird-toxicology-266"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "dimension_value.molecule.label.%2B",
+          "node_type": "dimension_value",
+          "name": "+",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "column_ref": "column.molecule.label",
+            "value": "+"
+          },
+          "sources": [
+            {
+              "source_id": "bird-toxicology-266",
+              "chunk_id": null,
+              "locator": "qa",
+              "case_id": "bird-toxicology-266"
+            },
+            {
+              "source_id": "molecule.label",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "molecule.label"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "case266::metric.carcinogenic_molecule_count",
+          "node_type": "metric",
+          "name": "carcinogenic molecule count",
+          "description": "The number of carcinogenic molecules, counted over the molecule identifier for records whose label is '+'.",
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "pattern": "Count molecules whose label is '+'.",
+            "expression": {
+              "expr": "COUNT(${carcinogenic_molecule})",
+              "refs": {
+                "carcinogenic_molecule": "case266::concept.carcinogenic_molecule"
+              }
+            },
+            "sql_generation_plans": [
+              {
+                "id": "count_carcinogenic_molecules",
+                "application": "Counting carcinogenic molecules at the molecule grain.",
+                "steps": [
+                  "Filter molecule rows where label = '+'.",
+                  "Count the molecule identifiers in the filtered population."
+                ]
+              }
+            ]
+          },
+          "sources": [
+            {
+              "source_id": "bird-toxicology-266",
+              "chunk_id": null,
+              "locator": "qa",
+              "case_id": "bird-toxicology-266"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "table.atom",
+          "node_type": "table",
+          "name": "atom",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_name": "atom",
+            "table_schema": "- atom_id: TEXT [PK]\n- molecule_id: TEXT [FK -> molecule.molecule_id]\n- element: TEXT\n\n# Foreign key relationships\n- atom.molecule_id = molecule.molecule_id\n- connected.atom_id2 = atom.atom_id\n- connected.atom_id = atom.atom_id",
+            "important_columns": [],
+            "primary_keys": [
+              "atom_id"
+            ],
+            "unique_keys": [],
+            "foreign_keys": [
+              "molecule_id"
+            ],
+            "available_time_columns": []
+          },
+          "sources": [
+            {
+              "source_id": "atom",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "atom"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "table.bond",
+          "node_type": "table",
+          "name": "bond",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_name": "bond",
+            "table_schema": "- bond_id: TEXT [PK]\n- molecule_id: TEXT [FK -> molecule.molecule_id]\n- bond_type: TEXT\n\n# Foreign key relationships\n- bond.molecule_id = molecule.molecule_id\n- connected.bond_id = bond.bond_id",
+            "important_columns": [],
+            "primary_keys": [
+              "bond_id"
+            ],
+            "unique_keys": [],
+            "foreign_keys": [
+              "molecule_id"
+            ],
+            "available_time_columns": []
+          },
+          "sources": [
+            {
+              "source_id": "bond",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "bond"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "table.connected",
+          "node_type": "table",
+          "name": "connected",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_name": "connected",
+            "table_schema": "- atom_id: TEXT [PK ; FK -> atom.atom_id]\n- atom_id2: TEXT [PK ; FK -> atom.atom_id]\n- bond_id: TEXT [FK -> bond.bond_id]\n\n# Foreign key relationships\n- connected.bond_id = bond.bond_id\n- connected.atom_id2 = atom.atom_id\n- connected.atom_id = atom.atom_id",
+            "important_columns": [],
+            "primary_keys": [
+              "atom_id",
+              "atom_id2"
+            ],
+            "unique_keys": [],
+            "foreign_keys": [
+              "atom_id",
+              "atom_id2",
+              "bond_id"
+            ],
+            "available_time_columns": []
+          },
+          "sources": [
+            {
+              "source_id": "connected",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "connected"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "table.molecule",
+          "node_type": "table",
+          "name": "molecule",
+          "description": null,
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "table_name": "molecule",
+            "table_schema": "- molecule_id: TEXT [PK]\n- label: TEXT\n\n# Foreign key relationships\n- atom.molecule_id = molecule.molecule_id\n- bond.molecule_id = molecule.molecule_id",
+            "important_columns": [],
+            "primary_keys": [
+              "molecule_id"
+            ],
+            "unique_keys": [],
+            "foreign_keys": [],
+            "available_time_columns": []
+          },
+          "sources": [
+            {
+              "source_id": "molecule",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "molecule"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "case204::concept.carcinogenic_molecule",
+          "node_type": "concept",
+          "name": "carcinogenic molecule",
+          "description": "A molecule whose carcinogenicity label is '+', i.e. one assessed as carcinogenic.",
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "definition": "A molecule whose carcinogenicity label is '+', i.e. one assessed as carcinogenic.",
+            "targets": [
+              [
+                "dimension_value.molecule.label.%2B"
+              ]
+            ],
+            "target_expressions": {}
+          },
+          "sources": [
+            {
+              "source_id": "bird-toxicology-204",
+              "chunk_id": null,
+              "locator": "qa",
+              "case_id": "bird-toxicology-204"
+            }
+          ],
+          "merge_status": "normal"
+        },
+        {
+          "id": "case204::metric.carcinogenic_molecule_count",
+          "node_type": "metric",
+          "name": "carcinogenic molecule count",
+          "description": "Number of molecules assessed as carcinogenic, counted over the molecules in scope through their molecule identifiers.",
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "pattern": "Count the molecules whose carcinogenicity label is '+' within the requested population.",
+            "expression": {
+              "expr": "COUNT(${carcinogenic_molecule})",
+              "refs": {
+                "carcinogenic_molecule": "case204::concept.carcinogenic_molecule"
+              }
+            },
+            "sql_generation_plans": [
+              {
+                "id": "count_label_plus",
+                "application": "Each molecule row carries exactly one carcinogenicity label; the counted population is restricted to the carcinogenic molecules in scope.",
+                "steps": [
+                  "Filter molecule rows to label = '+' and restrict to the requested identifier range.",
+                  "Count the surviving molecule identifiers."
+                ]
+              }
+            ]
+          },
+          "sources": [
+            {
+              "source_id": "bird-toxicology-204",
+              "chunk_id": null,
+              "locator": "qa",
+              "case_id": "bird-toxicology-204"
+            }
+          ],
+          "merge_status": "normal"
+        }
+      ],
+      "edges": [
+        {
+          "id": "case266::edge.catalog.37e2be275522ad08db777409",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.bond.molecule_id",
+          "to_node_id": "table.bond",
+          "properties": {
+            "description": "column.bond.molecule_id belongs_to its catalog owner table.bond.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": false,
+            "is_foreign_key": true
+          },
+          "sources": [
+            {
+              "source_id": "bond.molecule_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "bond.molecule_id"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.4405f2b2cd637cd33e0099b9",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.atom.atom_id",
+          "to_node_id": "table.atom",
+          "properties": {
+            "description": "column.atom.atom_id belongs_to its catalog owner table.atom.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": true,
+            "is_foreign_key": false
+          },
+          "sources": [
+            {
+              "source_id": "atom.atom_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "atom.atom_id"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.5f9d2f8ebf293622ec365f8d",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.molecule.label",
+          "to_node_id": "table.molecule",
+          "properties": {
+            "description": "column.molecule.label belongs_to its catalog owner table.molecule.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": false,
+            "is_foreign_key": false
+          },
+          "sources": [
+            {
+              "source_id": "molecule.label",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "molecule.label"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.6dc7cfe1b0ad545639902cf3",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.molecule.molecule_id",
+          "to_node_id": "table.molecule",
+          "properties": {
+            "description": "column.molecule.molecule_id belongs_to its catalog owner table.molecule.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": true,
+            "is_foreign_key": false
+          },
+          "sources": [
+            {
+              "source_id": "molecule.molecule_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "molecule.molecule_id"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.a03cc442b796d5fac71e6619",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.bond.bond_type",
+          "to_node_id": "table.bond",
+          "properties": {
+            "description": "column.bond.bond_type belongs_to its catalog owner table.bond.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": false,
+            "is_foreign_key": false
+          },
+          "sources": [
+            {
+              "source_id": "bond.bond_type",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "bond.bond_type"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.a8c2e9993b1ebf699934257a",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.bond.bond_id",
+          "to_node_id": "table.bond",
+          "properties": {
+            "description": "column.bond.bond_id belongs_to its catalog owner table.bond.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": true,
+            "is_foreign_key": false
+          },
+          "sources": [
+            {
+              "source_id": "bond.bond_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "bond.bond_id"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.b9b34a90f6d5cce8b639d1f2",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.atom.element",
+          "to_node_id": "table.atom",
+          "properties": {
+            "description": "column.atom.element belongs_to its catalog owner table.atom.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": false,
+            "is_foreign_key": false
+          },
+          "sources": [
+            {
+              "source_id": "atom.element",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "atom.element"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.c5cff304743e92a5d972f5ad",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.connected.atom_id",
+          "to_node_id": "table.connected",
+          "properties": {
+            "description": "column.connected.atom_id belongs_to its catalog owner table.connected.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": true,
+            "is_foreign_key": true
+          },
+          "sources": [
+            {
+              "source_id": "connected.atom_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "connected.atom_id"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.e0521c091feac387b0f4d7ab",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.atom.molecule_id",
+          "to_node_id": "table.atom",
+          "properties": {
+            "description": "column.atom.molecule_id belongs_to its catalog owner table.atom.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": false,
+            "is_foreign_key": true
+          },
+          "sources": [
+            {
+              "source_id": "atom.molecule_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "atom.molecule_id"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.e5da1df6ff2fd22db5f937ce",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.connected.atom_id2",
+          "to_node_id": "table.connected",
+          "properties": {
+            "description": "column.connected.atom_id2 belongs_to its catalog owner table.connected.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": true,
+            "is_foreign_key": true
+          },
+          "sources": [
+            {
+              "source_id": "connected.atom_id2",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "connected.atom_id2"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.catalog.f945da0509c6116b1dfbc1e9",
+          "edge_type": "belongs_to",
+          "from_node_id": "column.connected.bond_id",
+          "to_node_id": "table.connected",
+          "properties": {
+            "description": "column.connected.bond_id belongs_to its catalog owner table.connected.",
+            "is_default_time": false,
+            "is_important": false,
+            "is_available_time": false,
+            "is_primary_key": false,
+            "is_foreign_key": true
+          },
+          "sources": [
+            {
+              "source_id": "connected.bond_id",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "connected.bond_id"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case266::edge.carcinogenic_count_depends",
+          "edge_type": "depends_on",
+          "from_node_id": "case266::metric.carcinogenic_molecule_count",
+          "to_node_id": "case266::concept.carcinogenic_molecule",
+          "properties": {
+            "description": "The count is over carcinogenic molecules, the direct operand of the COUNT aggregation."
+          },
+          "sources": [
+            {
+              "source_id": "bird-toxicology-266",
+              "chunk_id": null,
+              "locator": "QA",
+              "case_id": "bird-toxicology-266"
+            }
+          ],
+          "reference_origin": null
+        },
+        {
+          "id": "case266::edge_8c7de55e3b209def511366a3",
+          "edge_type": "joins_with",
+          "from_node_id": "table.atom",
+          "to_node_id": "table.molecule",
+          "properties": {
+            "column_pairs": [
+              {
+                "from_column_ref": "column.atom.molecule_id",
+                "to_column_ref": "column.molecule.molecule_id"
+              }
+            ],
+            "description": "table.atom and table.molecule are linked by the recorded equality column pairs. This connection alone does not imply business classification or observed cardinality.",
+            "cardinality": "N:1"
+          },
+          "sources": [
+            {
+              "source_id": "atom.molecule",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": null
+            }
+          ],
+          "reference_origin": null
+        },
+        {
+          "id": "case266::edge_98805116aaa5673e44b1088a",
+          "edge_type": "joins_with",
+          "from_node_id": "table.connected",
+          "to_node_id": "table.atom",
+          "properties": {
+            "column_pairs": [
+              {
+                "from_column_ref": "column.connected.atom_id",
+                "to_column_ref": "column.atom.atom_id"
+              }
+            ],
+            "description": "table.connected and table.atom are linked by the recorded equality column pairs. This connection alone does not imply business classification or observed cardinality.",
+            "cardinality": "N:1"
+          },
+          "sources": [
+            {
+              "source_id": "connected.atom",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": null
+            }
+          ],
+          "reference_origin": null
+        },
+        {
+          "id": "case266::edge_c2a599a27de33331ae386234",
+          "edge_type": "joins_with",
+          "from_node_id": "table.bond",
+          "to_node_id": "table.molecule",
+          "properties": {
+            "column_pairs": [
+              {
+                "from_column_ref": "column.bond.molecule_id",
+                "to_column_ref": "column.molecule.molecule_id"
+              }
+            ],
+            "description": "table.bond and table.molecule are linked by the recorded equality column pairs. This connection alone does not imply business classification or observed cardinality.",
+            "cardinality": "N:1"
+          },
+          "sources": [
+            {
+              "source_id": "bond.molecule",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": null
+            }
+          ],
+          "reference_origin": null
+        },
+        {
+          "id": "case266::edge_d3d4ed72fe5963ca8be65c2f",
+          "edge_type": "joins_with",
+          "from_node_id": "table.connected",
+          "to_node_id": "table.atom",
+          "properties": {
+            "column_pairs": [
+              {
+                "from_column_ref": "column.connected.atom_id2",
+                "to_column_ref": "column.atom.atom_id"
+              }
+            ],
+            "description": "table.connected and table.atom are linked by the recorded equality column pairs. This connection alone does not imply business classification or observed cardinality.",
+            "cardinality": "N:1"
+          },
+          "sources": [
+            {
+              "source_id": "connected.atom",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": null
+            }
+          ],
+          "reference_origin": null
+        },
+        {
+          "id": "case266::edge_f045576d94dcfb568a522d4e",
+          "edge_type": "joins_with",
+          "from_node_id": "table.connected",
+          "to_node_id": "table.bond",
+          "properties": {
+            "column_pairs": [
+              {
+                "from_column_ref": "column.connected.bond_id",
+                "to_column_ref": "column.bond.bond_id"
+              }
+            ],
+            "description": "table.connected and table.bond are linked by the recorded equality column pairs. This connection alone does not imply business classification or observed cardinality.",
+            "cardinality": "N:1"
+          },
+          "sources": [
+            {
+              "source_id": "connected.bond",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": null
+            }
+          ],
+          "reference_origin": null
+        },
+        {
+          "id": "case266::edge.catalog.d93a5318d6afa971788bc7e3",
+          "edge_type": "value_of",
+          "from_node_id": "dimension_value.molecule.label.%2B",
+          "to_node_id": "column.molecule.label",
+          "properties": {
+            "description": "dimension_value.molecule.label.%2B value_of its catalog owner column.molecule.label."
+          },
+          "sources": [
+            {
+              "source_id": "bird-toxicology-266",
+              "chunk_id": null,
+              "locator": "qa",
+              "case_id": "bird-toxicology-266"
+            },
+            {
+              "source_id": "molecule.label",
+              "chunk_id": null,
+              "locator": "database",
+              "case_id": "molecule.label"
+            },
+            {
+              "source_id": "bird-toxicology-204",
+              "chunk_id": null,
+              "locator": "qa",
+              "case_id": "bird-toxicology-204"
+            }
+          ],
+          "reference_origin": "default"
+        },
+        {
+          "id": "case204::edge.carcinogenic_count_depends_on_carcinogenic_molecule",
+          "edge_type": "depends_on",
+          "from_node_id": "case204::metric.carcinogenic_molecule_count",
+          "to_node_id": "case204::concept.carcinogenic_molecule",
+          "properties": {
+            "description": "Carcinogenic molecules are the counted population; the count is taken over their molecule identifiers."
+          },
+          "sources": [
+            {
+              "source_id": "bird-toxicology-204",
+              "chunk_id": null,
+              "locator": "QA",
+              "case_id": "bird-toxicology-204"
+            }
+          ],
+          "reference_origin": null
+        }
+      ],
+      "relation_contracts": [
+        {
+          "extends": "has_attribute",
+          "id": "has_carcinogenicity_label",
+          "name": "has_carcinogenicity_label",
+          "description": "Attribute relation: the starting molecule carries the stored carcinogenicity assessment given by the ending carcinogenicity label concept.",
+          "from_node_types": [
+            "concept"
+          ],
+          "to_node_types": [
+            "concept"
+          ],
+          "fields": {},
+          "direction_semantics": "From the assessed molecule to its carcinogenicity label attribute.",
+          "evidence_requirement": "Evidence that the label column belongs to the molecule record and expresses the molecule's carcinogenicity assessment.",
+          "identity_fields": []
+        }
+      ]
+    }
+  },
+  "node_draft": {
+    "explanation": "两个 metric 成员对同一业务数量给出相同的计算口径：COUNT 以 label='+' 的致癌分子为直接操作数，按 molecule_id 计数。示例 SQL 中的不同 id 范围（TR000–TR099 vs TR000–TR030）是各自请求时间窗而非固定口径，不构成冲突。两个 concept 端点语义等价，refs 合并后指向 owner 侧 concept 节点。两 sql_generation_plans 等价，合并为一个完整计划。故整合为单一普通结果。",
+    "integrate_groups": [
+      {
+        "owner_id": "case266::metric.carcinogenic_molecule_count",
+        "member_ids": [
+          "case204::metric.carcinogenic_molecule_count",
+          "case266::metric.carcinogenic_molecule_count"
+        ],
+        "content": {
+          "name": "carcinogenic molecule count",
+          "description": "Number of molecules assessed as carcinogenic (label = '+'), counted over their molecule identifiers within the requested population.",
+          "aliases": [],
+          "tags": [],
+          "properties": {
+            "expression": {
+              "expr": "COUNT(${carcinogenic_molecule})",
+              "refs": {
+                "carcinogenic_molecule": "case266::concept.carcinogenic_molecule"
+              }
+            },
+            "pattern": "Count molecules whose carcinogenicity label is '+' within the requested population.",
+            "sql_generation_plans": [
+              {
+                "id": "count_label_plus",
+                "application": "Each molecule row carries exactly one carcinogenicity label; the counted population is restricted to the carcinogenic molecules in scope, counted at the molecule grain over molecule identifiers.",
+                "steps": [
+                  "Filter molecule rows to label = '+' and restrict to the requested identifier range.",
+                  "Count the surviving molecule identifiers."
+                ]
+              }
+            ]
+          }
+        },
+        "source_routes": [
+          {
+            "source_unit_id": "source::379bcdb091618c03afaef73b",
+            "destination": {
+              "kind": "result"
+            },
+            "explanation": "COUNT over label='+' molecules 的口径与知识完整保留于普通结果，仅示例 id 范围为请求参数，不进入固定口径。"
+          },
+          {
+            "source_unit_id": "source::bac69e326570ee49bdb90204",
+            "destination": {
+              "kind": "result"
+            },
+            "explanation": "owner 侧 COUNT 口径与概念 ref 保留于普通结果，等价 sql_generation_plan 合并保留。"
+          }
+        ],
+        "explanation": "两个 metric 成员对同一业务数量给出完全相同的计算口径：COUNT 以 label='+' 的致癌分子为直接操作数，按 molecule_id 计数，NULL/粒度行为一致。示例 SQL 中的不同 id 范围（TR000–TR099 vs TR000–TR030）是各自请求时间窗而非固定口径，不构成冲突。两个 concept 端点语义等价（均为 label='+' 的致癌分子），refs 合并后指向 owner 侧 concept 节点。两 sql_generation_plans 等价，合并为一个完整计划。故整合为单一普通结果。"
+      }
+    ]
+  },
+  "node_draft_id": "35f95615a3ccdd6592310cf92dc0680c9f17f9894c8b457722d671d28ac6ce7f",
+  "group": {
+    "owner_id": "case266::metric.carcinogenic_molecule_count",
+    "member_ids": [
+      "case266::metric.carcinogenic_molecule_count",
+      "case204::metric.carcinogenic_molecule_count"
+    ]
+  },
+  "coupled_record": {
+    "draft_id": "35f95615a3ccdd6592310cf92dc0680c9f17f9894c8b457722d671d28ac6ce7f",
+    "version": 1,
+    "intermediate_hash": "4c6995bb0b117b18894934e0275e9f58fa108e23379ec9c90bfcb94a48266d7f",
+    "base_hash": "fcb9e6ff856f3da78c7686c5fe2b1487eae2bdf1d853974b3a2bdb5664e4e90f",
+    "stage": "accepted",
+    "run_id": "node-smoke:carcinogenic_molecule_count",
+    "attempted_patch": {
+      "explanation": "The metric case266::metric.carcinogenic_molecule_count has expression.refs.carcinogenic_molecule = case266::concept.carcinogenic_molecule, so its direct depends_on operand must point to that concept. The existing edge case266::edge.carcinogenic_count_depends correctly expresses this direct operand. The edge case204::edge.carcinogenic_count_depends_on_carcinogenic_molecule points to a different concept (case204::concept.carcinogenic_molecule) that is no longer the formula's operand, making it stale per the depends_on contract (must match expression.refs). It is retired with the correct edge as its semantic successor; no node content is changed.",
+      "retirements": [
+        {
+          "before": [
+            {
+              "kind": "edge",
+              "id": "case204::edge.carcinogenic_count_depends_on_carcinogenic_molecule"
+            }
+          ],
+          "after": [
+            {
+              "kind": "edge",
+              "id": "case266::edge.carcinogenic_count_depends"
+            }
+          ],
+          "explanation": "The metric's expression.refs.carcinogenic_molecule resolves to case266::concept.carcinogenic_molecule, so depends_on must target that concept. The edge to case204::concept.carcinogenic_molecule references a concept that is not the formula operand and is stale; the existing case266::edge.carcinogenic_count_depends already expresses the correct direct-operand relationship with compatible meaning."
+        }
+      ]
+    },
+    "relation_draft_id": "217b7182bb8f51c2ad67f5502b9d2982c19f4642a166b6dce64f6c20866e24b6",
+    "patch": {
+      "retirements": [
+        {
+          "before": [
+            {
+              "kind": "edge",
+              "id": "case204::edge.carcinogenic_count_depends_on_carcinogenic_molecule"
+            }
+          ],
+          "after": [
+            {
+              "kind": "edge",
+              "id": "case266::edge.carcinogenic_count_depends"
+            }
+          ],
+          "explanation": "The metric's expression.refs.carcinogenic_molecule resolves to case266::concept.carcinogenic_molecule, so depends_on must target that concept. The edge to case204::concept.carcinogenic_molecule references a concept that is not the formula operand and is stale; the existing case266::edge.carcinogenic_count_depends already expresses the correct direct-operand relationship with compatible meaning."
+        }
+      ],
+      "explanation": "The metric case266::metric.carcinogenic_molecule_count has expression.refs.carcinogenic_molecule = case266::concept.carcinogenic_molecule, so its direct depends_on operand must point to that concept. The existing edge case266::edge.carcinogenic_count_depends correctly expresses this direct operand. The edge case204::edge.carcinogenic_count_depends_on_carcinogenic_molecule points to a different concept (case204::concept.carcinogenic_molecule) that is no longer the formula's operand, making it stale per the depends_on contract (must match expression.refs). It is retired with the correct edge as its semantic successor; no node content is changed."
+    },
+    "patch_hash": "561b5d85f1f9b53ffc93a74ff5e7488f9d5c887e36fe5e2be19aa673ad99a467",
+    "candidate_hash": "5ce787c3d27b1843945b794b4e16f3ef6b85b7f2df865b5f6e9a60b6409f4198",
+    "review": {
+      "verdict": "accept",
+      "issues": []
+    },
+    "review_candidate_hash": "5ce787c3d27b1843945b794b4e16f3ef6b85b7f2df865b5f6e9a60b6409f4198"
+  },
+  "evidence": [
+    {
+      "id": "sql-training:bird-toxicology-204",
+      "source": {
+        "source_id": "bird-toxicology-204",
+        "chunk_id": null,
+        "locator": "QA",
+        "case_id": "bird-toxicology-204"
+      },
+      "case_id": "bird-toxicology-204",
+      "content": {
+        "question": "Of the first 100 molecules in number order, how many are carcinogenic?",
+        "sql": "SELECT COUNT(T.molecule_id) FROM molecule AS T WHERE molecule_id BETWEEN 'TR000' AND 'TR099' AND T.label = '+'",
+        "evidence": "first 100 molecules in number order refers to molecule_id between 'TR000' and 'TR099'; label = '+' means molecules are carcinogenic"
+      }
+    },
+    {
+      "id": "sql-training:bird-toxicology-204",
+      "source": {
+        "source_id": "bird-toxicology-204",
+        "chunk_id": null,
+        "locator": "qa",
+        "case_id": "bird-toxicology-204"
+      },
+      "case_id": "bird-toxicology-204",
+      "content": {
+        "question": "Of the first 100 molecules in number order, how many are carcinogenic?",
+        "sql": "SELECT COUNT(T.molecule_id) FROM molecule AS T WHERE molecule_id BETWEEN 'TR000' AND 'TR099' AND T.label = '+'",
+        "evidence": "first 100 molecules in number order refers to molecule_id between 'TR000' and 'TR099'; label = '+' means molecules are carcinogenic"
+      }
+    },
+    {
+      "id": "sql-training:bird-toxicology-266",
+      "source": {
+        "source_id": "bird-toxicology-266",
+        "chunk_id": null,
+        "locator": "QA",
+        "case_id": "bird-toxicology-266"
+      },
+      "case_id": "bird-toxicology-266",
+      "content": {
+        "question": "Calculate the total carcinogenic molecules for molecule id from TR000 to TR030.",
+        "sql": "SELECT COUNT(T.molecule_id) FROM molecule AS T WHERE T.molecule_id BETWEEN 'TR000' AND 'TR030' AND T.label = '+'",
+        "evidence": "label = '+' mean molecules are carcinogenic"
+      }
+    },
+    {
+      "id": "sql-training:bird-toxicology-266",
+      "source": {
+        "source_id": "bird-toxicology-266",
+        "chunk_id": null,
+        "locator": "qa",
+        "case_id": "bird-toxicology-266"
+      },
+      "case_id": "bird-toxicology-266",
+      "content": {
+        "question": "Calculate the total carcinogenic molecules for molecule id from TR000 to TR030.",
+        "sql": "SELECT COUNT(T.molecule_id) FROM molecule AS T WHERE T.molecule_id BETWEEN 'TR000' AND 'TR030' AND T.label = '+'",
+        "evidence": "label = '+' mean molecules are carcinogenic"
+      }
+    }
+  ]
+}

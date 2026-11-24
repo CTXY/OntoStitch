@@ -81,15 +81,23 @@ def test_single_graph_checkpoint_resumes_assessment_and_skips_completed_models(t
     from cortex.capabilities.graph_merge.integration.task_context import LocalTask
     from cortex.capabilities.graph_merge.llm.task_agent import IncrementalIntegrationAgent
     from test_graph_integration import state
+    class BoundChat:
+        def __init__(self,model,names):
+            self.model,self.names=model,names
+        def bind(self,**kw):return self
+        def invoke(self,messages,config=None):
+            return self.model.invoke_bound(self.names,messages,config)
     class Chat:
         writer_calls=0
         interrupt=True
-        def bind(self,**kw):return self
-        def bind_tools(self,tools,**kw):self.names={t.name for t in tools};return self
-        def invoke(self,messages,config=None):
-            if 'edit_draft' in self.names:
+        assessment_calls=0
+        def bind(self,**kw):return BoundChat(self,set())
+        def bind_tools(self,tools,**kw):return BoundChat(self,{t.name for t in tools})
+        def invoke_bound(self,names,messages,config=None):
+            if 'edit_draft' in names:
                 self.writer_calls+=1
                 return AIMessage(content='',tool_calls=[{'name':'edit_draft','id':'empty','args':{}}])
+            self.assessment_calls+=1
             if self.interrupt:
                 self.interrupt=False;raise RuntimeError('Controlled stop before Assessment')
             return AIMessage(content=json.dumps({'explanation':'The current local graph preserves meaning and evidence.','feedback':[]}))
@@ -99,8 +107,9 @@ def test_single_graph_checkpoint_resumes_assessment_and_skips_completed_models(t
     args=(IncrementalIntegrationAgent(chat),graph,load_root_schema(),(),task,tmp_path/'checkpoint.sqlite')
     with pytest.raises(RuntimeError,match='Controlled stop'):reconcile_current_graph(*args)
     final=reconcile_current_graph(*args)
-    assert chat.writer_calls==1 and final==graph
-    assert reconcile_current_graph(*args)==graph and chat.writer_calls==1
+    assert chat.writer_calls==1 and chat.assessment_calls==2 and final==graph
+    assert reconcile_current_graph(*args)==graph
+    assert chat.writer_calls==1 and chat.assessment_calls==2
 
 
 def test_branch_specific_group_knowledge_migrates_without_resolving_conflict():

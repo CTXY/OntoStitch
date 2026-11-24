@@ -49,24 +49,58 @@ def test_character_budgets_are_configurable_and_positive():
 def test_relation_agent_checks_the_configured_complete_request_budget(budget):
     from langchain_core.messages import AIMessage
     from test_incremental_agent import Chat
+    from test_reconciliation_context import node_context, runtime
 
-    from cortex.capabilities.graph_merge.llm.incremental import (
-        IncrementalIntegrationAgent,
-    )
-    from cortex.capabilities.graph_merge.llm.input_budget import RequestInputTooLarge
+    from cortex.capabilities.graph_merge.llm.incremental import IncrementalIntegrationAgent
+    from cortex.capabilities.graph_merge.llm.input_budget import RequestInputTooLarge, check_request
 
-    ctx = IntegrationContext(state(), state([*catalog(), concept("N", "a")]), load_root_schema())
-    ctx.candidate = ctx.union_state()
-    model = Chat([AIMessage(content='{"verdict":"accept"}')])
-    agent = IncrementalIntegrationAgent(model, max_calls=1, request_max_characters=budget)
-    payload = {"nodes": [], "edges": [], "evidence": [], "complete_source_detail": "x" * 211000}
+    class BudgetChat(Chat):
+        def bind(self, **kwargs):
+            return self
+
+    class Trace:
+        def __init__(self):
+            self.events = []
+
+        def record(self, event):
+            self.events.append(event)
+
+    ctx = node_context()
+    full_description = "Complete evidenced meaning: " + "x" * 211000
+    ctx.task_before = ctx.task_before.model_copy(update={"graph": ctx.task_before.graph.model_copy(update={
+        "nodes": tuple(node.model_copy(update={"description": full_description}) if node.id == "N1" else node
+                       for node in ctx.task_before.graph.nodes),
+    })})
+    ctx.candidate = ctx.task_before
+    original = ctx.task_before.model_dump(mode="json")
+    # This supplies a fixed before, a real candidate and a supported explicit
+    # check. Its complete selected node body must survive request construction.
+    payload = runtime(ctx=ctx, phase="graph_assess").payload
+    model = BudgetChat([AIMessage(content='{"explanation":"The complete local result preserves supported knowledge.","feedback":[]}')])
+    trace = Trace()
+    agent = IncrementalIntegrationAgent(model, max_calls=1, request_max_characters=budget, trace_sink=trace)
     if budget == 210000:
-        with pytest.raises(RequestInputTooLarge):
+        with pytest.raises(RequestInputTooLarge) as caught:
             agent.invoke("graph_assess", ctx, payload)
+        assert caught.value.details["characters"] > budget
+        assert caught.value.retryable is False
         assert not model.requests
     else:
         assert agent.invoke("graph_assess", ctx, payload).verdict == "accept"
         assert len(model.requests) == 1
+        assert full_description in model.requests[0][1].content
+        actual_size = check_request(model.requests[0], model.tools, max_characters=budget)
+        assert 210000 < actual_size <= budget
+    measurement, = [event for event in trace.events if event["event_type"] == "request_budget"]
+    assert measurement["budget"] == budget
+    assert measurement["components"]["fixed_task_and_before_graph"] > len(full_description)
+    assert measurement["components"]["tool_schemas"] > 0
+    if model.requests:
+        assert measurement["characters"] == actual_size
+    else:
+        assert measurement["characters"] == caught.value.details["characters"]
+    assert ctx.task_before.model_dump(mode="json") == original
+    assert ctx.candidate == ctx.task_before
 
 
 def test_oversized_request_reports_components_and_never_retries_or_modifies_the_input():

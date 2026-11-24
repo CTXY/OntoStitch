@@ -18,7 +18,7 @@ $before_graph
 
 # Usable relationship predicates
 
-The first-round complete contracts include predicates used by existing local relationships and candidates compatible with the current local real node types; no other types were added for hypothetical new nodes. Type compatibility only means usable, not semantically relevant. If you really need to create nodes of other types, you can use `read_predicates(from_node_type,to_node_type)` to query the corresponding contracts read-only; do not infer that a predicate is not installed from its absence in the catalog.
+The first-round complete contracts include predicates used by the selected local relationships. Abstract-predicate checks also include compatible authorable candidates for the nominated endpoint types. Other installed predicates are available on demand through `read_predicates(from_node_type,to_node_type)`, including predicates for new node types. Type compatibility only means usable, not semantically relevant. Predicate reads are read-only and do not expand the graph write scope; do not infer that a predicate is not installed from its absence in the supplied contracts.
 
 Each contract explains the predicate's meaning, direction, endpoint types, and field requirements. `authorable=false` means it can only be used to understand historical records and cannot be used to write new relationships.
 

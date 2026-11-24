@@ -1,0 +1,277 @@
+{
+  "graph": {
+    "nodes": [
+      {
+        "id": "column.Examination.ID",
+        "node_type": "column",
+        "name": "ID",
+        "description": null,
+        "aliases": [],
+        "tags": [],
+        "properties": {
+          "table_ref": "table.Examination",
+          "column_name": "ID",
+          "data_type": "INTEGER",
+          "sample_values": [
+            4869780,
+            5112500,
+            5534640
+          ],
+          "source_metadata": {
+            "external:Examination.csv": {
+              "description": "identification of the patient",
+              "data_format": "integer"
+            }
+          },
+          "unit": "NUMBER",
+          "nullable": true,
+          "semantic_role": "IDENTIFIER",
+          "key_role": "FOREIGN_KEY"
+        },
+        "sources": [
+          {
+            "source_id": "Examination.ID",
+            "chunk_id": null,
+            "locator": "database",
+            "case_id": "Examination.ID"
+          }
+        ],
+        "merge_status": "normal"
+      },
+      {
+        "id": "column.Laboratory.ID",
+        "node_type": "column",
+        "name": "ID",
+        "description": null,
+        "aliases": [],
+        "tags": [],
+        "properties": {
+          "table_ref": "table.Laboratory",
+          "column_name": "ID",
+          "data_type": "INTEGER",
+          "sample_values": [
+            4007151,
+            5446559,
+            2254340
+          ],
+          "source_metadata": {
+            "external:Laboratory.csv": {
+              "description": "identification of the patient",
+              "data_format": "integer"
+            }
+          },
+          "unit": "NUMBER",
+          "nullable": false,
+          "semantic_role": "IDENTIFIER",
+          "key_role": "PRIMARY_KEY"
+        },
+        "sources": [
+          {
+            "source_id": "Laboratory.ID",
+            "chunk_id": null,
+            "locator": "database",
+            "case_id": "Laboratory.ID"
+          }
+        ],
+        "merge_status": "normal"
+      },
+      {
+        "id": "column.Patient.ID",
+        "node_type": "column",
+        "name": "ID",
+        "description": null,
+        "aliases": [],
+        "tags": [],
+        "properties": {
+          "table_ref": "table.Patient",
+          "column_name": "ID",
+          "data_type": "INTEGER",
+          "sample_values": [
+            128041,
+            130370,
+            4373490
+          ],
+          "source_metadata": {
+            "external:Patient.csv": {
+              "description": "identification of the patient",
+              "data_format": "integer"
+            }
+          },
+          "unit": "NUMBER",
+          "nullable": false,
+          "semantic_role": "IDENTIFIER",
+          "key_role": "PRIMARY_KEY"
+        },
+        "sources": [
+          {
+            "source_id": "Patient.ID",
+            "chunk_id": null,
+            "locator": "database",
+            "case_id": "Patient.ID"
+          }
+        ],
+        "merge_status": "normal"
+      },
+      {
+        "id": "table.Examination",
+        "node_type": "table",
+        "name": "Examination",
+        "description": null,
+        "aliases": [],
+        "tags": [],
+        "properties": {
+          "table_name": "Examination"
+        },
+        "sources": [
+          {
+            "source_id": "Examination",
+            "chunk_id": null,
+            "locator": "database",
+            "case_id": "Examination"
+          }
+        ],
+        "merge_status": "normal"
+      },
+      {
+        "id": "table.Laboratory",
+        "node_type": "table",
+        "name": "Laboratory",
+        "description": null,
+        "aliases": [],
+        "tags": [],
+        "properties": {
+          "table_name": "Laboratory"
+        },
+        "sources": [
+          {
+            "source_id": "Laboratory",
+            "chunk_id": null,
+            "locator": "database",
+            "case_id": "Laboratory"
+          }
+        ],
+        "merge_status": "normal"
+      },
+      {
+        "id": "table.Patient",
+        "node_type": "table",
+        "name": "Patient",
+        "description": null,
+        "aliases": [],
+        "tags": [],
+        "properties": {
+          "table_name": "Patient"
+        },
+        "sources": [
+          {
+            "source_id": "Patient",
+            "chunk_id": null,
+            "locator": "database",
+            "case_id": "Patient"
+          }
+        ],
+        "merge_status": "normal"
+      },
+      {
+        "id": "concept.patient_identifier",
+        "node_type": "concept",
+        "name": "patient identifier",
+        "description": "The identification number of a patient. Patient.ID is the canonical identifier of each patient record; Laboratory.ID and Examination.ID carry that same patient number on laboratory records and examination records and are used to relate those records to their patient. Patients are counted on the distinct canonical identifier so a patient with several records is counted once.",
+        "aliases": [],
+        "tags": [],
+        "properties": {
+          "definition": "The identification number of a patient. Patient.ID is the canonical identifier of each patient record; Laboratory.ID and Examination.ID carry that same patient number on laboratory records and examination records and are used to relate those records to their patient. Patients are counted on the distinct canonical identifier so a patient with several records is counted once.",
+          "targets": [
+            [
+              "column.Patient.ID"
+            ],
+            [
+              "column.Laboratory.ID"
+            ],
+            [
+              "column.Examination.ID"
+            ]
+          ],
+          "target_expressions": {},
+          "relation_metadata": [
+            {
+              "id": "patient_identifier_storage_roles",
+              "edges": [
+                "edge.patient_identifier_grounded_on_patient_id",
+                "edge.patient_identifier_grounded_on_laboratory_id",
+                "edge.patient_identifier_grounded_on_examination_id"
+              ],
+              "description": "Patient.ID is the canonical recorded patient number. Laboratory.ID and Examination.ID carry that number on their own rows and are related to Patient.ID by the recorded equality joins; they serve as the identifier by which laboratory and examination records are attributed to a patient. Counting DISTINCT Patient.ID therefore counts each qualifying patient once even when several laboratory or examination rows match."
+            }
+          ]
+        },
+        "sources": [
+          {
+            "source_id": "bird-thrombosis_prediction-1270",
+            "chunk_id": null,
+            "locator": "qa",
+            "case_id": "bird-thrombosis_prediction-1270"
+          }
+        ],
+        "merge_status": "normal"
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge.patient_identifier_grounded_on_examination_id",
+        "edge_type": "grounded_on",
+        "from_node_id": "concept.patient_identifier",
+        "to_node_id": "column.Examination.ID",
+        "properties": {
+          "description": "Examination.ID holds the patient number that each examination record belongs to; the recorded Examination.ID = Patient.ID equality join links an examination to its patient. Not all recorded examination identifiers correspond to a Patient row, so this endpoint is not a complete realization of the patient population."
+        },
+        "sources": [
+          {
+            "source_id": "bird-thrombosis_prediction-1270",
+            "chunk_id": null,
+            "locator": "QA",
+            "case_id": "bird-thrombosis_prediction-1270"
+          }
+        ],
+        "reference_origin": null
+      },
+      {
+        "id": "edge.patient_identifier_grounded_on_laboratory_id",
+        "edge_type": "grounded_on",
+        "from_node_id": "concept.patient_identifier",
+        "to_node_id": "column.Laboratory.ID",
+        "properties": {
+          "description": "Laboratory.ID holds the patient number that each laboratory record belongs to; the recorded Laboratory.ID = Patient.ID equality join links a laboratory record to its patient. Observations of Laboratory.ID alone do not establish a second patient identity."
+        },
+        "sources": [
+          {
+            "source_id": "bird-thrombosis_prediction-1270",
+            "chunk_id": null,
+            "locator": "QA",
+            "case_id": "bird-thrombosis_prediction-1270"
+          }
+        ],
+        "reference_origin": null
+      },
+      {
+        "id": "edge.patient_identifier_grounded_on_patient_id",
+        "edge_type": "grounded_on",
+        "from_node_id": "concept.patient_identifier",
+        "to_node_id": "column.Patient.ID",
+        "properties": {
+          "description": "The patient identifier is the Patient.ID column, which names each patient record."
+        },
+        "sources": [
+          {
+            "source_id": "bird-thrombosis_prediction-1270",
+            "chunk_id": null,
+            "locator": "QA",
+            "case_id": "bird-thrombosis_prediction-1270"
+          }
+        ],
+        "reference_origin": null
+      }
+    ],
+    "relation_contracts": []
+  }
+}

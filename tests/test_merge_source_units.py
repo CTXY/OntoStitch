@@ -17,6 +17,7 @@ from cortex.capabilities.graph_merge.integration.models import IntegrationPropos
 from cortex.capabilities.graph_merge.integration.patch import MergePatch, compile_patch, identity_obligations
 from cortex.capabilities.graph_merge.integration.provenance import validate_rewrite_sources
 from cortex.capabilities.graph_merge.integration.source_units import PatchContractError, source_unit_manifest
+from cortex.capabilities.graph_merge.integration.semantic_notes import migrate_relation_notes
 from cortex.capabilities.graph_merge.models import EvidenceItem
 from cortex.schema import GraphSpace, GraphState, load_root_schema
 
@@ -96,7 +97,11 @@ def test_single_owner_operations_never_replace_a_planned_member_group(target, op
 
 
 def replay_context():
-    base = GraphState.model_validate(fixture('accepted_base.json.gz'));task = fixture('open_task.json.gz')
+    # Replay the source-routing failure against the current schema without
+    # restoring the archived relation_metadata authoring contract. The original
+    # portable record stays unchanged; all group prose survives in definitions.
+    base, _ = migrate_relation_notes(fixture('accepted_base.json.gz'))
+    task = fixture('open_task.json.gz')
     sources = {s for n in base.graph.nodes for s in n.sources} | {s for e in base.graph.edges for s in e.sources}
     evidence = tuple(EvidenceItem(id='sql-training:' + s.source_id, source=s, case_id=s.case_id, content={}) for s in sources)
     context = IntegrationContext(base, GraphState(graph=GraphSpace()), load_root_schema(), evidence=evidence)

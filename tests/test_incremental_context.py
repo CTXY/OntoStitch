@@ -245,35 +245,37 @@ def test_actual_changes_uses_supplied_before_not_original_sources():
     assert not semantic_review_targets(before, after, {aid})["targets"]
 
 
-def test_group_metadata_is_complete_without_expanding_unrelated_hub_edges():
-    parent = concept("P", "a").model_copy(
-        update={
-            "properties": {
-                "targets": [["a"]],
-                "relation_metadata": [
-                    {
-                        "id": "g",
-                        "edges": ["e1", "e2"],
-                        "description": "These related feature roles may coexist.",
-                    }
-                ],
-            }
-        }
-    )
+def test_explicit_followup_is_complete_without_expanding_unrelated_hub_edges():
+    from cortex.capabilities.graph_merge.integration.relation_context import relation_context
+    from cortex.capabilities.graph_merge.integration.signal_scope import signal_scope
+
     ctx, current = context(
-        [parent, concept("A", "a"), concept("B", "b"), concept("C", "c")],
+        [concept("P", "a"), concept("A", "a"), concept("B", "b"), concept("C", "c")],
         [
             edge("e1", "P", "A", "has_feature"),
             edge("e2", "P", "B", "has_feature"),
             edge("e3", "P", "C", "has_feature"),
+            edge("boundary-noise", "A", "C", "has_feature"),
         ],
     )
-    payload = build_task_context(
-        ctx, current, LocalTask("group", "reconcile", {ctx.input_edge_map["e1"]})
-    )
-    shown = {e["id"] for e in payload["candidate_relations"]}
-    assert {ctx.input_edge_map["e1"], ctx.input_edge_map["e2"]} <= shown
-    assert ctx.input_edge_map["e3"] not in shown
+    required = {ctx.input_edge_map[key] for key in ("e1", "e2")}
+    check = {
+        "id": "paired-representations",
+        "kind": "node_relation_followup",
+        "mode": "required",
+        "node_ids": [ctx.input_node_map["P"]],
+        "edge_ids": sorted(required),
+        "required_outcome": "Preserve both evidenced feature roles together.",
+    }
+    task = LocalTask("followup", "reconcile", {ctx.input_node_map["P"]}, checks=[check])
+    payload = relation_context(ctx, current, task)
+    selected = signal_scope(ctx, current, task.checks)
+    assert {row["id"] for row in payload["edges"]} == required
+    assert selected.writable_edge_ids == required
+    assert {ctx.input_node_map[key] for key in ("P", "A", "B")} <= {
+        row["id"] for row in payload["nodes"]
+    }
+    assert ctx.input_node_map["C"] not in selected.node_ids
 
 
 def test_deleted_core_dependency_marks_surviving_owner_and_query_endpoints():
@@ -418,42 +420,41 @@ def test_small_hub_keeps_existing_context_and_large_focus_is_not_split():
     assert large["task_scope"]["budget_exceeded_by_required_units"]
 
 
-def test_budget_keeps_declared_relation_group_indivisible():
-    hub = concept("Hub", "a").model_copy(
-        update={
-            "properties": {
-                "targets": [["a"]],
-                "relation_metadata": [
-                    {
-                        "id": "features",
-                        "edges": ["e000", "e001"],
-                        "description": "The two specified features can coexist.",
-                    }
-                ],
-            }
-        }
-    )
+def test_budget_keeps_explicit_relation_followup_indivisible():
+    from cortex.capabilities.graph_merge.integration.incremental import review_batches
+    from cortex.capabilities.graph_merge.integration.relation_context import relation_context
+
+    descriptions = {f"N{i:03}": f"Supported feature {i}: " + "Evidence " * 100 for i in range(100)}
     neighbors = [
-        concept(f"N{i:03}", "b").model_copy(update={"description": "Evidence " * 100})
-        for i in range(100)
+        concept(key, "b").model_copy(update={"description": description})
+        for key, description in descriptions.items()
     ]
     ctx, current = context(
-        [hub, *neighbors],
-        [edge(f"e{i:03}", "Hub", n.id, "has_feature") for i, n in enumerate(neighbors)],
+        [concept("Hub", "a"), *neighbors],
+        [edge(f"e{i:03}", "Hub", node.id, "has_feature") for i, node in enumerate(neighbors)],
     )
-    payload = build_task_context(
-        ctx,
-        current,
-        LocalTask("group-budget", "reconcile", {ctx.input_node_map["Hub"]}),
-    )
-    assert {ctx.input_edge_map["e000"], ctx.input_edge_map["e001"]} <= {
-        row["id"] for row in payload["candidate_relations"]
+    required = {ctx.input_edge_map[key] for key in ("e000", "e001")}
+    check = {
+        "id": "paired-features",
+        "kind": "node_relation_followup",
+        "mode": "required",
+        "node_ids": [ctx.input_node_map["Hub"], ctx.input_node_map["N000"], ctx.input_node_map["N001"]],
+        "edge_ids": sorted(required),
+        "required_outcome": "Keep the two nominated feature roles together.",
     }
-    assert {ctx.input_node_map["N000"], ctx.input_node_map["N001"]} <= {
-        row["id"] for row in payload["candidate_nodes"]
-    }
-    assert payload["task_scope"]["required_units_complete"]
-    assert payload["more_candidate_relations"]
+    # A budget smaller than one full definition cannot split a single explicit
+    # obligation or silently truncate its required node bodies.
+    batches = review_batches(current, checks=[check], budget=1, signals_only=True)
+    assert len(batches) == 1
+    targets, checks = batches[0]
+    assert checks == [check]
+    assert required <= targets
+    packet = relation_context(ctx, current, LocalTask("followup-budget", "reconcile", targets, checks=checks))
+    assert {row["id"] for row in packet["edges"]} == required
+    shown = {row["id"]: row for row in packet["nodes"]}
+    for key in ("N000", "N001"):
+        assert shown[ctx.input_node_map[key]]["description"] == descriptions[key]
+    assert ctx.input_node_map["N002"] not in shown
 
 
 def test_local_identity_distinctions_preserve_reason_and_original_handles():

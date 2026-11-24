@@ -540,48 +540,6 @@ def test_business_cycle_does_not_require_topological_node_scheduling():
     )
 
 
-def test_rewritten_relation_referenced_by_group_requires_explicit_group_update():
-    a = concept("A", "a").model_copy(
-        update={
-            "properties": {
-                "targets": [["a"]],
-                "relation_metadata": [
-                    {
-                        "id": "group",
-                        "edges": ["ba", "ca"],
-                        "description": "The fixture makes no disjointness claim.",
-                    }
-                ],
-            }
-        }
-    )
-    incoming = state(
-        [*catalog(), a, concept("B", "b"), concept("C", "c")],
-        [
-            edge("ga", "A", "a"),
-            edge("gb", "B", "b"),
-            edge("gc", "C", "c"),
-            edge("ba", "B", "A", "is_a"),
-            edge("ca", "C", "A", "is_a"),
-            edge("cb", "C", "B", "is_a"),
-        ],
-    )
-    c = contexts(state(), incoming)
-    ca, cb, ba = [c.input_edge_map[key] for key in ("ca", "cb", "ba")]
-    p = IntegrationProposal(
-        edits=[{"operation": "delete_edge", "edge_id": ca}],
-        changes=[
-            {
-                "before": [{"kind": "edge", "id": ca}],
-                "after": [{"kind": "edge", "id": cb}, {"kind": "edge", "id": ba}],
-                "explanation": "A valid path alone does not repair the separate group assertion.",
-            }
-        ],
-    )
-    with pytest.raises(Exception, match="relation_metadata|missing edge"):
-        compile_proposal(c, IdentityDecision(), p)
-
-
 def test_source_local_legacy_core_name_is_isolated_not_globally_redefined():
     schema = load_root_schema()
     historical = schema.edge_type_index()["has_attribute"].model_copy(
@@ -636,33 +594,36 @@ def test_edge_only_update_is_visible_to_identity_and_assessment():
     assert any(e.id == "ab" for e in result.state.graph.edges)
 
 
-def test_evaluation_namespace_preserves_group_edge_references():
+def test_evaluation_namespace_preserves_targets_metric_refs_and_edge_endpoints():
     from cortex.capabilities.sql_training.merge_evaluation import _collision_safe_state
 
-    a = concept("A", "a").model_copy(
-        update={
-            "properties": {
-                "targets": [["a"]],
-                "relation_metadata": [
-                    {
-                        "id": "group",
-                        "edges": ["ba", "ca"],
-                        "description": "A group statement.",
-                    }
-                ],
-            }
-        }
+    population = concept("A", "a").model_copy(update={
+        "properties": {"targets": [["a"]], "definition": "Population A retains the recorded a representation."},
+    })
+    metric = GraphNode(
+        id="M", node_type="metric", name="Population count",
+        properties={"expression": {"expr": "COUNT(${population})", "refs": {"population": "A"}}},
     )
     graph = state(
-        [*catalog(), a, concept("B", "b"), concept("C", "c")],
-        [edge("ba", "B", "A", "is_a"), edge("ca", "C", "A", "is_a")],
+        [*catalog(), population, metric],
+        [edge("population-binding", "A", "a"), edge("count-input", "M", "A", "depends_on")],
     ).graph
+    original = graph.model_dump(mode="json")
     remapped = _collision_safe_state("case", graph, state())
     GraphManager(load_root_schema()).validate_state(remapped)
-    owner = next(n for n in remapped.graph.nodes if n.name == "A")
-    assert set(owner.properties["relation_metadata"][0]["edges"]) <= {
-        e.id for e in remapped.graph.edges
+    assert graph.model_dump(mode="json") == original
+    nodes = {node.name: node for node in remapped.graph.nodes}
+    owner, counted = nodes["A"], nodes["Population count"]
+    assert owner.id != "A" and counted.id != "M"
+    assert owner.properties["targets"] == [[nodes["a"].id]]
+    assert owner.properties["definition"] == population.properties["definition"]
+    assert counted.properties["expression"] == {
+        "expr": "COUNT(${population})", "refs": {"population": owner.id},
     }
+    assert {(edge.from_node_id, edge.to_node_id) for edge in remapped.graph.edges
+            if edge.edge_type == "depends_on"} == {(counted.id, owner.id)}
+    assert {(edge.from_node_id, edge.to_node_id) for edge in remapped.graph.edges
+            if edge.edge_type == "grounded_on"} == {(owner.id, nodes["a"].id)}
 
 
 def test_real_agent_wrapper_exposes_tools_and_separates_phase_histories():

@@ -41,13 +41,20 @@ def test_selected_effective_contract_is_complete_and_unchanged_body_has_one_copy
     assert row['content_change'] == 'unchanged' and row['before'] == definition
 
 
-def test_installed_contract_without_instance_is_in_writer_first_bundle_for_new_relations():
+def test_unused_installed_contract_is_loaded_on_demand_without_expanding_write_scope():
     ctx, contract = with_contract()
     rt = runtime(ctx=ctx, signals=[{'id': 'S', 'kind': 'value_concepts', 'node_ids': ['N1']}])
     assert not any(edge.edge_type == contract.id for edge in ctx.task_before.graph.edges)
+    assert contract.id not in rt.working['before'].get('contracts', {})
+    prefix = rt.messages()[1]
+    writable = (set(rt.write_node_ids), set(rt.write_edge_ids))
+    result = rt.read_predicates(from_node_type='concept', to_node_type='concept')
+    assert contract.id in result['predicate_ids']
     definition = rt.working['before']['contracts'][contract.id]
     assert definition['fields']['description']['required'] and definition['authorable']
-    assert contract.id in str(rt.messages()[1])
+    assert rt.messages()[1] == prefix
+    assert contract.id in rt.messages()[2].content
+    assert (rt.write_node_ids, rt.write_edge_ids) == writable
     assert 'request_context' not in rt.build_read_tools()
 
 

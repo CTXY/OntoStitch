@@ -77,18 +77,6 @@ def test_abstract_fault_is_explicit_and_does_not_change_node_knowledge(tmp_path)
     assert before[change['edge_id']].sources == after[change['edge_id']].sources
 
 
-def test_metadata_alias_repair_keeps_group_meaning_and_real_members(tmp_path):
-    fixture = smoke.metadata_fixture(args_for_existing_sources(tmp_path))
-    with pytest.raises(GraphRejected):
-        GraphManager(load_root_schema()).validate_state(fixture.before)
-    GraphManager(load_root_schema()).validate_state(fixture.expected)
-    old = next(node for node in fixture.before.graph.nodes if node.id == fixture.write_node_id).properties['relation_metadata'][0]
-    new = next(node for node in fixture.expected.graph.nodes if node.id == fixture.write_node_id).properties['relation_metadata'][0]
-    assert old['id'] == new['id'] and old['description'] == new['description']
-    assert len(new['edges']) == 2 and set(new['edges']) <= {edge.id for edge in fixture.expected.graph.edges}
-    assert fixture.before.graph.edges == fixture.expected.graph.edges
-
-
 def test_conflict_fixture_preserves_all_real_branches_and_scopes(tmp_path):
     fixture=smoke.preserve_conflict_fixture(args_for_existing_sources(tmp_path))
     assert fixture.before==fixture.expected and not fixture.changes

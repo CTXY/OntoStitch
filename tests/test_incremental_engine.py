@@ -33,7 +33,7 @@ class IdentityOnlyAgent:
                     ]
                 }
             )
-        elif phase == "node_assess":
+        elif phase in {"node_assess", "graph_assess"}:
             result = NodeReview(verdict="accept")
         else:
             result = BatchResult()
@@ -266,7 +266,8 @@ def test_completed_resume_feedback_stays_local_and_keeps_source_lineage(tmp_path
     second.external_feedback = ["Review the definition without unrelated cleanup."]
     second.feedback_targets = [target]
     result = second.merge(state(), source, schema, run_id="local")
-    assert agent.phases == ["reconcile"]
+    assert agent.phases == ["reconcile", "graph_assess"]
+    assert "identity" not in agent.phases and "consolidate" not in agent.phases
     assert second.current == untouched
     assert len(result.node_mappings) == len(source.graph.nodes)
     assert second.history[-1]["task_id"] == "external-review"

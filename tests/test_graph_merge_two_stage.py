@@ -422,74 +422,53 @@ def test_bad_correspondence_can_be_removed_and_replaced():
     assert r["status"] == "validated" and not buf.accepted.changes
 
 
-def test_selection_signal_uses_sql_dialect_and_preserves_implicit_source_choice():
-    from cortex.capabilities.graph_merge.integration.compiler import compile_proposal
-    from cortex.capabilities.graph_merge.integration.signals import inspection_signals
+def test_selection_signal_uses_current_concept_targets_and_sql_dialect():
+    from cortex.capabilities.graph_merge.integration.compiler import Preview
+    from cortex.capabilities.graph_merge.integration.signals import inspection_signals, projected_columns
     from cortex.capabilities.graph_merge.models import EvidenceItem
     from cortex.schema import SourceReference
 
-    incoming = state([*catalog(), concept("A", "a"), concept("B", "a")])
     evidence = (
-        EvidenceItem(
-            id="first",
-            case_id="first",
-            source=SourceReference(source_id="A"),
-            content={"sql": "SELECT `a` FROM `objects` ORDER BY `b`"},
-        ),
-        EvidenceItem(
-            id="second",
-            case_id="second",
-            source=SourceReference(source_id="B"),
-            content={"sql": "SELECT a, b FROM objects"},
-        ),
+        EvidenceItem(id='first', case_id='first', source=SourceReference(source_id='A'),
+                     content={'sql': 'SELECT `a` FROM `objects` ORDER BY `b`'}),
+        EvidenceItem(id='second', case_id='second', source=SourceReference(source_id='B'),
+                     content={'sql': 'SELECT a, b FROM objects'}),
     )
-    ctx = IntegrationContext(state(), incoming, load_root_schema(), evidence=evidence)
-    ctx.sql_dialect = "sqlite"
-    # The second representation is complementary; source SELECT choices differ.
-    ctx.raw_nodes[ctx.input_node_map["B"]] = ctx.raw_nodes[
-        ctx.input_node_map["B"]
-    ].model_copy(
-        update={
-            "properties": {
-                "targets": [[ctx.input_node_map["a"]], [ctx.input_node_map["b"]]]
-            }
-        }
-    )
-    decision = IdentityDecision(
-        groups=[
-            {
-                "members": [ctx.input_node_map["A"], ctx.input_node_map["B"]],
-                "meaning": "Same",
-                "reason": "same role",
-            }
-        ]
-    )
-    preview = compile_proposal(ctx, decision, IntegrationProposal(), strict=False)
+    ctx = IntegrationContext(state(), state([*catalog(), concept('A', 'a')]),
+                             load_root_schema(), evidence=evidence)
+    ctx.sql_dialect = 'sqlite'
+    current = ctx.union_state()
+    owner, a, b = (ctx.input_node_map[key] for key in ('A', 'a', 'b'))
+    current = current.model_copy(update={'graph': current.graph.model_copy(update={
+        'nodes': tuple(node.model_copy(update={
+            'properties': {**node.properties, 'targets': [[a], [b]]},
+            'sources': tuple(item.source for item in evidence),
+        }) if node.id == owner else node for node in current.graph.nodes)})})
+    nodes = {node.id: node for node in current.graph.nodes}
+    assert projected_columns(evidence[0].content['sql'], nodes, dialect=ctx.sql_dialect) == {a}
+    assert projected_columns(evidence[1].content['sql'], nodes, dialect=ctx.sql_dialect) == {a, b}
+    preview = Preview(current, {}, {}, [])
     signals = inspection_signals(ctx, preview)
-    choices = next(s for s in signals if s["kind"] == "source_selection_variants")
-    assert len(choices["variants"]) == 2
-    assert len(choices["variants"][0]["selected_physical_inputs"]) == 1
-    assert len(choices["variants"][1]["selected_physical_inputs"]) == 2
+    choices = next(signal for signal in signals if signal['kind'] == 'source_selection_variants')
+    variants = {row['evidence_id']: row for row in choices['variants']}
+    assert set(variants) == {'first', 'second'}
+    assert variants['first']['selected_physical_inputs'] == [a]
+    assert variants['second']['selected_physical_inputs'] == sorted([a, b])
+    assert all(row['node_id'] == owner for row in variants.values())
 
-    # Lineage lookup has identical selection semantics but is performed only
-    # once for each current Concept, independent of evidence/source count.
-    from collections import Counter
-
-    from cortex.capabilities.graph_merge.integration.lineage import LineageIndex
-
-    lineage = LineageIndex(ctx, preview.node_map, preview.edge_map)
-    lookups = Counter()
-    original_lookup = lineage.origin_refs
-
-    def counted_lookup(kind, key):
-        lookups[kind, key] += 1
-        return original_lookup(kind, key)
-
-    lineage.origin_refs = counted_lookup
-    assert inspection_signals(ctx, preview, origins=lineage) == signals
-    assert lookups
-    assert max(lookups.values()) == 1
-    assert len(lookups) == sum(n.node_type == "concept" for n in preview.state.graph.nodes)
+    # Historical source contents and origin traversal are not premises of a
+    # current-graph signal. The caller may still supply an origin index.
+    class ForbiddenOrigins:
+        def origin_refs(self, *_args):
+            raise AssertionError('Signal detection must not traverse archived source nodes')
+    ctx.raw_nodes[owner] = ctx.raw_nodes[owner].model_copy(update={
+        'properties': {'targets': [[a]]}, 'sources': ()})
+    assert inspection_signals(ctx, preview, origins=ForbiddenOrigins()) == signals
+    narrowed = current.model_copy(update={'graph': current.graph.model_copy(update={
+        'nodes': tuple(node.model_copy(update={'properties': {'targets': [[a]]}})
+                       if node.id == owner else node for node in current.graph.nodes)})})
+    assert not any(signal['kind'] == 'source_selection_variants'
+                   for signal in inspection_signals(ctx, Preview(narrowed, {}, {}, [])))
 
 
 def test_supported_reason_cannot_also_declare_unsupported_claims():

@@ -44,3 +44,10 @@ usecase/
 
 # Portable signal-specific scope regressions.
 !/tests/fixtures/reconciliation_signal_subgraphs/
+
+# Portable original Metric-only coupled-repair regression.
+!/tests/fixtures/node_local_metric_retirement.json
+
+!/tests/fixtures/single_graph_merge/
+/tests/fixtures/single_graph_merge/*
+!/tests/fixtures/single_graph_merge/real_1270_notes.json
